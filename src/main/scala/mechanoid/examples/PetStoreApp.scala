@@ -488,7 +488,7 @@ object PetStoreApp extends ZIOAppDefault:
         data    <- ZIO.fromOption(dataOpt).orElseFail(new RuntimeException(s"Order data not found: $orderId"))
         _       <- logger.fsm(s"${highlight(orderId)}: ${warning("PaymentProcessing")} → ${success("Paid")}")
         // Enqueue shipping request
-        _       <- commandStore.enqueue(
+        _ <- commandStore.enqueue(
           orderId,
           PetStoreCommand.RequestShipping(
             orderId,
@@ -500,7 +500,7 @@ object PetStoreApp extends ZIOAppDefault:
           s"ship-$orderId",
         )
         // Enqueue order confirmation notification
-        _       <- commandStore.enqueue(
+        _ <- commandStore.enqueue(
           orderId,
           PetStoreCommand.SendNotification(
             orderId,
@@ -552,7 +552,7 @@ object PetStoreApp extends ZIOAppDefault:
         // Create FSM in Created state
         storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
         definition = createDefinition(orderId)
-        fsm       <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+        fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
 
         // Send InitiatePayment to start the workflow
         _ <- fsm.send(InitiatePayment)
@@ -563,8 +563,8 @@ object PetStoreApp extends ZIOAppDefault:
       for
         storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore))
         definition = createDefinition(orderId)
-        fsm       <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
-        _         <- fsm.send(event)
+        fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+        _   <- fsm.send(event)
       yield ()
 
     /** Get the current state of an order */
@@ -572,8 +572,8 @@ object PetStoreApp extends ZIOAppDefault:
       for
         storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore))
         definition = createDefinition(orderId)
-        fsm       <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
-        state     <- fsm.currentState
+        fsm   <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+        state <- fsm.currentState
       yield state
 
     /** Get order data */
@@ -585,9 +585,11 @@ object PetStoreApp extends ZIOAppDefault:
       for
         orderIds <- orderDataRef.get.map(_.keys.toList)
         states   <- ZIO.foreach(orderIds) { orderId =>
-          ZIO.scoped {
-            getState(orderId).map(state => orderId -> state)
-          }.orElse(ZIO.succeed(orderId -> Created))
+          ZIO
+            .scoped {
+              getState(orderId).map(state => orderId -> state)
+            }
+            .orElse(ZIO.succeed(orderId -> Created))
         }
       yield states.toMap
   end OrderFSMManager
@@ -623,6 +625,8 @@ object PetStoreApp extends ZIOAppDefault:
 
         case PetStoreCommand.NotificationCallback(messageId, delivered, err) =>
           processNotificationCallback(cmd.id, messageId, delivered, err)
+      end match
+    end processCommand
 
     private def processPayment(
         cmdId: Long,

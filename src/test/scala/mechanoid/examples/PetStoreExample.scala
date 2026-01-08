@@ -917,7 +917,7 @@ object PetStoreExample extends ZIOSpecDefault:
         commandsEnqueued <- Ref.make(List.empty[String])
 
         // Define FSM with entry actions that enqueue commands
-        orderId = uniqueId("fsm-order")
+        orderId                                                                   = uniqueId("fsm-order")
         definition: FSMDefinition[SimpleFSMState, SimpleFSMEvent, Any, Throwable] =
           FSMDefinition[SimpleFSMState, SimpleFSMEvent]
             .when(Created)
@@ -936,22 +936,26 @@ object PetStoreExample extends ZIOSpecDefault:
             .onState(PaymentProcessing)
             .onEntry(
               commandsEnqueued.update(_ :+ "ProcessPayment") *>
-                commandStore.enqueue(
-                  orderId,
-                  PetStoreCommand.ProcessPayment(orderId, "cust-1", BigDecimal(100), "visa"),
-                  uniqueId("pay"),
-                ).unit
+                commandStore
+                  .enqueue(
+                    orderId,
+                    PetStoreCommand.ProcessPayment(orderId, "cust-1", BigDecimal(100), "visa"),
+                    uniqueId("pay"),
+                  )
+                  .unit
             )
             .done
             // Entry action: when entering Paid, enqueue shipping command
             .onState(Paid)
             .onEntry(
               commandsEnqueued.update(_ :+ "RequestShipping") *>
-                commandStore.enqueue(
-                  orderId,
-                  PetStoreCommand.RequestShipping(orderId, "pet-1", "123 Main St", uniqueId("corr")),
-                  uniqueId("ship"),
-                ).unit
+                commandStore
+                  .enqueue(
+                    orderId,
+                    PetStoreCommand.RequestShipping(orderId, "pet-1", "123 Main St", uniqueId("corr")),
+                    uniqueId("ship"),
+                  )
+                  .unit
             )
             .done
 
@@ -963,11 +967,11 @@ object PetStoreExample extends ZIOSpecDefault:
             fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
 
             // Transition: Created -> PaymentProcessing (entry action enqueues ProcessPayment)
-            _ <- fsm.send(InitiatePayment)
+            _      <- fsm.send(InitiatePayment)
             state1 <- fsm.currentState
 
             // Simulate payment completion: PaymentProcessing -> Paid (entry action enqueues RequestShipping)
-            _ <- fsm.send(PaymentSucceeded)
+            _      <- fsm.send(PaymentSucceeded)
             state2 <- fsm.currentState
 
             commands <- commandsEnqueued.get
@@ -984,10 +988,10 @@ object PetStoreExample extends ZIOSpecDefault:
     },
     test("command completion triggers FSM events") {
       for
-        _ <- ZIO.service[CommandStore[String, PetStoreCommand]] // Needed for layer
+        _          <- ZIO.service[CommandStore[String, PetStoreCommand]] // Needed for layer
         eventStore <- ZIO.succeed(new InMemoryEventStore[String, SimpleFSMState, SimpleFSMEvent])
 
-        orderId = uniqueId("cmd-fsm-order")
+        orderId    = uniqueId("cmd-fsm-order")
         definition = FSMDefinition[SimpleFSMState, SimpleFSMEvent]
           .when(Created)
           .on(InitiatePayment)
@@ -1005,12 +1009,12 @@ object PetStoreExample extends ZIOSpecDefault:
             fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
 
             // FSM transitions to PaymentProcessing
-            _ <- fsm.send(InitiatePayment)
+            _                  <- fsm.send(InitiatePayment)
             stateBeforePayment <- fsm.currentState
 
             // Simulate command worker completing payment and sending event
             // (In real system, this happens in CommandProcessor after payment gateway returns)
-            _ <- fsm.send(PaymentSucceeded)
+            _                 <- fsm.send(PaymentSucceeded)
             stateAfterPayment <- fsm.currentState
           yield (stateBeforePayment, stateAfterPayment)
         }
@@ -1023,7 +1027,7 @@ object PetStoreExample extends ZIOSpecDefault:
     },
     test("full order lifecycle FSM flow") {
       for
-        _ <- ZIO.service[CommandStore[String, PetStoreCommand]] // Needed for layer
+        _          <- ZIO.service[CommandStore[String, PetStoreCommand]] // Needed for layer
         eventStore <- ZIO.succeed(new InMemoryEventStore[String, SimpleFSMState, SimpleFSMEvent])
 
         orderId = uniqueId("lifecycle-order")
@@ -1071,12 +1075,12 @@ object PetStoreExample extends ZIOSpecDefault:
         // Drive the FSM through complete order lifecycle
         finalState <- ZIO.scoped {
           for
-            fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
-            _   <- fsm.send(InitiatePayment)      // Created -> PaymentProcessing
-            _   <- fsm.send(PaymentSucceeded)     // PaymentProcessing -> Paid
-            _   <- fsm.send(InitiateShipping)     // Paid -> ShippingRequested
-            _   <- fsm.send(ShipmentDispatched)   // ShippingRequested -> Shipped
-            _   <- fsm.send(DeliveryConfirmed)    // Shipped -> Delivered
+            fsm   <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+            _     <- fsm.send(InitiatePayment)    // Created -> PaymentProcessing
+            _     <- fsm.send(PaymentSucceeded)   // PaymentProcessing -> Paid
+            _     <- fsm.send(InitiateShipping)   // Paid -> ShippingRequested
+            _     <- fsm.send(ShipmentDispatched) // ShippingRequested -> Shipped
+            _     <- fsm.send(DeliveryConfirmed)  // Shipped -> Delivered
             state <- fsm.currentState
           yield state
         }
@@ -1089,10 +1093,10 @@ object PetStoreExample extends ZIOSpecDefault:
     },
     test("payment failure cancels order") {
       for
-        _ <- ZIO.service[CommandStore[String, PetStoreCommand]] // Needed for layer
+        _          <- ZIO.service[CommandStore[String, PetStoreCommand]] // Needed for layer
         eventStore <- ZIO.succeed(new InMemoryEventStore[String, SimpleFSMState, SimpleFSMEvent])
 
-        orderId = uniqueId("cancel-order")
+        orderId    = uniqueId("cancel-order")
         definition = FSMDefinition[SimpleFSMState, SimpleFSMEvent]
           .when(Created)
           .on(InitiatePayment)
@@ -1108,9 +1112,9 @@ object PetStoreExample extends ZIOSpecDefault:
 
         finalState <- ZIO.scoped {
           for
-            fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
-            _   <- fsm.send(InitiatePayment) // Created -> PaymentProcessing
-            _   <- fsm.send(PaymentFailed)   // PaymentProcessing -> Cancelled
+            fsm   <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+            _     <- fsm.send(InitiatePayment) // Created -> PaymentProcessing
+            _     <- fsm.send(PaymentFailed)   // PaymentProcessing -> Cancelled
             state <- fsm.currentState
           yield state
         }
