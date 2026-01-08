@@ -52,8 +52,8 @@ object PostgresCommandStoreSpec extends ZIOSpecDefault:
         store <- ZIO.service[CommandStore[String, TestCommand]]
         now   <- Clock.instant
         key = uniqueId("webhook")
-        _ <- store.enqueue(uniqueId("instance"), TestCommand.NotifyWebhook("http://example.com"), key)
-        claimed  <- store.claim("node-1", 100, Duration.fromSeconds(30), now)
+        _       <- store.enqueue(uniqueId("instance"), TestCommand.NotifyWebhook("http://example.com"), key)
+        claimed <- store.claim("node-1", 100, Duration.fromSeconds(30), now)
         // Find our specific command in the claimed list
         ourCommand = claimed.find(_.idempotencyKey == key)
       yield assertTrue(

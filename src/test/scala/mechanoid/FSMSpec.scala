@@ -450,8 +450,7 @@ object FSMSpec extends ZIOSpecDefault:
           true
         }
         .goto(Green)
-      for
-        result <- ZIO.scoped {
+      for result <- ZIO.scoped {
           for
             fsm   <- definition.build(Red)
             _     <- fsm.send(Timer)
