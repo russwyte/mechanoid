@@ -541,7 +541,7 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
   ): ZStream[R, Err | MechanoidError, StateChange[S, E | Timeout.type]] =
     events
       .mapZIO(event => send(event).map(result => (event, result)))
-      .collect { case (event, TransitionResult.Goto(newState)) =>
+      .collect { case (event, TransitionResult.Goto(_)) =>
         event
       }
       .flatMap(_ => ZStream.fromHub(hub).take(1))

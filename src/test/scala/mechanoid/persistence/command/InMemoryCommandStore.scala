@@ -81,7 +81,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
     }
 
   override def complete(commandId: Long): ZIO[Any, Throwable, Boolean] =
-    Clock.instant.map { now =>
+    ZIO.succeed {
       synchronized {
         commands.get(commandId) match
           case Some(cmd) if cmd.status == CommandStatus.Processing =>

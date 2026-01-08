@@ -4,14 +4,12 @@ import saferis.*
 import zio.*
 import zio.json.*
 import zio.test.*
-import zio.test.Assertion.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
-import mechanoid.persistence.*
 import mechanoid.persistence.command.*
 import mechanoid.persistence.postgres.*
-import java.time.Instant
 import java.util.UUID
+import scala.annotation.unused
 
 /** Pet Store Example - End-to-End Durable FSM with Commands
   *
@@ -372,7 +370,7 @@ object PetStoreExample extends ZIOSpecDefault:
     /** Asynchronous shipping request */
     private def processShippingCommand(
         commandId: Long,
-        orderId: String,
+        @unused orderId: String,
         petId: String,
         address: String,
         correlationId: String,
@@ -403,13 +401,13 @@ object PetStoreExample extends ZIOSpecDefault:
     /** Fire-and-forget notification */
     private def processNotificationCommand(
         commandId: Long,
-        orderId: String,
+        @unused orderId: String,
         email: String,
         notifType: String,
         messageId: String,
     ): ZIO[Any, Throwable, Unit] =
       notificationService.send(email, notifType, messageId).either.flatMap {
-        case Right(result) =>
+        case Right(_) =>
           // Notification queued - complete immediately
           // Delivery confirmation comes via callback (but we don't wait)
           resultsRef.update(_.updated(s"notif-$messageId", Right("queued"))) *>

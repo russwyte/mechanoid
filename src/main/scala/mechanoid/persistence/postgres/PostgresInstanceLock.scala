@@ -4,6 +4,7 @@ import saferis.*
 import zio.*
 import mechanoid.persistence.lock.*
 import java.time.Instant
+import scala.annotation.unused
 
 /** PostgreSQL implementation of FSMInstanceLock using Saferis.
   *
@@ -11,7 +12,7 @@ import java.time.Instant
   */
 class PostgresInstanceLock(transactor: Transactor) extends FSMInstanceLock[String]:
 
-  private val locks = Table[LockRow]
+  @unused private val locks = Table[LockRow]
 
   override def tryAcquire(
       instanceId: String,

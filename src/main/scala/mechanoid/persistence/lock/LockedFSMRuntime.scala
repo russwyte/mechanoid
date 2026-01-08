@@ -4,7 +4,6 @@ import zio.*
 import zio.stream.*
 import mechanoid.core.*
 import mechanoid.persistence.*
-import java.time.Instant
 
 /** A wrapper that adds distributed locking to a PersistentFSMRuntime.
   *

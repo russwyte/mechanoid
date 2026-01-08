@@ -4,14 +4,12 @@ import saferis.*
 import zio.*
 import zio.json.*
 import zio.test.*
-import zio.test.Assertion.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
 import mechanoid.persistence.*
 import mechanoid.persistence.command.*
 import mechanoid.persistence.lock.*
 import mechanoid.persistence.timeout.*
-import java.time.Instant
 import java.util.UUID
 
 /** Brutal stress tests for PostgreSQL persistence implementations.
@@ -116,7 +114,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         token = result.asInstanceOf[LockResult.Acquired[String]].token
 
         // Extend 50 times
-        finalToken <- ZIO.foldLeft(1 to 50)(token) { (current, _) =>
+        _ <- ZIO.foldLeft(1 to 50)(token) { (current, _) =>
           for
             later    <- Clock.instant
             extended <- lock.extend(current, Duration.fromMillis(100), later)
@@ -356,7 +354,6 @@ object PostgresStressSpec extends ZIOSpecDefault:
         _ <- ZIO.foreachPar(workers)(identity)
 
         processed <- processedRef.get
-        counts    <- store.countByStatus
       yield assertTrue(
         // Some commands were completed (not all because some failed and are pending again)
         processed.nonEmpty,
@@ -489,8 +486,8 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         // Worker 1: claims commands then "crashes" (gets interrupted)
         crashingWorker <- (for
-          now     <- Clock.instant
-          claimed <- store.claim("crashing-worker", 30, Duration.fromMillis(100), now)
+          now <- Clock.instant
+          _   <- store.claim("crashing-worker", 30, Duration.fromMillis(100), now)
           // Simulate crash - don't complete, just hang
           _ <- ZIO.never
         yield ()).fork
@@ -520,7 +517,6 @@ object PostgresStressSpec extends ZIOSpecDefault:
         yield claimed.length).repeatWhile(_ > 0)
 
         processed <- processedRef.get
-        rounds    <- recoveryRounds.get
       yield assertTrue(
         processed.size == 50,           // All commands eventually processed
         keys.forall(processed.contains), // No commands lost
@@ -801,7 +797,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         _ <- store.schedule(instanceId, "State1", now.plusSeconds(100))
 
         // Parallel updates with different states
-        results <- ZIO.foreachPar(1 to 50) { i =>
+        _ <- ZIO.foreachPar(1 to 50) { i =>
           store.schedule(instanceId, s"State$i", now.plusSeconds(i.toLong))
         }
 
@@ -826,8 +822,8 @@ object PostgresStressSpec extends ZIOSpecDefault:
         cancelFiber <- store.cancel(instanceId).fork
         claimFiber  <- store.claim(instanceId, "sweeper-1", Duration.fromSeconds(30), now).fork
 
-        cancelResult <- cancelFiber.join
-        claimResult  <- claimFiber.join
+        _ <- cancelFiber.join
+        _ <- claimFiber.join
 
         // Exactly one should succeed meaningfully
         current <- store.get(instanceId)
@@ -918,7 +914,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         _ <- leaseStore.tryAcquire(leaseKey, "leader-1", Duration.fromSeconds(1), now)
 
         // Parallel: leader renews while others try to acquire
-        results <- ZIO.foreachPar(1 to 10) { i =>
+        _ <- ZIO.foreachPar(1 to 10) { i =>
           if i == 1 then
             // Leader renews multiple times
             ZIO.foreach(1 to 5) { _ =>
@@ -975,7 +971,6 @@ object PostgresStressSpec extends ZIOSpecDefault:
         eventStore   <- ZIO.service[EventStore[String, StressState, StressEvent]]
         timeoutStore <- ZIO.service[TimeoutStore[String]]
         lock         <- ZIO.service[FSMInstanceLock[String]]
-        now          <- Clock.instant
 
         // Simulate 20 FSM instances being processed by 5 nodes
         instanceIds = (1 to 20).map(_ => uniqueId("fsm")).toList
@@ -1020,7 +1015,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         processed <- processedRef.get
       yield assertTrue(
         // All instances should have been processed by exactly one node
-        allEvents.forall { case (id, count) => count >= 2 },
+        allEvents.forall { case (_, count) => count >= 2 },
         // Processed map should have all instances
         processed.size == 20,
       )

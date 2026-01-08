@@ -4,6 +4,7 @@ import saferis.*
 import zio.*
 import mechanoid.persistence.timeout.*
 import java.time.Instant
+import scala.annotation.unused
 
 /** PostgreSQL implementation of LeaseStore using Saferis.
   *
@@ -12,7 +13,7 @@ import java.time.Instant
   */
 class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
 
-  private val leases = Table[LeaseRow]
+  @unused private val leases = Table[LeaseRow]
 
   override def tryAcquire(
       key: String,

@@ -2,7 +2,6 @@ package mechanoid.persistence.timeout
 
 import zio.*
 import zio.test.*
-import zio.test.Assertion.*
 import java.time.Instant
 
 object TimeoutStoreSpec extends ZIOSpecDefault:

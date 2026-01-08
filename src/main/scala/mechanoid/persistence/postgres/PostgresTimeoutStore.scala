@@ -4,6 +4,7 @@ import saferis.*
 import zio.*
 import mechanoid.persistence.timeout.*
 import java.time.Instant
+import scala.annotation.unused
 
 /** PostgreSQL implementation of TimeoutStore using Saferis.
   *
@@ -12,7 +13,7 @@ import java.time.Instant
   */
 class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
 
-  private val timeouts = Table[TimeoutRow]
+  @unused private val timeouts = Table[TimeoutRow]
 
   override def schedule(
       instanceId: String,

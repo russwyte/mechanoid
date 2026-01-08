@@ -3,10 +3,8 @@ package mechanoid.persistence.postgres
 import saferis.*
 import zio.*
 import zio.test.*
-import zio.test.Assertion.*
 import mechanoid.PostgresTestContainer
 import mechanoid.persistence.timeout.*
-import java.time.Instant
 
 object PostgresTimeoutStoreSpec extends ZIOSpecDefault:
 

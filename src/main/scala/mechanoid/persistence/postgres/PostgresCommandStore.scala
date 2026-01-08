@@ -5,6 +5,7 @@ import zio.*
 import zio.json.*
 import mechanoid.persistence.command.*
 import java.time.Instant
+import scala.annotation.unused
 
 /** Codec for serializing/deserializing commands to JSON.
   *
@@ -46,7 +47,7 @@ class PostgresCommandStore[Cmd](
     codec: CommandCodec[Cmd],
 ) extends CommandStore[String, Cmd]:
 
-  private val commands = Table[CommandRow]
+  @unused private val commands = Table[CommandRow]
 
   override def enqueue(
       instanceId: String,

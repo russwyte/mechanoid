@@ -7,6 +7,7 @@ import zio.stream.*
 import mechanoid.core.*
 import mechanoid.persistence.*
 import java.time.Instant
+import scala.annotation.unused
 
 /** Codec for serializing/deserializing events and states to JSON.
   *
@@ -78,8 +79,8 @@ class PostgresEventStore[S <: MState, E <: MEvent](
     codec: EventCodec[S, E],
 ) extends EventStore[String, S, E]:
 
-  private val events    = Table[EventRow]
-  private val snapshots = Table[SnapshotRow]
+  @unused private val events    = Table[EventRow]
+  @unused private val snapshots = Table[SnapshotRow]
 
   override def append(
       instanceId: String,

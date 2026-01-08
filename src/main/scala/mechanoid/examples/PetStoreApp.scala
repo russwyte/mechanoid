@@ -7,6 +7,7 @@ import mechanoid.persistence.command.*
 import java.util.UUID
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import scala.annotation.unused
 
 /** Pet Store Console Application
   *
@@ -332,9 +333,9 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processPayment(
         cmdId: Long,
-        orderId: String,
+        @unused orderId: String,
         customerName: String,
-        petName: String,
+        @unused petName: String,
         amount: BigDecimal,
         method: String,
     ): UIO[Unit] =
@@ -393,10 +394,10 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processNotification(
         cmdId: Long,
-        orderId: String,
+        @unused orderId: String,
         email: String,
-        customerName: String,
-        petName: String,
+        @unused customerName: String,
+        @unused petName: String,
         notifType: String,
         messageId: String,
     ): UIO[Unit] =
@@ -429,7 +430,7 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processShippingCallback(
         cmdId: Long,
-        correlationId: String,
+        @unused correlationId: String,
         tracking: String,
         carrier: String,
         eta: String,

@@ -3,6 +3,7 @@ package mechanoid.persistence
 import zio.*
 import zio.stream.*
 import mechanoid.core.*
+import scala.annotation.unused
 
 /** Abstract storage trait for event sourcing with distributed safety guarantees.
   *
@@ -269,7 +270,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @param toSequenceNr
     *   Delete events with sequence number <= this value
     */
-  def deleteEventsTo(instanceId: Id, toSequenceNr: Long): ZIO[Any, Throwable, Unit] =
+  def deleteEventsTo(@unused instanceId: Id, @unused toSequenceNr: Long): ZIO[Any, Throwable, Unit] =
     ZIO.unit
 
   /** Get the highest sequence number for an FSM instance.

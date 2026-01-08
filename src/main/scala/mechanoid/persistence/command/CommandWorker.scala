@@ -2,6 +2,7 @@ package mechanoid.persistence.command
 
 import zio.*
 import java.time.Instant
+import scala.annotation.unused
 
 /** Background service that processes commands from a [[CommandStore]].
   *
@@ -239,7 +240,7 @@ private final class CommandWorkerImpl[Id, Cmd](
   end handleFailure
 
   /** Wait with jitter before next poll. */
-  private def waitWithJitter(wasEmpty: Boolean): ZIO[Any, Nothing, Unit] =
+  private def waitWithJitter(@unused wasEmpty: Boolean): ZIO[Any, Nothing, Unit] =
     val baseWait = config.pollInterval
     val jitter   = if config.jitterFactor > 0 then
       val jitterMs = (baseWait.toMillis * config.jitterFactor * scala.util.Random.nextDouble()).toLong

@@ -4,10 +4,8 @@ import saferis.*
 import zio.*
 import zio.json.*
 import zio.test.*
-import zio.test.Assertion.*
 import mechanoid.PostgresTestContainer
 import mechanoid.persistence.command.*
-import java.time.Instant
 
 object PostgresCommandStoreSpec extends ZIOSpecDefault:
 
@@ -54,7 +52,7 @@ object PostgresCommandStoreSpec extends ZIOSpecDefault:
         store <- ZIO.service[CommandStore[String, TestCommand]]
         now   <- Clock.instant
         key = uniqueId("webhook")
-        enqueued <- store.enqueue(uniqueId("instance"), TestCommand.NotifyWebhook("http://example.com"), key)
+        _ <- store.enqueue(uniqueId("instance"), TestCommand.NotifyWebhook("http://example.com"), key)
         claimed  <- store.claim("node-1", 100, Duration.fromSeconds(30), now)
         // Find our specific command in the claimed list
         ourCommand = claimed.find(_.idempotencyKey == key)
@@ -94,7 +92,7 @@ object PostgresCommandStoreSpec extends ZIOSpecDefault:
       for
         store     <- ZIO.service[CommandStore[String, TestCommand]]
         now       <- Clock.instant
-        cmd       <- store.enqueue("instance-6", TestCommand.ChargePayment(50), "complete-1")
+        _         <- store.enqueue("instance-6", TestCommand.ChargePayment(50), "complete-1")
         claimed   <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
         completed <- store.complete(claimed.head.id)
         retrieved <- store.getByIdempotencyKey("complete-1")
@@ -177,7 +175,7 @@ object PostgresCommandStoreSpec extends ZIOSpecDefault:
         past = now.minusSeconds(60)
         _ <- store.enqueue("expired-instance", TestCommand.NotifyWebhook("http://expired.com"), "expired-claim-1")
         // Claim with a time in the past so it's already expired
-        claimed   <- store.claim("node-1", 10, Duration.fromMillis(1), past)
+        _         <- store.claim("node-1", 10, Duration.fromMillis(1), past)
         released  <- store.releaseExpiredClaims(now)
         retrieved <- store.getByIdempotencyKey("expired-claim-1")
       yield assertTrue(

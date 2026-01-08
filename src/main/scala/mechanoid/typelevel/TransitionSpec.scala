@@ -2,7 +2,6 @@ package mechanoid.typelevel
 
 import mechanoid.core.*
 import scala.annotation.nowarn
-import scala.compiletime.*
 import scala.compiletime.ops.boolean.*
 
 /** Type-level specification of allowed transitions.

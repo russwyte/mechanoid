@@ -4,11 +4,9 @@ import saferis.*
 import zio.*
 import zio.json.*
 import zio.test.*
-import zio.test.Assertion.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
 import mechanoid.persistence.*
-import java.time.Instant
 
 object PostgresEventStoreSpec extends ZIOSpecDefault:
 

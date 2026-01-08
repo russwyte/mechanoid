@@ -2,7 +2,6 @@ package mechanoid.persistence.command
 
 import zio.*
 import zio.test.*
-import zio.test.Assertion.*
 import java.time.Instant
 
 object CommandQueueSpec extends ZIOSpecDefault:
@@ -209,7 +208,7 @@ object CommandQueueSpec extends ZIOSpecDefault:
         for
           store        <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
           attemptCount <- Ref.make(0)
-          executor = (cmd: TestCommand) =>
+          executor = (_: TestCommand) =>
             attemptCount.updateAndGet(_ + 1).flatMap { count =>
               if count < 3 then ZIO.succeed(CommandResult.Failure("Temporary error", retryable = true))
               else ZIO.succeed(CommandResult.Success)

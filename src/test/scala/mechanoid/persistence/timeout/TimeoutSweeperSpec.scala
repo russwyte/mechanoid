@@ -2,8 +2,6 @@ package mechanoid.persistence.timeout
 
 import zio.*
 import zio.test.*
-import zio.test.Assertion.*
-import java.time.Instant
 
 object TimeoutSweeperSpec extends ZIOSpecDefault:
 
@@ -274,8 +272,7 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
     suite("stop")(
       test("stops sweeping when stopped") {
         for
-          store      <- ZIO.succeed(new InMemoryTimeoutStore[String]())
-          sweepCount <- Ref.make(0L)
+          store <- ZIO.succeed(new InMemoryTimeoutStore[String]())
           onTimeout = (_: String, _: String) => ZIO.unit
 
           config = TimeoutSweeperConfig()
