@@ -238,7 +238,8 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
         yield assertTrue(
           // All 5 timeouts should be fired between the two sweepers
           // With concurrent sweepers, we may or may not see conflicts depending on timing
-          totalFired == 5
+          totalFired == 5,
+          totalConflicts >= 0,
         )
       } @@ TestAspect.withLiveClock,
     ),

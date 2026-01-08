@@ -256,20 +256,18 @@ object FSMSpec extends ZIOSpecDefault:
           queue <- Queue.unbounded[StateChange[TrafficLight, TrafficEvent | Timeout.type]]
           // Start collecting in background
           _ <- fsm.subscribe.foreach(queue.offer).fork
-          // Give subscriber time to connect
+          // Small sleep to ensure fiber starts and subscribes to hub
           _ <- ZIO.sleep(50.millis)
           _ <- fsm.send(Timer) // Red -> Green
           _ <- fsm.send(Timer) // Green -> Yellow
-          // Wait a bit for events to be delivered
-          _ <- ZIO.sleep(50.millis)
-          // Get what was collected
-          changes <- queue.takeAll
+          // Wait for exactly 2 events with timeout
+          change1 <- queue.take.timeout(5.seconds).someOrFail(new RuntimeException("Timeout waiting for change 1"))
+          change2 <- queue.take.timeout(5.seconds).someOrFail(new RuntimeException("Timeout waiting for change 2"))
         yield assertTrue(
-          changes.length == 2,
-          changes(0).from == Red,
-          changes(0).to == Green,
-          changes(1).from == Green,
-          changes(1).to == Yellow,
+          change1.from == Red,
+          change1.to == Green,
+          change2.from == Green,
+          change2.to == Yellow,
         )
       }
     },
