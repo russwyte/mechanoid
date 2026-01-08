@@ -6,8 +6,7 @@ import scala.collection.mutable
 
 /** In-memory implementation of [[LeaseStore]] for testing.
   *
-  * Uses synchronization for thread safety. Not suitable for production -
-  * use a database-backed implementation instead.
+  * Uses synchronization for thread safety. Not suitable for production - use a database-backed implementation instead.
   *
   * ==Usage==
   * {{{
@@ -26,7 +25,7 @@ class InMemoryLeaseStore extends LeaseStore:
       key: String,
       holder: String,
       duration: Duration,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, Option[Lease]] =
     ZIO.succeed {
       synchronized {
@@ -37,7 +36,7 @@ class InMemoryLeaseStore extends LeaseStore:
               key = key,
               holder = holder,
               expiresAt = now.plusMillis(duration.toMillis),
-              acquiredAt = now
+              acquiredAt = now,
             )
             leases(key) = lease
             Some(lease)
@@ -48,7 +47,7 @@ class InMemoryLeaseStore extends LeaseStore:
               key = key,
               holder = holder,
               expiresAt = now.plusMillis(duration.toMillis),
-              acquiredAt = now
+              acquiredAt = now,
             )
             leases(key) = lease
             Some(lease)
@@ -59,7 +58,7 @@ class InMemoryLeaseStore extends LeaseStore:
               key = key,
               holder = holder,
               expiresAt = now.plusMillis(duration.toMillis),
-              acquiredAt = now
+              acquiredAt = now,
             )
             leases(key) = lease
             Some(lease)
@@ -74,7 +73,7 @@ class InMemoryLeaseStore extends LeaseStore:
       key: String,
       holder: String,
       duration: Duration,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, Boolean] =
     ZIO.succeed {
       synchronized {
@@ -129,3 +128,4 @@ class InMemoryLeaseStore extends LeaseStore:
         leases(key) = lease.copy(expiresAt = Instant.MIN)
       }
     }
+end InMemoryLeaseStore

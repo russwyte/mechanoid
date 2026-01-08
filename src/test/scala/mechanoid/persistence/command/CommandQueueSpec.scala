@@ -18,83 +18,81 @@ object CommandQueueSpec extends ZIOSpecDefault:
       test("enqueues commands with unique IDs") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd1 <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          cmd2 <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
+          cmd1  <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          cmd2  <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
         yield assertTrue(
           cmd1.id == 1L,
           cmd2.id == 2L,
           cmd1.status == CommandStatus.Pending,
-          cmd1.attempts == 0
+          cmd1.attempts == 0,
         )
       },
       test("returns existing command for duplicate idempotency key") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd1 <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "same-key")
-          cmd2 <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "same-key")
+          cmd1  <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "same-key")
+          cmd2  <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "same-key")
         yield assertTrue(
           cmd1.id == cmd2.id,
-          cmd1.command == TestCommand.DoWork("a") // Original command preserved
+          cmd1.command == TestCommand.DoWork("a"), // Original command preserved
         )
       },
       test("claims pending commands") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
-          now <- Clock.instant
+          store   <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          _       <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          _       <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
+          now     <- Clock.instant
           claimed <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
         yield assertTrue(
           claimed.length == 2,
           claimed.forall(_.status == CommandStatus.Processing),
-          claimed.forall(_.attempts == 1)
+          claimed.forall(_.attempts == 1),
         )
       },
       test("respects claim limit") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          _ <- ZIO.foreach(1 to 5)(i =>
-            store.enqueue("fsm-1", TestCommand.DoWork(s"$i"), s"key-$i")
-          )
-          now <- Clock.instant
+          store   <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          _       <- ZIO.foreach(1 to 5)(i => store.enqueue("fsm-1", TestCommand.DoWork(s"$i"), s"key-$i"))
+          now     <- Clock.instant
           claimed <- store.claim("node-1", 2, Duration.fromSeconds(30), now)
         yield assertTrue(claimed.length == 2)
       },
       test("does not claim already claimed commands") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          now <- Clock.instant
+          store    <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          _        <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          now      <- Clock.instant
           claimed1 <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
           claimed2 <- store.claim("node-2", 10, Duration.fromSeconds(30), now)
         yield assertTrue(
           claimed1.length == 1,
-          claimed2.isEmpty
+          claimed2.isEmpty,
         )
       },
       test("completes commands") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          now <- Clock.instant
-          _ <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
-          success <- store.complete(cmd.id)
+          store      <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          cmd        <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          now        <- Clock.instant
+          _          <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
+          success    <- store.complete(cmd.id)
           updatedOpt <- store.findById(cmd.id)
         yield
           val updated = updatedOpt.get
           assertTrue(
             success,
-            updated.status == CommandStatus.Completed
+            updated.status == CommandStatus.Completed,
           )
       },
       test("fails commands with retry") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          now <- Clock.instant
-          _ <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
+          cmd   <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          now   <- Clock.instant
+          _     <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
           retryAt = now.plusSeconds(60)
-          success <- store.fail(cmd.id, "Network error", Some(retryAt))
+          success    <- store.fail(cmd.id, "Network error", Some(retryAt))
           updatedOpt <- store.findById(cmd.id)
         yield
           val updated = updatedOpt.get
@@ -102,83 +100,83 @@ object CommandQueueSpec extends ZIOSpecDefault:
             success,
             updated.status == CommandStatus.Pending, // Back to pending for retry
             updated.lastError.contains("Network error"),
-            updated.nextRetryAt.contains(retryAt)
+            updated.nextRetryAt.contains(retryAt),
           )
       },
       test("fails commands permanently") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          now <- Clock.instant
-          _ <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
-          success <- store.fail(cmd.id, "Permanent error", None)
+          store      <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          cmd        <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          now        <- Clock.instant
+          _          <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
+          success    <- store.fail(cmd.id, "Permanent error", None)
           updatedOpt <- store.findById(cmd.id)
         yield
           val updated = updatedOpt.get
           assertTrue(
             success,
-            updated.status == CommandStatus.Failed
+            updated.status == CommandStatus.Failed,
           )
       },
       test("skips commands") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          now <- Clock.instant
-          _ <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
-          success <- store.skip(cmd.id, "Duplicate")
+          store      <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          cmd        <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          now        <- Clock.instant
+          _          <- store.claim("node-1", 10, Duration.fromSeconds(30), now)
+          success    <- store.skip(cmd.id, "Duplicate")
           updatedOpt <- store.findById(cmd.id)
         yield
           val updated = updatedOpt.get
           assertTrue(
             success,
-            updated.status == CommandStatus.Skipped
+            updated.status == CommandStatus.Skipped,
           )
       },
       test("releases expired claims") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          now <- Clock.instant
-          _ <- store.claim("node-1", 10, Duration.fromMillis(100), now)
+          _     <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          now   <- Clock.instant
+          _     <- store.claim("node-1", 10, Duration.fromMillis(100), now)
           later = now.plusMillis(200)
           released <- store.releaseExpiredClaims(later)
-          cmdOpt <- store.findById(1L)
+          cmdOpt   <- store.findById(1L)
         yield
           val cmd = cmdOpt.get
           assertTrue(
             released == 1,
-            cmd.status == CommandStatus.Pending // Released back to pending
+            cmd.status == CommandStatus.Pending, // Released back to pending
           )
       },
       test("queries by instance ID") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
-          _ <- store.enqueue("fsm-2", TestCommand.DoWork("c"), "key-3")
-          cmds <- store.getByInstanceId("fsm-1")
+          _     <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          _     <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
+          _     <- store.enqueue("fsm-2", TestCommand.DoWork("c"), "key-3")
+          cmds  <- store.getByInstanceId("fsm-1")
         yield assertTrue(cmds.length == 2)
       },
       test("counts by status") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          cmd1 <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
-          _ <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
-          now <- Clock.instant
-          _ <- store.claim("node-1", 1, Duration.fromSeconds(30), now)
-          _ <- store.complete(cmd1.id)
+          store  <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          cmd1   <- store.enqueue("fsm-1", TestCommand.DoWork("a"), "key-1")
+          _      <- store.enqueue("fsm-1", TestCommand.DoWork("b"), "key-2")
+          now    <- Clock.instant
+          _      <- store.claim("node-1", 1, Duration.fromSeconds(30), now)
+          _      <- store.complete(cmd1.id)
           counts <- store.countByStatus
         yield assertTrue(
           counts.getOrElse(CommandStatus.Completed, 0L) == 1L,
-          counts.getOrElse(CommandStatus.Pending, 0L) == 1L
+          counts.getOrElse(CommandStatus.Pending, 0L) == 1L,
         )
-      }
+      },
     ),
     suite("CommandWorker")(
       test("processes commands successfully") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          store        <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
           processedRef <- Ref.make(List.empty[String])
           executor = (cmd: TestCommand) =>
             cmd match
@@ -201,20 +199,19 @@ object CommandQueueSpec extends ZIOSpecDefault:
           }
 
           processed <- processedRef.get
-          counts <- store.countByStatus
+          counts    <- store.countByStatus
         yield assertTrue(
           processed.toSet == Set("task-1", "task-2"),
-          counts.getOrElse(CommandStatus.Completed, 0L) == 2L
+          counts.getOrElse(CommandStatus.Completed, 0L) == 2L,
         )
       } @@ TestAspect.withLiveClock,
       test("retries failed commands") {
         for
-          store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
+          store        <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
           attemptCount <- Ref.make(0)
           executor = (cmd: TestCommand) =>
             attemptCount.updateAndGet(_ + 1).flatMap { count =>
-              if count < 3 then
-                ZIO.succeed(CommandResult.Failure("Temporary error", retryable = true))
+              if count < 3 then ZIO.succeed(CommandResult.Failure("Temporary error", retryable = true))
               else ZIO.succeed(CommandResult.Success)
             }
 
@@ -232,19 +229,18 @@ object CommandQueueSpec extends ZIOSpecDefault:
           }
 
           attempts <- attemptCount.get
-          cmdOpt <- store.findById(1L)
+          cmdOpt   <- store.findById(1L)
         yield
           val cmd = cmdOpt.get
           assertTrue(
             attempts >= 3,
-            cmd.status == CommandStatus.Completed
+            cmd.status == CommandStatus.Completed,
           )
       } @@ TestAspect.withLiveClock,
       test("fails permanently after max retries") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          executor = (_: TestCommand) =>
-            ZIO.succeed(CommandResult.Failure("Always fails", retryable = true))
+          executor = (_: TestCommand) => ZIO.succeed(CommandResult.Failure("Always fails", retryable = true))
 
           config = CommandWorkerConfig()
             .withPollInterval(Duration.fromMillis(30))
@@ -264,7 +260,7 @@ object CommandQueueSpec extends ZIOSpecDefault:
           val cmd = cmdOpt.get
           assertTrue(
             cmd.status == CommandStatus.Failed,
-            cmd.lastError.contains("Always fails")
+            cmd.lastError.contains("Always fails"),
           )
       } @@ TestAspect.withLiveClock,
       test("skips already executed commands") {
@@ -279,8 +275,8 @@ object CommandQueueSpec extends ZIOSpecDefault:
 
           _ <- ZIO.scoped {
             for
-              worker <- CommandWorker.make(config, store, executor)
-              _ <- ZIO.sleep(Duration.fromMillis(200))
+              worker  <- CommandWorker.make(config, store, executor)
+              _       <- ZIO.sleep(Duration.fromMillis(200))
               metrics <- worker.metrics
             yield metrics
           }
@@ -295,7 +291,7 @@ object CommandQueueSpec extends ZIOSpecDefault:
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
           executor = (cmd: TestCommand) =>
             cmd match
-              case TestCommand.DoWork(_) => ZIO.succeed(CommandResult.Success)
+              case TestCommand.DoWork(_)         => ZIO.succeed(CommandResult.Success)
               case TestCommand.FailingCommand(_) =>
                 ZIO.succeed(CommandResult.Failure("Error", retryable = false))
               case _ => ZIO.succeed(CommandResult.AlreadyExecuted)
@@ -310,38 +306,37 @@ object CommandQueueSpec extends ZIOSpecDefault:
           metrics <- ZIO.scoped {
             for
               worker <- CommandWorker.make(config, store, executor)
-              _ <- ZIO.sleep(Duration.fromMillis(300))
-              m <- worker.metrics
+              _      <- ZIO.sleep(Duration.fromMillis(300))
+              m      <- worker.metrics
             yield m
           }
         yield assertTrue(
           metrics.commandsSucceeded == 1,
           metrics.commandsFailed == 1,
           metrics.commandsSkipped == 1,
-          metrics.commandsProcessed == 3
+          metrics.commandsProcessed == 3,
         )
       } @@ TestAspect.withLiveClock,
       test("stops gracefully") {
         for
           store <- ZIO.succeed(new InMemoryCommandStore[String, TestCommand]())
-          executor = (_: TestCommand) =>
-            ZIO.sleep(Duration.fromMillis(50)).as(CommandResult.Success)
+          executor = (_: TestCommand) => ZIO.sleep(Duration.fromMillis(50)).as(CommandResult.Success)
 
           config = CommandWorkerConfig()
             .withPollInterval(Duration.fromMillis(20))
 
           result <- ZIO.scoped {
             for
-              worker <- CommandWorker.make(config, store, executor)
+              worker   <- CommandWorker.make(config, store, executor)
               running1 <- worker.isRunning
-              _ <- worker.stop
+              _        <- worker.stop
               running2 <- worker.isRunning
             yield (running1, running2)
           }
         yield
           val (running1, running2) = result
           assertTrue(running1, !running2)
-      } @@ TestAspect.withLiveClock
+      } @@ TestAspect.withLiveClock,
     ),
     suite("RetryPolicy")(
       test("NoRetry returns None immediately") {
@@ -349,7 +344,7 @@ object CommandQueueSpec extends ZIOSpecDefault:
         assertTrue(RetryPolicy.NoRetry.nextRetry(1, now).isEmpty)
       },
       test("FixedDelay returns consistent delays") {
-        val now = Instant.now()
+        val now    = Instant.now()
         val policy = RetryPolicy.fixedDelay(Duration.fromSeconds(10), maxAttempts = 3)
 
         val retry1 = policy.nextRetry(1, now)
@@ -360,16 +355,16 @@ object CommandQueueSpec extends ZIOSpecDefault:
           retry1.isDefined,
           retry2.isDefined,
           retry3.isEmpty, // Exceeded max attempts
-          retry1.get.toEpochMilli - now.toEpochMilli == 10000L
+          retry1.get.toEpochMilli - now.toEpochMilli == 10000L,
         )
       },
       test("ExponentialBackoff increases delay") {
-        val now = Instant.now()
+        val now    = Instant.now()
         val policy = RetryPolicy.exponentialBackoff(
           initialDelay = Duration.fromSeconds(1),
           maxDelay = Duration.fromSeconds(60),
           multiplier = 2.0,
-          maxAttempts = 5
+          maxAttempts = 5,
         )
 
         val delay1 = policy.nextRetry(1, now).map(_.toEpochMilli - now.toEpochMilli)
@@ -379,21 +374,22 @@ object CommandQueueSpec extends ZIOSpecDefault:
         assertTrue(
           delay1.contains(1000L), // 1s
           delay2.contains(2000L), // 2s
-          delay3.contains(4000L) // 4s
+          delay3.contains(4000L), // 4s
         )
       },
       test("ExponentialBackoff respects maxDelay") {
-        val now = Instant.now()
+        val now    = Instant.now()
         val policy = RetryPolicy.exponentialBackoff(
           initialDelay = Duration.fromSeconds(10),
           maxDelay = Duration.fromSeconds(30),
           multiplier = 10.0,
-          maxAttempts = 5
+          maxAttempts = 5,
         )
 
         val delay2 = policy.nextRetry(2, now).map(_.toEpochMilli - now.toEpochMilli)
 
         assertTrue(delay2.contains(30000L)) // Capped at maxDelay
-      }
-    )
+      },
+    ),
   ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(60))
+end CommandQueueSpec

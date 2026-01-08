@@ -10,15 +10,15 @@ import scala.collection.mutable
   */
 class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
 
-  private val commands = mutable.Map.empty[Long, PendingCommand[Id, Cmd]]
+  private val commands         = mutable.Map.empty[Long, PendingCommand[Id, Cmd]]
   private val byIdempotencyKey = mutable.Map.empty[String, Long]
-  private val claims = mutable.Map.empty[Long, (String, Instant)] // commandId -> (nodeId, expiresAt)
-  private var nextId = 1L
+  private val claims           = mutable.Map.empty[Long, (String, Instant)] // commandId -> (nodeId, expiresAt)
+  private var nextId           = 1L
 
   override def enqueue(
       instanceId: Id,
       command: Cmd,
-      idempotencyKey: String
+      idempotencyKey: String,
   ): ZIO[Any, Throwable, PendingCommand[Id, Cmd]] =
     Clock.instant.map { now =>
       synchronized {
@@ -38,7 +38,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
               attempts = 0,
               lastAttemptAt = None,
               lastError = None,
-              nextRetryAt = None
+              nextRetryAt = None,
             )
             commands(id) = pending
             byIdempotencyKey(idempotencyKey) = id
@@ -50,7 +50,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       nodeId: String,
       limit: Int,
       claimDuration: Duration,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]] =
     ZIO.succeed {
       synchronized {
@@ -72,7 +72,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
           commands(cmd.id) = cmd.copy(
             status = CommandStatus.Processing,
             attempts = cmd.attempts + 1,
-            lastAttemptAt = Some(now)
+            lastAttemptAt = Some(now),
           )
         }
 
@@ -95,7 +95,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
   override def fail(
       commandId: Long,
       error: String,
-      retryAt: Option[Instant]
+      retryAt: Option[Instant],
   ): ZIO[Any, Throwable, Boolean] =
     ZIO.succeed {
       synchronized {
@@ -107,7 +107,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
             commands(commandId) = cmd.copy(
               status = newStatus,
               lastError = Some(error),
-              nextRetryAt = retryAt
+              nextRetryAt = retryAt,
             )
             claims.remove(commandId)
             true
@@ -122,7 +122,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
           case Some(cmd) if cmd.status == CommandStatus.Processing =>
             commands(commandId) = cmd.copy(
               status = CommandStatus.Skipped,
-              lastError = Some(reason)
+              lastError = Some(reason),
             )
             claims.remove(commandId)
             true
@@ -165,8 +165,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
         val expired = claims.filter { case (_, (_, until)) => !now.isBefore(until) }
         expired.foreach { case (cmdId, _) =>
           commands.get(cmdId).foreach { cmd =>
-            if cmd.status == CommandStatus.Processing then
-              commands(cmdId) = cmd.copy(status = CommandStatus.Pending)
+            if cmd.status == CommandStatus.Processing then commands(cmdId) = cmd.copy(status = CommandStatus.Pending)
           }
           claims.remove(cmdId)
         }
@@ -196,3 +195,4 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
         commands.get(id)
       }
     }
+end InMemoryCommandStore

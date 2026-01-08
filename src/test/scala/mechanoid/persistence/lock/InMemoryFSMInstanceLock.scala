@@ -6,8 +6,8 @@ import scala.collection.mutable
 
 /** In-memory implementation of FSMInstanceLock for testing.
   *
-  * Thread-safe via synchronized blocks. Not suitable for production
-  * distributed deployments - use a database-backed implementation instead.
+  * Thread-safe via synchronized blocks. Not suitable for production distributed deployments - use a database-backed
+  * implementation instead.
   */
 class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
   private val locks = mutable.Map.empty[Id, LockToken[Id]]
@@ -16,7 +16,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       instanceId: Id,
       nodeId: String,
       duration: Duration,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, LockResult[Id]] =
     ZIO.succeed {
       synchronized {
@@ -31,7 +31,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
               instanceId = instanceId,
               nodeId = nodeId,
               acquiredAt = now,
-              expiresAt = now.plusMillis(duration.toMillis)
+              expiresAt = now.plusMillis(duration.toMillis),
             )
             locks.put(instanceId, token)
             LockResult.Acquired(token)
@@ -42,14 +42,14 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       instanceId: Id,
       nodeId: String,
       duration: Duration,
-      timeout: Duration
+      timeout: Duration,
   ): ZIO[Any, Throwable, LockResult[Id]] =
     val deadline = java.time.Instant.now().plusMillis(timeout.toMillis)
 
     def attempt: ZIO[Any, Throwable, LockResult[Id]] =
       for
-        now <- Clock.instant
-        result <- tryAcquire(instanceId, nodeId, duration, now)
+        now         <- Clock.instant
+        result      <- tryAcquire(instanceId, nodeId, duration, now)
         finalResult <- result match
           case acquired @ LockResult.Acquired(_) =>
             ZIO.succeed(acquired)
@@ -66,6 +66,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       yield finalResult
 
     attempt
+  end acquire
 
   override def release(token: LockToken[Id]): ZIO[Any, Throwable, Boolean] =
     ZIO.succeed {
@@ -83,7 +84,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
   override def extend(
       token: LockToken[Id],
       additionalDuration: Duration,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, Option[LockToken[Id]]] =
     ZIO.succeed {
       synchronized {
@@ -117,3 +118,4 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
   def clear(): Unit = synchronized {
     locks.clear()
   }
+end InMemoryFSMInstanceLock

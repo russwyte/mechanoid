@@ -20,17 +20,17 @@ object FSMSpec extends ZIOSpecDefault:
   import TrafficEvent.*
 
   // Complex state hierarchy with data-carrying states (for variance tests)
-  sealed trait DocumentState extends MState
-  case object Draft extends DocumentState
+  sealed trait DocumentState                 extends MState
+  case object Draft                          extends DocumentState
   case class UnderReview(reviewerId: String) extends DocumentState
-  case class Approved(approvedBy: String) extends DocumentState
-  case object Published extends DocumentState
+  case class Approved(approvedBy: String)    extends DocumentState
+  case object Published                      extends DocumentState
 
-  sealed trait DocumentEvent extends MEvent
+  sealed trait DocumentEvent                     extends MEvent
   case class SubmitForReview(reviewerId: String) extends DocumentEvent
-  case class ApproveDoc(approvedBy: String) extends DocumentEvent
-  case object PublishDoc extends DocumentEvent
-  case object Reject extends DocumentEvent
+  case class ApproveDoc(approvedBy: String)      extends DocumentEvent
+  case object PublishDoc                         extends DocumentEvent
+  case object Reject                             extends DocumentEvent
 
   // Enum with parameterized cases (Scala 3 feature)
   enum ConnectionState extends MState:
@@ -54,7 +54,7 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm   <- definition.build(Red)
           state <- fsm.currentState
         yield assertTrue(state == Red)
       }
@@ -67,12 +67,12 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm    <- definition.build(Red)
           result <- fsm.send(Timer)
-          state <- fsm.currentState
+          state  <- fsm.currentState
         yield assertTrue(
           result == TransitionResult.Goto(Green),
-          state == Green
+          state == Green,
         )
       }
     },
@@ -90,15 +90,15 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
-          _ <- fsm.send(Timer) // Red -> Green
-          _ <- fsm.send(Timer) // Green -> Yellow
-          _ <- fsm.send(Timer) // Yellow -> Red
-          state <- fsm.currentState
+          fsm     <- definition.build(Red)
+          _       <- fsm.send(Timer) // Red -> Green
+          _       <- fsm.send(Timer) // Green -> Yellow
+          _       <- fsm.send(Timer) // Yellow -> Red
+          state   <- fsm.currentState
           history <- fsm.history
         yield assertTrue(
           state == Red,
-          history == List(Yellow, Green, Red)
+          history == List(Yellow, Green, Red),
         )
       }
     },
@@ -110,12 +110,12 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm    <- definition.build(Red)
           result <- fsm.send(Emergency)
-          state <- fsm.currentState
+          state  <- fsm.currentState
         yield assertTrue(
           result == TransitionResult.Stay,
-          state == Red
+          state == Red,
         )
       }
     },
@@ -127,14 +127,14 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
-          _ <- fsm.send(Timer) // Red -> Green
+          fsm   <- definition.build(Red)
+          _     <- fsm.send(Timer)      // Red -> Green
           error <- fsm.send(Timer).flip // Green + Timer = undefined
         yield assertTrue(error.isInstanceOf[InvalidTransitionError])
       }
     },
     test("should execute transition when guard passes") {
-      val guard: ZIO[Any, Nothing, Boolean] = ZIO.succeed(true)
+      val guard: ZIO[Any, Nothing, Boolean]                                   = ZIO.succeed(true)
       val definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
         FSMDefinition[TrafficLight, TrafficEvent]
           .when(Red)
@@ -144,14 +144,14 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
-          _ <- fsm.send(Timer)
+          fsm   <- definition.build(Red)
+          _     <- fsm.send(Timer)
           state <- fsm.currentState
         yield assertTrue(state == Green)
       }
     },
     test("should reject transition when guard fails") {
-      val guard: ZIO[Any, Nothing, Boolean] = ZIO.succeed(false)
+      val guard: ZIO[Any, Nothing, Boolean]                                   = ZIO.succeed(false)
       val definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
         FSMDefinition[TrafficLight, TrafficEvent]
           .when(Red)
@@ -161,7 +161,7 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm   <- definition.build(Red)
           error <- fsm.send(Timer).flip
         yield assertTrue(error.isInstanceOf[GuardRejectedError])
       }
@@ -179,7 +179,7 @@ object FSMSpec extends ZIOSpecDefault:
             .onState(Red)
             .onEntry(entryRef.set(true))
             .done
-        _ <- ZIO.scoped(definition.build(Red))
+        _        <- ZIO.scoped(definition.build(Red))
         entryRan <- entryRef.get
       yield assertTrue(entryRan)
     },
@@ -200,7 +200,7 @@ object FSMSpec extends ZIOSpecDefault:
         _ <- ZIO.scoped {
           for
             fsm <- definition.build(Red)
-            _ <- fsm.send(Timer)
+            _   <- fsm.send(Timer)
           yield ()
         }
         events <- log.get
@@ -216,13 +216,13 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm           <- definition.build(Red)
           runningBefore <- fsm.isRunning
-          _ <- fsm.stop
-          runningAfter <- fsm.isRunning
+          _             <- fsm.stop
+          runningAfter  <- fsm.isRunning
         yield assertTrue(
           runningBefore,
-          !runningAfter
+          !runningAfter,
         )
       }
     },
@@ -234,8 +234,8 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
-          _ <- fsm.stop
+          fsm    <- definition.build(Red)
+          _      <- fsm.stop
           result <- fsm.send(Timer)
         yield assertTrue(result.isInstanceOf[TransitionResult.Stop[?]])
       }
@@ -271,7 +271,7 @@ object FSMSpec extends ZIOSpecDefault:
           changes(0).from == Red,
           changes(0).to == Green,
           changes(1).from == Green,
-          changes(1).to == Yellow
+          changes(1).to == Yellow,
         )
       }
     },
@@ -285,16 +285,16 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm         <- definition.build(Red)
           stateBefore <- fsm.state
-          _ <- fsm.send(Timer)
-          stateAfter <- fsm.state
+          _           <- fsm.send(Timer)
+          stateAfter  <- fsm.state
         yield assertTrue(
           stateBefore.current == Red,
           stateBefore.history.isEmpty,
           stateAfter.current == Green,
           stateAfter.history == List(Red),
-          stateAfter.transitionCount == 1
+          stateAfter.transitionCount == 1,
         )
       }
     },
@@ -313,15 +313,15 @@ object FSMSpec extends ZIOSpecDefault:
             .done
         result <- ZIO.scoped {
           for
-            fsm <- definition.build(Red)
-            _ <- fsm.send(Timer) // Red -> Yellow
-            state <- fsm.currentState
+            fsm     <- definition.build(Red)
+            _       <- fsm.send(Timer) // Red -> Yellow
+            state   <- fsm.currentState
             entered <- enteredYellow.get
           yield (state, entered)
         }
       yield assertTrue(
         result._1 == Yellow,
-        result._2 // Entry action ran
+        result._2, // Entry action ran
       )
     },
 
@@ -338,14 +338,14 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
+          fsm         <- definition.build(Red)
           stateBefore <- fsm.currentState
           // Wait for timeout to trigger
-          _ <- ZIO.sleep(100.millis)
+          _     <- ZIO.sleep(100.millis)
           state <- fsm.currentState
         yield assertTrue(
           stateBefore == Red,
-          state == Yellow
+          state == Yellow,
         )
       }
     },
@@ -365,7 +365,7 @@ object FSMSpec extends ZIOSpecDefault:
           // Transition before timeout
           _ <- fsm.send(Timer) // Red -> Green
           // Wait past original timeout
-          _ <- ZIO.sleep(150.millis)
+          _     <- ZIO.sleep(150.millis)
           state <- fsm.currentState
         yield assertTrue(state == Green) // Should NOT be Yellow
       }
@@ -375,7 +375,7 @@ object FSMSpec extends ZIOSpecDefault:
     test("should evaluate guard dynamically") {
       for
         permitRef <- Ref.make(false)
-        guard = permitRef.get
+        guard                                                               = permitRef.get
         definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
           FSMDefinition[TrafficLight, TrafficEvent]
             .when(Red)
@@ -390,13 +390,13 @@ object FSMSpec extends ZIOSpecDefault:
             // Enable guard
             _ <- permitRef.set(true)
             // Second attempt - guard passes
-            _ <- fsm.send(Timer)
+            _     <- fsm.send(Timer)
             state <- fsm.currentState
           yield (error1, state)
         }
       yield assertTrue(
         result._1.isInstanceOf[GuardRejectedError],
-        result._2 == Green
+        result._2 == Green,
       )
     },
 
@@ -409,9 +409,9 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
-          _ <- fsm.send(Emergency)
-          _ <- fsm.send(Emergency)
+          fsm     <- definition.build(Red)
+          _       <- fsm.send(Emergency)
+          _       <- fsm.send(Emergency)
           history <- fsm.history
         yield assertTrue(history.isEmpty)
       }
@@ -432,13 +432,13 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Red)
-          _ <- fsm.send(Timer) // Should succeed (guard is true)
+          fsm    <- definition.build(Red)
+          _      <- fsm.send(Timer)      // Should succeed (guard is true)
           state1 <- fsm.currentState
-          error <- fsm.send(Timer).flip // Should fail (guard is false)
+          error  <- fsm.send(Timer).flip // Should fail (guard is false)
         yield assertTrue(
           state1 == Green,
-          error.isInstanceOf[GuardRejectedError]
+          error.isInstanceOf[GuardRejectedError],
         )
       }
     },
@@ -457,8 +457,8 @@ object FSMSpec extends ZIOSpecDefault:
           .goto(Green)
         result <- ZIO.scoped {
           for
-            fsm <- definition.build(Red)
-            _ <- fsm.send(Timer)
+            fsm   <- definition.build(Red)
+            _     <- fsm.send(Timer)
             state <- fsm.currentState
           yield state
         }
@@ -481,23 +481,22 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Draft)
-          _ <- fsm.send(SubmitForReview("reviewer1"))
-          state1 <- fsm.currentState
-          _ <- fsm.send(ApproveDoc("manager"))
-          state2 <- fsm.currentState
-          _ <- fsm.send(PublishDoc)
+          fsm        <- definition.build(Draft)
+          _          <- fsm.send(SubmitForReview("reviewer1"))
+          state1     <- fsm.currentState
+          _          <- fsm.send(ApproveDoc("manager"))
+          state2     <- fsm.currentState
+          _          <- fsm.send(PublishDoc)
           finalState <- fsm.currentState
-          history <- fsm.history
+          history    <- fsm.history
         yield assertTrue(
           state1 == UnderReview("reviewer1"),
           state2 == Approved("manager"),
           finalState == Published,
-          history == List(Approved("manager"), UnderReview("reviewer1"), Draft)
+          history == List(Approved("manager"), UnderReview("reviewer1"), Draft),
         )
       }
     },
-
     test("should handle enum with parameterized cases") {
       import ConnectionState.*
       import ConnectionEvent.*
@@ -518,17 +517,18 @@ object FSMSpec extends ZIOSpecDefault:
 
       ZIO.scoped {
         for
-          fsm <- definition.build(Disconnected)
-          _ <- fsm.send(Connect)
+          fsm    <- definition.build(Disconnected)
+          _      <- fsm.send(Connect)
           state1 <- fsm.currentState
-          _ <- fsm.send(Success("session-123"))
+          _      <- fsm.send(Success("session-123"))
           state2 <- fsm.currentState
         yield assertTrue(
           state1 == Connecting(1),
-          state2 == Connected("session-123")
+          state2 == Connected("session-123"),
         )
       }
-    }
+    },
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(
     5.seconds
   )
+end FSMSpec

@@ -8,7 +8,7 @@ import javax.sql.DataSource
 
 final case class ContainerConfig(
     initScriptPath: String = "init.sql",
-    imageName: String = s"${PostgreSQLContainer.IMAGE}:latest"
+    imageName: String = s"${PostgreSQLContainer.IMAGE}:latest",
 )
 object ContainerConfig:
   val default = ZLayer.succeed(ContainerConfig())
@@ -34,7 +34,7 @@ final case class PostgresTestContainer(
 end PostgresTestContainer
 
 object PostgresTestContainer:
-  val base = ZLayer.derive[PostgresTestContainer]
+  val base  = ZLayer.derive[PostgresTestContainer]
   val layer = base >>> ZLayer.scoped:
     ZIO.acquireRelease(ZIO.service[PostgresTestContainer].map(_.start))(_.stop)
   val default = ContainerConfig.default >>> layer
@@ -51,7 +51,7 @@ object PostgresTestContainer:
   end DataSourceProvider
 
   object DataSourceProvider:
-    private val base = ZLayer.derive[DataSourceProvider]
+    private val base                                           = ZLayer.derive[DataSourceProvider]
     val datasource: URLayer[PostgresTestContainer, DataSource] =
       base.flatMap(l => ZLayer.succeed(l.get.dataSource))
     val provider: ZLayer[PostgresTestContainer, Nothing, ConnectionProvider] =

@@ -6,8 +6,7 @@ import scala.collection.mutable
 
 /** In-memory implementation of [[TimeoutStore]] for testing.
   *
-  * Uses synchronization for thread safety. Not suitable for production -
-  * use a database-backed implementation instead.
+  * Uses synchronization for thread safety. Not suitable for production - use a database-backed implementation instead.
   *
   * ==Usage==
   * {{{
@@ -25,7 +24,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
   def schedule(
       instanceId: Id,
       state: String,
-      deadline: Instant
+      deadline: Instant,
   ): ZIO[Any, Throwable, ScheduledTimeout[Id]] =
     ZIO.succeed {
       synchronized {
@@ -33,7 +32,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
           instanceId = instanceId,
           state = state,
           deadline = deadline,
-          createdAt = Instant.now()
+          createdAt = Instant.now(),
         )
         timeouts(instanceId) = timeout
         timeout
@@ -49,7 +48,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
 
   def queryExpired(
       limit: Int,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, List[ScheduledTimeout[Id]]] =
     ZIO.succeed {
       synchronized {
@@ -65,7 +64,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       instanceId: Id,
       nodeId: String,
       claimDuration: Duration,
-      now: Instant
+      now: Instant,
   ): ZIO[Any, Throwable, ClaimResult] =
     ZIO.succeed {
       synchronized {
@@ -79,7 +78,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
           case Some(t) =>
             val claimed = t.copy(
               claimedBy = Some(nodeId),
-              claimedUntil = Some(now.plusMillis(claimDuration.toMillis))
+              claimedUntil = Some(now.plusMillis(claimDuration.toMillis)),
             )
             timeouts(instanceId) = claimed
             ClaimResult.Claimed(claimed)
@@ -131,3 +130,4 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
     synchronized {
       timeouts.size
     }
+end InMemoryTimeoutStore
