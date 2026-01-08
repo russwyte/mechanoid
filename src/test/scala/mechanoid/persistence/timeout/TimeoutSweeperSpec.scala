@@ -227,9 +227,9 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
               sweeper1 <- TimeoutSweeper.make(config1, store, onTimeout)
               sweeper2 <- TimeoutSweeper.make(config2, store, onTimeout)
               // Give enough time for all 5 timeouts to be processed
-              _        <- ZIO.sleep(Duration.fromMillis(500))
-              m1       <- sweeper1.metrics
-              m2       <- sweeper2.metrics
+              _  <- ZIO.sleep(Duration.fromMillis(500))
+              m1 <- sweeper1.metrics
+              m2 <- sweeper2.metrics
             yield (m1, m2)
           }
           (metrics1, metrics2) = result
