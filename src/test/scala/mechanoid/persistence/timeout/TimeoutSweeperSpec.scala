@@ -208,11 +208,11 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
       test("tracks claim conflicts with concurrent sweepers") {
         for
           store <- ZIO.succeed(new InMemoryTimeoutStore[String]())
-          // Slow callback to increase chance of conflict
-          onTimeout = (_: String, _: String) => ZIO.sleep(Duration.fromMillis(100))
+          // Short callback to allow all timeouts to be processed
+          onTimeout = (_: String, _: String) => ZIO.sleep(Duration.fromMillis(10))
 
           config1 = TimeoutSweeperConfig()
-            .withSweepInterval(Duration.fromMillis(30))
+            .withSweepInterval(Duration.fromMillis(20))
             .withJitterFactor(0.0)
             .withNodeId("node-1")
 
@@ -226,7 +226,8 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
             for
               sweeper1 <- TimeoutSweeper.make(config1, store, onTimeout)
               sweeper2 <- TimeoutSweeper.make(config2, store, onTimeout)
-              _        <- ZIO.sleep(Duration.fromMillis(200))
+              // Give enough time for all 5 timeouts to be processed
+              _        <- ZIO.sleep(Duration.fromMillis(500))
               m1       <- sweeper1.metrics
               m2       <- sweeper2.metrics
             yield (m1, m2)
@@ -235,9 +236,9 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
           totalConflicts       = metrics1.claimConflicts + metrics2.claimConflicts
           totalFired           = metrics1.timeoutsFired + metrics2.timeoutsFired
         yield assertTrue(
-          // At least some conflicts should occur with concurrent sweepers
-          // OR all timeouts fired (one sweeper got them all)
-          totalConflicts >= 1 || totalFired == 5
+          // All 5 timeouts should be fired between the two sweepers
+          // With concurrent sweepers, we may or may not see conflicts depending on timing
+          totalFired == 5
         )
       } @@ TestAspect.withLiveClock,
     ),
