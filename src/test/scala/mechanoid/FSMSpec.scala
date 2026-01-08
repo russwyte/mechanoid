@@ -1,9 +1,7 @@
 package mechanoid
 
 import zio.*
-import zio.stream.*
 import zio.test.*
-import zio.test.Assertion.*
 import scala.concurrent.duration.*
 
 object FSMSpec extends ZIOSpecDefault:
@@ -257,7 +255,7 @@ object FSMSpec extends ZIOSpecDefault:
           // Use a queue to collect state changes
           queue <- Queue.unbounded[StateChange[TrafficLight, TrafficEvent | Timeout.type]]
           // Start collecting in background
-          collectFiber <- fsm.subscribe.foreach(queue.offer).fork
+          _ <- fsm.subscribe.foreach(queue.offer).fork
           // Give subscriber time to connect
           _ <- ZIO.sleep(50.millis)
           _ <- fsm.send(Timer) // Red -> Green
@@ -443,19 +441,16 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should use whenEval for lazy guard evaluation") {
-      for
-        counter <- Ref.make(0)
-        // Guard re-evaluated on each transition attempt
-        definition = FSMDefinition[TrafficLight, TrafficEvent]
-          .when(Red)
-          .on(Timer)
-          .whenEval {
-            // This runs inside ZIO.succeed, so we use unsafe get
-            // In real code, use `when(ZIO[...])` for effectful guards
-            true
-          }
-          .goto(Green)
-        result <- ZIO.scoped {
+      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+        .when(Red)
+        .on(Timer)
+        .whenEval {
+          // This runs inside ZIO.succeed, so we use unsafe get
+          // In real code, use `when(ZIO[...])` for effectful guards
+          true
+        }
+        .goto(Green)
+      for result <- ZIO.scoped {
           for
             fsm   <- definition.build(Red)
             _     <- fsm.send(Timer)

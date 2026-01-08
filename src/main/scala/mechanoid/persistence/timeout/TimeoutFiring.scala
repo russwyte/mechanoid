@@ -54,7 +54,7 @@ object TimeoutFiring:
   def makeCallback[Id, S <: MState, E <: MEvent](
       eventStore: EventStore[Id, S, E]
   ): (Id, String) => ZIO[Any, Throwable, Unit] =
-    (instanceId, _expectedState) =>
+    (instanceId, _) =>
       for
         seqNr <- eventStore.highestSequenceNr(instanceId)
         _     <- eventStore

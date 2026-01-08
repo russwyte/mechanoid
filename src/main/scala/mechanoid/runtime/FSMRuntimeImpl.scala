@@ -5,7 +5,6 @@ import zio.stream.*
 import mechanoid.core.*
 import mechanoid.dsl.FSMDefinition
 import java.time.Instant
-import scala.concurrent.duration.Duration
 
 private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
     definition: FSMDefinition[S, E, R, Err],
@@ -127,7 +126,7 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
   ): ZStream[R, Err | MechanoidError, StateChange[S, E | Timeout.type]] =
     events
       .mapZIO(event => send(event).map(result => (event, result)))
-      .collect { case (event, TransitionResult.Goto(newState)) =>
+      .collect { case (event, TransitionResult.Goto(_)) =>
         event
       }
       .flatMap(_ => ZStream.fromHub(hub).take(1))

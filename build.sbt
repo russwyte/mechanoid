@@ -9,7 +9,7 @@ lazy val root = project
   .in(file("."))
   .settings(
     name                 := "mechanoid",
-    description          := "A type-safe, effect-oriented finite state machine library for Scala 3 built on ZIO",
+    description          := "A type-safe, effect-oriented finite state machine library for Scala built on ZIO",
     licenses             := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt")),
     homepage             := Some(url("https://github.com/russwyte/mechanoid")),
     scalaVersion         := scala3Version,

@@ -2,7 +2,6 @@ package mechanoid.persistence.lock
 
 import zio.*
 import zio.test.*
-import zio.test.Assertion.*
 import java.time.Instant
 
 object FSMInstanceLockSpec extends ZIOSpecDefault:
