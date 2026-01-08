@@ -109,15 +109,15 @@ object PostgresStressSpec extends ZIOSpecDefault:
         now  <- Clock.instant
         instanceId = uniqueId("lock-extend")
 
-        // Acquire
-        result <- lock.tryAcquire(instanceId, "node-1", Duration.fromMillis(100), now)
+        // Acquire with longer duration to ensure it doesn't expire during extensions
+        result <- lock.tryAcquire(instanceId, "node-1", Duration.fromSeconds(5), now)
         token = result.asInstanceOf[LockResult.Acquired[String]].token
 
         // Extend 50 times
         _ <- ZIO.foldLeft(1 to 50)(token) { (current, _) =>
           for
             later    <- Clock.instant
-            extended <- lock.extend(current, Duration.fromMillis(100), later)
+            extended <- lock.extend(current, Duration.fromSeconds(5), later)
           yield extended.get
         }
 
