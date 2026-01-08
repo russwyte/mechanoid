@@ -1,0 +1,133 @@
+package mechanoid.persistence.timeout
+
+import zio.*
+import java.time.Instant
+import scala.collection.mutable
+
+/** In-memory implementation of [[TimeoutStore]] for testing.
+  *
+  * Uses synchronization for thread safety. Not suitable for production -
+  * use a database-backed implementation instead.
+  *
+  * ==Usage==
+  * {{{
+  * val store = new InMemoryTimeoutStore[String]()
+  * val storeLayer = ZLayer.succeed[TimeoutStore[String]](store)
+  *
+  * ZIO.scoped {
+  *   // ... tests using the store
+  * }.provide(storeLayer)
+  * }}}
+  */
+class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
+  private val timeouts = mutable.Map[Id, ScheduledTimeout[Id]]()
+
+  def schedule(
+      instanceId: Id,
+      state: String,
+      deadline: Instant
+  ): ZIO[Any, Throwable, ScheduledTimeout[Id]] =
+    ZIO.succeed {
+      synchronized {
+        val timeout = ScheduledTimeout(
+          instanceId = instanceId,
+          state = state,
+          deadline = deadline,
+          createdAt = Instant.now()
+        )
+        timeouts(instanceId) = timeout
+        timeout
+      }
+    }
+
+  def cancel(instanceId: Id): ZIO[Any, Throwable, Boolean] =
+    ZIO.succeed {
+      synchronized {
+        timeouts.remove(instanceId).isDefined
+      }
+    }
+
+  def queryExpired(
+      limit: Int,
+      now: Instant
+  ): ZIO[Any, Throwable, List[ScheduledTimeout[Id]]] =
+    ZIO.succeed {
+      synchronized {
+        timeouts.values
+          .filter(_.canBeClaimed(now))
+          .toList
+          .sortBy(_.deadline)
+          .take(limit)
+      }
+    }
+
+  def claim(
+      instanceId: Id,
+      nodeId: String,
+      claimDuration: Duration,
+      now: Instant
+  ): ZIO[Any, Throwable, ClaimResult] =
+    ZIO.succeed {
+      synchronized {
+        timeouts.get(instanceId) match
+          case None =>
+            ClaimResult.NotFound
+
+          case Some(t) if t.isClaimed(now) =>
+            ClaimResult.AlreadyClaimed(t.claimedBy.get, t.claimedUntil.get)
+
+          case Some(t) =>
+            val claimed = t.copy(
+              claimedBy = Some(nodeId),
+              claimedUntil = Some(now.plusMillis(claimDuration.toMillis))
+            )
+            timeouts(instanceId) = claimed
+            ClaimResult.Claimed(claimed)
+      }
+    }
+
+  def complete(instanceId: Id): ZIO[Any, Throwable, Boolean] =
+    ZIO.succeed {
+      synchronized {
+        timeouts.remove(instanceId).isDefined
+      }
+    }
+
+  def release(instanceId: Id): ZIO[Any, Throwable, Boolean] =
+    ZIO.succeed {
+      synchronized {
+        timeouts.get(instanceId) match
+          case Some(t) =>
+            timeouts(instanceId) = t.copy(claimedBy = None, claimedUntil = None)
+            true
+          case None =>
+            false
+      }
+    }
+
+  def get(instanceId: Id): ZIO[Any, Throwable, Option[ScheduledTimeout[Id]]] =
+    ZIO.succeed {
+      synchronized {
+        timeouts.get(instanceId)
+      }
+    }
+
+  // Test helpers
+
+  /** Get all timeouts (for assertions). */
+  def getAll: Map[Id, ScheduledTimeout[Id]] =
+    synchronized {
+      timeouts.toMap
+    }
+
+  /** Clear all timeouts (for test isolation). */
+  def clear(): Unit =
+    synchronized {
+      timeouts.clear()
+    }
+
+  /** Get the count of scheduled timeouts. */
+  def size: Int =
+    synchronized {
+      timeouts.size
+    }
