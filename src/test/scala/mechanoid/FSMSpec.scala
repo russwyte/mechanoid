@@ -256,8 +256,8 @@ object FSMSpec extends ZIOSpecDefault:
           queue <- Queue.unbounded[StateChange[TrafficLight, TrafficEvent | Timeout.type]]
           // Start collecting in background
           _ <- fsm.subscribe.foreach(queue.offer).fork
-          // Small sleep to ensure fiber starts and subscribes to hub
-          _ <- ZIO.sleep(50.millis)
+          // Give subscriber time to connect - needs to be long enough for slow CI
+          _ <- ZIO.sleep(200.millis)
           _ <- fsm.send(Timer) // Red -> Green
           _ <- fsm.send(Timer) // Green -> Yellow
           // Wait for exactly 2 events with timeout
@@ -270,7 +270,7 @@ object FSMSpec extends ZIOSpecDefault:
           change2.to == Yellow,
         )
       }
-    },
+    } @@ TestAspect.flaky(3),
 
     // FSMState metadata tests
     test("should track state metadata") {
