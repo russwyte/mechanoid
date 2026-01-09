@@ -1,6 +1,7 @@
 package mechanoid.persistence.lock
 
 import zio.*
+import mechanoid.core.MechanoidError
 import java.time.Instant
 import scala.collection.mutable
 
@@ -17,7 +18,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       nodeId: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, LockResult[Id]] =
+  ): ZIO[Any, MechanoidError, LockResult[Id]] =
     ZIO.succeed {
       synchronized {
         locks.get(instanceId) match
@@ -43,10 +44,10 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       nodeId: String,
       duration: Duration,
       timeout: Duration,
-  ): ZIO[Any, Throwable, LockResult[Id]] =
+  ): ZIO[Any, MechanoidError, LockResult[Id]] =
     val deadline = java.time.Instant.now().plusMillis(timeout.toMillis)
 
-    def attempt: ZIO[Any, Throwable, LockResult[Id]] =
+    def attempt: ZIO[Any, MechanoidError, LockResult[Id]] =
       for
         now         <- Clock.instant
         result      <- tryAcquire(instanceId, nodeId, duration, now)
@@ -68,7 +69,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
     attempt
   end acquire
 
-  override def release(token: LockToken[Id]): ZIO[Any, Throwable, Boolean] =
+  override def release(token: LockToken[Id]): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         locks.get(token.instanceId) match
@@ -85,7 +86,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       token: LockToken[Id],
       additionalDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Option[LockToken[Id]]] =
+  ): ZIO[Any, MechanoidError, Option[LockToken[Id]]] =
     ZIO.succeed {
       synchronized {
         locks.get(token.instanceId) match
@@ -101,7 +102,7 @@ class InMemoryFSMInstanceLock[Id] extends FSMInstanceLock[Id]:
       }
     }
 
-  override def get(instanceId: Id, now: Instant): ZIO[Any, Throwable, Option[LockToken[Id]]] =
+  override def get(instanceId: Id, now: Instant): ZIO[Any, MechanoidError, Option[LockToken[Id]]] =
     ZIO.succeed {
       synchronized {
         locks.get(instanceId).filter(_.isValid(now))

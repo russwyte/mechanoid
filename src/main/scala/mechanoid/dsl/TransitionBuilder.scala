@@ -16,7 +16,7 @@ import mechanoid.core.*
   */
 final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
     private val definition: FSMDefinition[S, E, R, Err],
-    private val fromState: S,
+    private val fromStateOrdinal: Int,
     private val event: E | Timeout.type,
     private val guard: Option[ZIO[R, Err, Boolean]],
 ):
@@ -26,7 +26,12 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
     * If the guard returns false, the transition is rejected and the FSM stays in the current state.
     */
   def when[R1 <: R, Err1 >: Err](predicate: ZIO[R1, Err1, Boolean]): TransitionBuilder[S, E, R1, Err1] =
-    new TransitionBuilder(definition.asInstanceOf[FSMDefinition[S, E, R1, Err1]], fromState, event, Some(predicate))
+    new TransitionBuilder(
+      definition.asInstanceOf[FSMDefinition[S, E, R1, Err1]],
+      fromStateOrdinal,
+      event,
+      Some(predicate),
+    )
 
   /** Add a simple boolean guard condition.
     *
@@ -37,7 +42,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
     *   The boolean condition that must be true
     */
   def when(condition: Boolean): TransitionBuilder[S, E, R, Err] =
-    new TransitionBuilder(definition, fromState, event, Some(ZIO.succeed(condition)))
+    new TransitionBuilder(definition, fromStateOrdinal, event, Some(ZIO.succeed(condition)))
 
   /** Add a by-name boolean guard condition.
     *
@@ -48,7 +53,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
     *   The boolean condition (evaluated lazily)
     */
   def whenEval(condition: => Boolean): TransitionBuilder[S, E, R, Err] =
-    new TransitionBuilder(definition, fromState, event, Some(ZIO.succeed(condition)))
+    new TransitionBuilder(definition, fromStateOrdinal, event, Some(ZIO.succeed(condition)))
 
   /** Transition to the specified target state. */
   def goto(targetState: S): FSMDefinition[S, E, R, Err] =
@@ -57,7 +62,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       ZIO.succeed(TransitionResult.Goto(targetState)),
       None,
     )
-    definition.addTransition(fromState, event, transition)
+    definition.addTransition(fromStateOrdinal, event, transition)
 
   /** Stay in the current state (no transition). */
   def stay: FSMDefinition[S, E, R, Err] =
@@ -66,7 +71,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       ZIO.succeed(TransitionResult.Stay),
       None,
     )
-    definition.addTransition(fromState, event, transition)
+    definition.addTransition(fromStateOrdinal, event, transition)
 
   /** Stop the FSM. */
   def stop: FSMDefinition[S, E, R, Err] =
@@ -75,7 +80,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       ZIO.succeed(TransitionResult.Stop(None)),
       None,
     )
-    definition.addTransition(fromState, event, transition)
+    definition.addTransition(fromStateOrdinal, event, transition)
 
   /** Stop the FSM with a reason. */
   def stop(reason: String): FSMDefinition[S, E, R, Err] =
@@ -84,7 +89,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       ZIO.succeed(TransitionResult.Stop(Some(reason))),
       None,
     )
-    definition.addTransition(fromState, event, transition)
+    definition.addTransition(fromStateOrdinal, event, transition)
 
   /** Execute an effectful action that determines the transition result.
     *
@@ -96,13 +101,13 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       action,
       None,
     )
-    definition.asInstanceOf[FSMDefinition[S, E, R1, Err1]].addTransition(fromState, event, transition)
+    definition.asInstanceOf[FSMDefinition[S, E, R1, Err1]].addTransition(fromStateOrdinal, event, transition)
 
   /** Execute an effectful action and then transition to a target state. */
   def executing[R1 <: R, Err1 >: Err](action: ZIO[R1, Err1, Unit]): ExecutingBuilder[S, E, R1, Err1] =
     new ExecutingBuilder(
       definition.asInstanceOf[FSMDefinition[S, E, R1, Err1]],
-      fromState,
+      fromStateOrdinal,
       event,
       guard.asInstanceOf[Option[ZIO[R1, Err1, Boolean]]],
       action,
@@ -113,7 +118,7 @@ end TransitionBuilder
   */
 final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
     private val definition: FSMDefinition[S, E, R, Err],
-    private val fromState: S,
+    private val fromStateOrdinal: Int,
     private val event: E | Timeout.type,
     private val guard: Option[ZIO[R, Err, Boolean]],
     private val action: ZIO[R, Err, Unit],
@@ -125,7 +130,7 @@ final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
       action.as(TransitionResult.Goto(targetState)),
       None,
     )
-    definition.addTransition(fromState, event, transition)
+    definition.addTransition(fromStateOrdinal, event, transition)
 
   /** After executing the action, stay in the current state. */
   def stay: FSMDefinition[S, E, R, Err] =
@@ -134,5 +139,5 @@ final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
       action.as(TransitionResult.Stay),
       None,
     )
-    definition.addTransition(fromState, event, transition)
+    definition.addTransition(fromStateOrdinal, event, transition)
 end ExecutingBuilder

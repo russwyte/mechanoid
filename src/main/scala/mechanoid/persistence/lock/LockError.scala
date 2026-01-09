@@ -2,9 +2,10 @@ package mechanoid.persistence.lock
 
 import java.time.Instant
 import zio.Duration
+import mechanoid.core.MechanoidError
 
 /** Errors related to FSM instance locking. */
-enum LockError extends Exception:
+enum LockError extends MechanoidError:
   /** Lock is currently held by another node. */
   case LockBusy(instanceId: String, heldBy: String, until: Instant)
 
@@ -17,7 +18,7 @@ enum LockError extends Exception:
   /** Failed to release lock due to an underlying error. */
   case LockReleaseFailed(instanceId: String, cause: Throwable)
 
-  override def getMessage: String = this match
+  def message: String = this match
     case LockBusy(id, heldBy, until) =>
       s"Lock for FSM instance '$id' is held by node '$heldBy' until $until"
     case LockTimeout(id, waitedFor) =>
@@ -26,9 +27,4 @@ enum LockError extends Exception:
       s"Failed to acquire lock for FSM instance '$id': ${cause.getMessage}"
     case LockReleaseFailed(id, cause) =>
       s"Failed to release lock for FSM instance '$id': ${cause.getMessage}"
-
-  override def getCause: Throwable = this match
-    case LockAcquisitionFailed(_, cause) => cause
-    case LockReleaseFailed(_, cause)     => cause
-    case _                               => null
 end LockError

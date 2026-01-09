@@ -3,6 +3,7 @@ package mechanoid.persistence.postgres
 import saferis.*
 import zio.*
 import zio.json.*
+import mechanoid.core.{MechanoidError, PersistenceError}
 import mechanoid.persistence.command.*
 import java.time.Instant
 import scala.annotation.unused
@@ -53,8 +54,8 @@ class PostgresCommandStore[Cmd](
       instanceId: String,
       command: Cmd,
       idempotencyKey: String,
-  ): ZIO[Any, Throwable, PendingCommand[String, Cmd]] =
-    for
+  ): ZIO[Any, MechanoidError, PendingCommand[String, Cmd]] =
+    (for
       now <- Clock.instant
       commandJson = codec.encode(command)
 
@@ -86,14 +87,14 @@ class PostgresCommandStore[Cmd](
               case Some(row) => rowToPendingCommand(row)
               case None      => ZIO.fail(new RuntimeException("Command not found after conflict"))
             }
-    yield cmd
+    yield cmd).mapError(PersistenceError(_))
 
   override def claim(
       nodeId: String,
       limit: Int,
       claimDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, List[PendingCommand[String, Cmd]]] =
+  ): ZIO[Any, MechanoidError, List[PendingCommand[String, Cmd]]] =
     val claimedUntil = now.plusMillis(claimDuration.toMillis)
     transactor
       .run {
@@ -122,9 +123,10 @@ class PostgresCommandStore[Cmd](
       """.query[CommandRow]
       }
       .flatMap(rows => ZIO.foreach(rows.toList)(rowToPendingCommand))
+      .mapError(PersistenceError(_))
   end claim
 
-  override def complete(commandId: Long): ZIO[Any, Throwable, Boolean] =
+  override def complete(commandId: Long): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
@@ -134,12 +136,13 @@ class PostgresCommandStore[Cmd](
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
 
   override def fail(
       commandId: Long,
       error: String,
       retryAt: Option[Instant],
-  ): ZIO[Any, Throwable, Boolean] =
+  ): ZIO[Any, MechanoidError, Boolean] =
     val newStatus = if retryAt.isDefined then "pending" else "failed"
     transactor
       .run {
@@ -154,9 +157,10 @@ class PostgresCommandStore[Cmd](
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
   end fail
 
-  override def skip(commandId: Long, reason: String): ZIO[Any, Throwable, Boolean] =
+  override def skip(commandId: Long, reason: String): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
@@ -166,8 +170,11 @@ class PostgresCommandStore[Cmd](
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
 
-  override def getByIdempotencyKey(idempotencyKey: String): ZIO[Any, Throwable, Option[PendingCommand[String, Cmd]]] =
+  override def getByIdempotencyKey(
+      idempotencyKey: String
+  ): ZIO[Any, MechanoidError, Option[PendingCommand[String, Cmd]]] =
     transactor
       .run {
         sql"""
@@ -178,8 +185,9 @@ class PostgresCommandStore[Cmd](
       """.queryOne[CommandRow]
       }
       .flatMap(ZIO.foreach(_)(rowToPendingCommand))
+      .mapError(PersistenceError(_))
 
-  override def getByInstanceId(instanceId: String): ZIO[Any, Throwable, List[PendingCommand[String, Cmd]]] =
+  override def getByInstanceId(instanceId: String): ZIO[Any, MechanoidError, List[PendingCommand[String, Cmd]]] =
     transactor
       .run {
         sql"""
@@ -191,8 +199,9 @@ class PostgresCommandStore[Cmd](
       """.query[CommandRow]
       }
       .flatMap(rows => ZIO.foreach(rows.toList)(rowToPendingCommand))
+      .mapError(PersistenceError(_))
 
-  override def countByStatus: ZIO[Any, Throwable, Map[CommandStatus, Long]] =
+  override def countByStatus: ZIO[Any, MechanoidError, Map[CommandStatus, Long]] =
     transactor
       .run {
         sql"""
@@ -206,15 +215,18 @@ class PostgresCommandStore[Cmd](
           parseStatus(row.status).map(_ -> row.count)
         }.toMap
       }
+      .mapError(PersistenceError(_))
 
-  override def releaseExpiredClaims(now: Instant): ZIO[Any, Throwable, Int] =
-    transactor.run {
-      sql"""
+  override def releaseExpiredClaims(now: Instant): ZIO[Any, MechanoidError, Int] =
+    transactor
+      .run {
+        sql"""
         UPDATE commands
         SET status = 'pending', claimed_by = NULL, claimed_until = NULL
         WHERE status = 'processing' AND claimed_until < $now
       """.dml
-    }
+      }
+      .mapError(PersistenceError(_))
 
   private def rowToPendingCommand(row: CommandRow): ZIO[Any, Throwable, PendingCommand[String, Cmd]] =
     ZIO

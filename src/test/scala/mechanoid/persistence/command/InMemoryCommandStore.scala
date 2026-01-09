@@ -1,6 +1,7 @@
 package mechanoid.persistence.command
 
 import zio.*
+import mechanoid.core.MechanoidError
 import java.time.Instant
 import scala.collection.mutable
 
@@ -19,7 +20,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       instanceId: Id,
       command: Cmd,
       idempotencyKey: String,
-  ): ZIO[Any, Throwable, PendingCommand[Id, Cmd]] =
+  ): ZIO[Any, MechanoidError, PendingCommand[Id, Cmd]] =
     Clock.instant.map { now =>
       synchronized {
         byIdempotencyKey.get(idempotencyKey) match
@@ -51,7 +52,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       limit: Int,
       claimDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]] =
+  ): ZIO[Any, MechanoidError, List[PendingCommand[Id, Cmd]]] =
     ZIO.succeed {
       synchronized {
         val expiresAt = now.plusMillis(claimDuration.toMillis)
@@ -80,7 +81,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       }
     }
 
-  override def complete(commandId: Long): ZIO[Any, Throwable, Boolean] =
+  override def complete(commandId: Long): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         commands.get(commandId) match
@@ -96,7 +97,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       commandId: Long,
       error: String,
       retryAt: Option[Instant],
-  ): ZIO[Any, Throwable, Boolean] =
+  ): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         commands.get(commandId) match
@@ -115,7 +116,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       }
     }
 
-  override def skip(commandId: Long, reason: String): ZIO[Any, Throwable, Boolean] =
+  override def skip(commandId: Long, reason: String): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         commands.get(commandId) match
@@ -132,14 +133,14 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
 
   override def getByIdempotencyKey(
       idempotencyKey: String
-  ): ZIO[Any, Throwable, Option[PendingCommand[Id, Cmd]]] =
+  ): ZIO[Any, MechanoidError, Option[PendingCommand[Id, Cmd]]] =
     ZIO.succeed {
       synchronized {
         byIdempotencyKey.get(idempotencyKey).flatMap(commands.get)
       }
     }
 
-  override def getByInstanceId(instanceId: Id): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]] =
+  override def getByInstanceId(instanceId: Id): ZIO[Any, MechanoidError, List[PendingCommand[Id, Cmd]]] =
     ZIO.succeed {
       synchronized {
         commands.values
@@ -149,7 +150,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       }
     }
 
-  override def countByStatus: ZIO[Any, Throwable, Map[CommandStatus, Long]] =
+  override def countByStatus: ZIO[Any, MechanoidError, Map[CommandStatus, Long]] =
     ZIO.succeed {
       synchronized {
         commands.values
@@ -159,7 +160,7 @@ class InMemoryCommandStore[Id, Cmd] extends CommandStore[Id, Cmd]:
       }
     }
 
-  override def releaseExpiredClaims(now: Instant): ZIO[Any, Throwable, Int] =
+  override def releaseExpiredClaims(now: Instant): ZIO[Any, MechanoidError, Int] =
     ZIO.succeed {
       synchronized {
         val expired = claims.filter { case (_, (_, until)) => !now.isBefore(until) }

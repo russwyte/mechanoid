@@ -3,8 +3,8 @@ package mechanoid
 import zio.*
 import zio.stream.*
 import zio.test.*
+import mechanoid.core.{MechanoidError, Timeout}
 import mechanoid.persistence.*
-import mechanoid.core.Timeout
 import java.time.Instant
 import scala.collection.mutable
 
@@ -33,7 +33,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         instanceId: Id,
         event: E | Timeout.type,
         expectedSeqNr: Long,
-    ): ZIO[Any, Throwable, Long] =
+    ): ZIO[Any, MechanoidError, Long] =
       ZIO.succeed {
         // Simple implementation - just append without strict conflict detection
         // Use ConcurrentEventStore for tests that need real optimistic locking
@@ -45,22 +45,22 @@ object PersistentFSMSpec extends ZIOSpecDefault:
 
     override def loadEvents(
         instanceId: Id
-    ): ZStream[Any, Throwable, StoredEvent[Id, E | Timeout.type]] =
+    ): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]] =
       ZStream.fromIterable(events.getOrElse(instanceId, Seq.empty))
 
     override def loadSnapshot(
         instanceId: Id
-    ): ZIO[Any, Throwable, Option[FSMSnapshot[Id, S]]] =
+    ): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]] =
       ZIO.succeed(snapshots.get(instanceId))
 
     override def saveSnapshot(
         snapshot: FSMSnapshot[Id, S]
-    ): ZIO[Any, Throwable, Unit] =
+    ): ZIO[Any, MechanoidError, Unit] =
       ZIO.succeed {
         snapshots(snapshot.instanceId) = snapshot
       }
 
-    override def highestSequenceNr(instanceId: Id): ZIO[Any, Throwable, Long] =
+    override def highestSequenceNr(instanceId: Id): ZIO[Any, MechanoidError, Long] =
       ZIO.succeed {
         events
           .get(instanceId)
@@ -519,7 +519,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
       testEffect.map { case (errorOrResult, state, events) =>
         val error = errorOrResult.left.toOption.get
         assertTrue(
-          error.isInstanceOf[PersistenceError[?]], // The String error is wrapped
+          error == "External service unavailable", // The String error passes through as-is
           state == Pending,                        // State unchanged
           events.isEmpty,                          // Event NOT persisted on failure
         )
@@ -758,8 +758,8 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         instanceId: Id,
         event: E | Timeout.type,
         expectedSeqNr: Long,
-    ): ZIO[Any, Throwable, Long] =
-      ZIO.suspend {
+    ): ZIO[Any, MechanoidError, Long] =
+      ZIO.suspendSucceed {
         synchronized {
           val currentSeqNr = events
             .get(instanceId)
@@ -785,22 +785,22 @@ object PersistentFSMSpec extends ZIOSpecDefault:
 
     override def loadEvents(
         instanceId: Id
-    ): ZStream[Any, Throwable, StoredEvent[Id, E | Timeout.type]] =
+    ): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]] =
       ZStream.fromIterable(events.getOrElse(instanceId, Seq.empty))
 
     override def loadSnapshot(
         instanceId: Id
-    ): ZIO[Any, Throwable, Option[FSMSnapshot[Id, S]]] =
+    ): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]] =
       ZIO.succeed(snapshots.get(instanceId))
 
     override def saveSnapshot(
         snapshot: FSMSnapshot[Id, S]
-    ): ZIO[Any, Throwable, Unit] =
+    ): ZIO[Any, MechanoidError, Unit] =
       ZIO.succeed {
         snapshots(snapshot.instanceId) = snapshot
       }
 
-    override def highestSequenceNr(instanceId: Id): ZIO[Any, Throwable, Long] =
+    override def highestSequenceNr(instanceId: Id): ZIO[Any, MechanoidError, Long] =
       ZIO.succeed {
         events
           .get(instanceId)

@@ -3,6 +3,7 @@ package mechanoid.persistence.command
 import zio.*
 import java.time.Instant
 import scala.annotation.unused
+import mechanoid.core.MechanoidError
 
 /** Background service that processes commands from a [[CommandStore]].
   *
@@ -159,7 +160,7 @@ private final class CommandWorkerImpl[Id, Cmd](
           else
             for
               processed <- processBatch.catchAll { error =>
-                ZIO.logError(s"Error processing batch: ${error.getMessage}").as(0)
+                ZIO.logError(s"Error processing batch: $error").as(0)
               }
               _ <- metricsRef.update(m => m.copy(pollCount = m.pollCount + 1))
               _ <- waitWithJitter(processed == 0)
@@ -171,7 +172,7 @@ private final class CommandWorkerImpl[Id, Cmd](
   end runLoop
 
   /** Process a batch of commands. */
-  private def processBatch: ZIO[Any, Throwable, Int] =
+  private def processBatch: ZIO[Any, MechanoidError, Int] =
     for
       now      <- Clock.instant
       commands <- store.claim(config.nodeId, config.batchSize, config.claimDuration, now)
@@ -207,7 +208,7 @@ private final class CommandWorkerImpl[Id, Cmd](
     yield ()
 
     process.catchAll { error =>
-      ZIO.logError(s"Error processing command ${cmd.id}: ${error.getMessage}")
+      ZIO.logError(s"Error processing command ${cmd.id}: $error")
     }
   end processCommand
 
@@ -217,7 +218,7 @@ private final class CommandWorkerImpl[Id, Cmd](
       error: String,
       retryable: Boolean,
       now: Instant,
-  ): ZIO[Any, Throwable, Unit] =
+  ): ZIO[Any, MechanoidError, Unit] =
     val nextAttempt = cmd.attempts + 1
     val retryAt     =
       if retryable then config.retryPolicy.nextRetry(nextAttempt, now)
@@ -260,7 +261,7 @@ private final class CommandWorkerImpl[Id, Cmd](
             for
               now      <- Clock.instant
               released <- store.releaseExpiredClaims(now).catchAll { error =>
-                ZIO.logError(s"Error releasing claims: ${error.getMessage}").as(0)
+                ZIO.logError(s"Error releasing claims: $error").as(0)
               }
               _ <-
                 if released > 0 then metricsRef.update(m => m.copy(claimsReleased = m.claimsReleased + released))

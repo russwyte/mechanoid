@@ -210,7 +210,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
       instanceId: Id,
       event: E | Timeout.type,
       expectedSeqNr: Long,
-  ): ZIO[Any, Throwable, Long]
+  ): ZIO[Any, MechanoidError, Long]
 
   /** Load all events for an FSM instance in sequence order.
     *
@@ -221,7 +221,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @return
     *   Stream of stored events
     */
-  def loadEvents(instanceId: Id): ZStream[Any, Throwable, StoredEvent[Id, E | Timeout.type]]
+  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]]
 
   /** Load events starting from a specific sequence number.
     *
@@ -237,7 +237,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
   def loadEventsFrom(
       instanceId: Id,
       fromSequenceNr: Long,
-  ): ZStream[Any, Throwable, StoredEvent[Id, E | Timeout.type]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]] =
     loadEvents(instanceId).filter(_.sequenceNr > fromSequenceNr)
 
   /** Get the latest snapshot for an FSM instance.
@@ -249,7 +249,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @return
     *   The latest snapshot if available
     */
-  def loadSnapshot(instanceId: Id): ZIO[Any, Throwable, Option[FSMSnapshot[Id, S]]]
+  def loadSnapshot(instanceId: Id): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]]
 
   /** Save a state snapshot.
     *
@@ -259,7 +259,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @param snapshot
     *   The snapshot to persist
     */
-  def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, Throwable, Unit]
+  def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, MechanoidError, Unit]
 
   /** Delete events up to a sequence number (optional cleanup).
     *
@@ -270,7 +270,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @param toSequenceNr
     *   Delete events with sequence number <= this value
     */
-  def deleteEventsTo(@unused instanceId: Id, @unused toSequenceNr: Long): ZIO[Any, Throwable, Unit] =
+  def deleteEventsTo(@unused instanceId: Id, @unused toSequenceNr: Long): ZIO[Any, MechanoidError, Unit] =
     ZIO.unit
 
   /** Get the highest sequence number for an FSM instance.
@@ -282,7 +282,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @return
     *   The highest sequence number
     */
-  def highestSequenceNr(instanceId: Id): ZIO[Any, Throwable, Long]
+  def highestSequenceNr(instanceId: Id): ZIO[Any, MechanoidError, Long]
 
   /** Get the current state without loading the full FSM runtime.
     *
@@ -297,6 +297,6 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @return
     *   The current state if the instance exists, None otherwise
     */
-  def currentState(instanceId: Id): ZIO[Any, Throwable, Option[S]] =
+  def currentState(instanceId: Id): ZIO[Any, MechanoidError, Option[S]] =
     loadSnapshot(instanceId).map(_.map(_.state))
 end EventStore

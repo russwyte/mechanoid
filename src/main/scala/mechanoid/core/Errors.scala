@@ -1,7 +1,10 @@
 package mechanoid.core
 
-/** Base trait for all Mechanoid errors. */
-sealed trait MechanoidError
+/** Base trait for all Mechanoid errors.
+  *
+  * Extend this trait to create custom error types that integrate with the Mechanoid error handling.
+  */
+trait MechanoidError
 
 /** Error indicating an invalid state transition was attempted.
   *
@@ -47,10 +50,25 @@ final case class ProcessingTimeoutError(
 
 /** Error indicating a persistence operation failed.
   *
+  * @param message
+  *   A description of what went wrong
   * @param cause
-  *   The underlying error
+  *   The underlying Throwable, if available (preserves stack trace)
   */
-final case class PersistenceError[E](cause: E) extends MechanoidError
+final case class PersistenceError(
+    message: String,
+    cause: Option[Throwable] = None,
+) extends Exception(message, cause.orNull)
+    with MechanoidError
+
+object PersistenceError:
+  /** Create from a Throwable, extracting its message and preserving the cause. */
+  def apply(cause: Throwable): PersistenceError =
+    PersistenceError(Option(cause.getMessage).getOrElse(cause.getClass.getSimpleName), Some(cause))
+
+  /** Create from any error type, using its toString as the message. */
+  def fromError[E](error: E): PersistenceError =
+    PersistenceError(error.toString)
 
 /** Error indicating a sequence conflict during distributed operation.
   *
@@ -109,6 +127,5 @@ final case class EventReplayError(
   * @param cause
   *   The underlying lock error
   */
-final case class LockingError(cause: Throwable)
-    extends Exception(s"Locking operation failed: ${cause.getMessage}", cause)
-    with MechanoidError
+final case class LockingError(cause: MechanoidError) extends MechanoidError:
+  def message: String = s"Locking operation failed: $cause"

@@ -521,6 +521,132 @@ object FSMSpec extends ZIOSpecDefault:
         )
       }
     },
+    test("rich states - transition matches by shape, not exact value") {
+      // This test demonstrates the key feature: transitions match by state "shape" (ordinal),
+      // not by exact value. So a transition defined for Failed("") will match Failed("timeout"),
+      // Failed("network error"), or any other Failed(_).
+      import ConnectionState.*
+      import ConnectionEvent.*
+
+      // Define transitions with "template" values - actual data doesn't matter for matching
+      val definition = FSMDefinition[ConnectionState, ConnectionEvent]
+        .when(Failed("")) // Will match ANY Failed(_)
+        .on(Connect)
+        .goto(Connecting(1))
+        .when(Connecting(0)) // Will match ANY Connecting(_)
+        .on(Failure(""))     // Will match ANY Failure(_) - events also use ordinal matching
+        .goto(Failed("retry"))
+        .when(Connected("")) // Will match ANY Connected(_)
+        .on(Disconnect)
+        .goto(Disconnected)
+
+      ZIO.scoped {
+        for
+          // Start in a Failed state with specific data
+          fsm <- definition.build(Failed("initial timeout error"))
+
+          // Send Connect - should match the transition from Failed("") because both have ordinal 3
+          _      <- fsm.send(Connect)
+          state1 <- fsm.currentState
+
+          // Now we're in Connecting(1), send Failure to go back to Failed
+          _      <- fsm.send(Failure(""))
+          state2 <- fsm.currentState
+
+          // Even though we defined transition from Connected(""), let's verify
+          // by starting fresh and reaching Connected with different data
+          fsm2   <- definition.build(Connected("session-999"))
+          _      <- fsm2.send(Disconnect)
+          state3 <- fsm2.currentState
+        yield assertTrue(
+          state1 == Connecting(1),   // Transition worked even though we started with different Failed
+          state2 == Failed("retry"), // Went to the specified target state
+          state3 == Disconnected,    // Connected("session-999") matched Connected("")
+        )
+      }
+    },
+    test("rich states - entry/exit actions work with shape matching") {
+      import ConnectionState.*
+      import ConnectionEvent.*
+
+      for
+        actionLog <- Ref.make(List.empty[String])
+
+        // Define entry/exit actions with template states - they match by shape
+        definition: FSMDefinition[ConnectionState, ConnectionEvent, Any, Nothing] =
+          FSMDefinition[ConnectionState, ConnectionEvent]
+            .when(Disconnected)
+            .on(Connect)
+            .goto(Connecting(1))
+            .when(Connecting(0)) // Template - matches any Connecting(_)
+            .on(Success(""))
+            .goto(Connected("session"))
+            // Actions defined with template values match ANY state of that shape
+            .onState(Connecting(999))
+            .onEntry(actionLog.update(_ :+ "entering-connecting"))
+            .onExit(actionLog.update(_ :+ "exiting-connecting"))
+            .done
+            .onState(Connected("template"))
+            .onEntry(actionLog.update(_ :+ "entering-connected"))
+            .done
+
+        result <- ZIO.scoped {
+          for
+            fsm <- definition.build(Disconnected)
+            _   <- fsm.send(Connect)     // -> Connecting(1), entry action should run
+            _   <- fsm.send(Success("")) // -> Connected("session"), exit then entry actions
+            log <- actionLog.get
+          yield log
+        }
+      yield assertTrue(
+        result == List("entering-connecting", "exiting-connecting", "entering-connected")
+      )
+      end for
+    },
+    test("rich events - transition matches by event shape, not exact value") {
+      // This test verifies that events with data (like PaymentSucceeded(transactionId))
+      // match by their shape (ordinal), not by exact value. This is critical for
+      // event sourcing where you define transitions with template events but send
+      // events with real data.
+      import ConnectionState.*
+      import ConnectionEvent.*
+
+      // Define transitions with "template" event values
+      val definition = FSMDefinition[ConnectionState, ConnectionEvent]
+        .when(Disconnected)
+        .on(Connect) // Simple case object
+        .goto(Connecting(1))
+        .when(Connecting(0))
+        .on(Success("")) // Template: empty string
+        .goto(Connected("session-from-event"))
+        .when(Connecting(0))
+        .on(Failure("")) // Template: empty string
+        .goto(Failed("failure-happened"))
+
+      ZIO.scoped {
+        for
+          fsm <- definition.build(Disconnected)
+
+          // Send Connect (case object, works as before)
+          _      <- fsm.send(Connect)
+          state1 <- fsm.currentState
+
+          // Send Success with DIFFERENT data than the template - should still match!
+          // This is the key test: Success("real-session-id-123") should match Success("")
+          _      <- fsm.send(Success("real-session-id-123"))
+          state2 <- fsm.currentState
+
+          // Start fresh and test Failure with different data
+          fsm2   <- definition.build(Connecting(5)) // Different retry count
+          _      <- fsm2.send(Failure("network timeout after 30s"))
+          state3 <- fsm2.currentState
+        yield assertTrue(
+          state1 == Connecting(1),
+          state2 == Connected("session-from-event"), // Matched even though event had different data
+          state3 == Failed("failure-happened"),      // Matched Failure("network...") to Failure("")
+        )
+      }
+    },
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(
     5.seconds
   )

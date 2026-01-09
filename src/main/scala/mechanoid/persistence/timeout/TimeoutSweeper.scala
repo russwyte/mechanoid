@@ -1,6 +1,7 @@
 package mechanoid.persistence.timeout
 
 import zio.*
+import mechanoid.core.{MechanoidError, PersistenceError}
 
 /** Metrics emitted by the sweeper for monitoring.
   *
@@ -114,9 +115,9 @@ object TimeoutSweeper:
   def make[Id](
       config: TimeoutSweeperConfig,
       timeoutStore: TimeoutStore[Id],
-      onTimeout: (Id, String) => ZIO[Any, Throwable, Unit],
+      onTimeout: (Id, String) => ZIO[Any, MechanoidError, Unit],
       leaseStore: Option[LeaseStore] = None,
-  ): ZIO[Scope, Throwable, TimeoutSweeper] =
+  ): ZIO[Scope, MechanoidError, TimeoutSweeper] =
     for
       runningRef <- Ref.make(true)
       metricsRef <- Ref.make(SweeperMetrics.empty)
@@ -129,8 +130,10 @@ object TimeoutSweeper:
               LeaderElection.make(leConfig, config.nodeId, ls).map(Some(_))
             case None =>
               ZIO.fail(
-                new IllegalArgumentException(
-                  "LeaseStore required when leader election is configured"
+                PersistenceError(
+                  new IllegalArgumentException(
+                    "LeaseStore required when leader election is configured"
+                  )
                 )
               )
         case None =>
@@ -155,7 +158,7 @@ object TimeoutSweeper:
   private def runSweepLoop[Id](
       config: TimeoutSweeperConfig,
       store: TimeoutStore[Id],
-      onTimeout: (Id, String) => ZIO[Any, Throwable, Unit],
+      onTimeout: (Id, String) => ZIO[Any, MechanoidError, Unit],
       runningRef: Ref[Boolean],
       metricsRef: Ref[SweeperMetrics],
       leaderElection: Option[LeaderElection],
@@ -170,7 +173,7 @@ object TimeoutSweeper:
             performSweep(config, store, onTimeout, metricsRef)
               .catchAll { error =>
                 metricsRef.update(m => m.copy(errors = m.errors + 1)) *>
-                  ZIO.logError(s"Sweep error: ${error.getMessage}").as(0)
+                  ZIO.logError(s"Sweep error: $error").as(0)
               }
           else ZIO.succeed(0)
       yield count
@@ -205,9 +208,9 @@ object TimeoutSweeper:
   private def performSweep[Id](
       config: TimeoutSweeperConfig,
       store: TimeoutStore[Id],
-      onTimeout: (Id, String) => ZIO[Any, Throwable, Unit],
+      onTimeout: (Id, String) => ZIO[Any, MechanoidError, Unit],
       metricsRef: Ref[SweeperMetrics],
-  ): ZIO[Any, Throwable, Int] =
+  ): ZIO[Any, MechanoidError, Int] =
     for
       now     <- Clock.instant
       expired <- store.queryExpired(config.batchSize, now)
@@ -219,10 +222,10 @@ object TimeoutSweeper:
   private def processTimeout[Id](
       config: TimeoutSweeperConfig,
       store: TimeoutStore[Id],
-      onTimeout: (Id, String) => ZIO[Any, Throwable, Unit],
+      onTimeout: (Id, String) => ZIO[Any, MechanoidError, Unit],
       timeout: ScheduledTimeout[Id],
       metricsRef: Ref[SweeperMetrics],
-  ): ZIO[Any, Throwable, Boolean] =
+  ): ZIO[Any, MechanoidError, Boolean] =
     for
       now         <- Clock.instant
       claimResult <- store.claim(
@@ -243,7 +246,7 @@ object TimeoutSweeper:
               // Release claim on error so another node can retry
               store.release(timeout.instanceId) *>
                 ZIO.logWarning(
-                  s"Failed to fire timeout for ${timeout.instanceId}: ${error.getMessage}"
+                  s"Failed to fire timeout for ${timeout.instanceId}: $error"
                 )
             }
             .as(true)
