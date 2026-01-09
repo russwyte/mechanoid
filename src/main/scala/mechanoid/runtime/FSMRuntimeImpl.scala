@@ -34,9 +34,11 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
   ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
     for
       fsmState <- stateRef.get
-      currentState = fsmState.current
+      currentState   = fsmState.current
+      currentOrdinal = definition.stateOrdinal(currentState)
+      eventOrdinal   = definition.eventOrdinal(event)
       transition <- ZIO
-        .fromOption(definition.transitions.get((currentState, event)))
+        .fromOption(definition.transitions.get((currentOrdinal, eventOrdinal)))
         .orElseFail(InvalidTransitionError(currentState, event: MEvent))
       result <- executeTransition(fsmState, event, transition)
     yield result
@@ -92,23 +94,25 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
         yield ()
 
   private def runEntryAction(state: S): ZIO[R, Err, Unit] =
-    definition.lifecycles.get(state).flatMap(_.onEntry).getOrElse(ZIO.unit)
+    definition.lifecycles.get(definition.stateOrdinal(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
 
   private def runExitAction(state: S): ZIO[R, Err, Unit] =
-    definition.lifecycles.get(state).flatMap(_.onExit).getOrElse(ZIO.unit)
+    definition.lifecycles.get(definition.stateOrdinal(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
 
   /** Start a timeout for the given state.
     *
-    * Uses a simple approach: fork a fiber that sleeps, then checks if we're still in the same state. If yes, send the
-    * timeout event. If the state has changed, the timeout is effectively cancelled (no-op).
+    * Uses a simple approach: fork a fiber that sleeps, then checks if we're still in the same state shape. If yes, send
+    * the timeout event. If the state shape has changed, the timeout is effectively cancelled (no-op).
     *
     * This avoids the complexity of manually tracking and interrupting fibers.
     */
   private[runtime] def startTimeout(state: S): ZIO[R, Nothing, Unit] =
-    ZIO.foreachDiscard(definition.timeouts.get(state)) { duration =>
+    val stateOrd = definition.stateOrdinal(state)
+    ZIO.foreachDiscard(definition.timeouts.get(stateOrd)) { duration =>
       (ZIO.sleep(zio.Duration.fromScala(duration)) *>
         stateRef.get.flatMap { currentFsmState =>
-          ZIO.when(currentFsmState.current == state)(sendInternal(Timeout).ignore)
+          // Compare by ordinal (shape) not exact value - timeout fires if still in same state shape
+          ZIO.when(definition.stateOrdinal(currentFsmState.current) == stateOrd)(sendInternal(Timeout).ignore)
         }).forkDaemon
     }
 

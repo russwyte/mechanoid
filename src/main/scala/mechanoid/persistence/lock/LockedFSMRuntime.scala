@@ -83,8 +83,9 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock]
               )
           }
           .mapError {
-            case e: LockError => e
-            case e: Throwable => LockError.LockAcquisitionFailed(instanceId.toString, e)
+            case e: LockError      => e
+            case e: MechanoidError =>
+              LockError.LockAcquisitionFailed(instanceId.toString, new RuntimeException(e.toString))
           }
       }
     else ZIO.unit
@@ -131,7 +132,7 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock]
 
   override def isRunning: UIO[Boolean] = underlying.isRunning
 
-  override def saveSnapshot: ZIO[Any, Throwable, Unit] =
+  override def saveSnapshot: ZIO[Any, MechanoidError, Unit] =
     // Snapshots don't need locking - they're read-only from the FSM's perspective
     underlying.saveSnapshot
 end LockedFSMRuntime

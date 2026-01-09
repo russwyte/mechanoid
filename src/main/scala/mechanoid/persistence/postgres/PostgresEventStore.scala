@@ -4,7 +4,7 @@ import saferis.*
 import zio.*
 import zio.json.*
 import zio.stream.*
-import mechanoid.core.*
+import mechanoid.core.{*, given}
 import mechanoid.persistence.*
 import java.time.Instant
 import scala.annotation.unused
@@ -86,7 +86,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
       instanceId: String,
       event: E | Timeout.type,
       expectedSeqNr: Long,
-  ): ZIO[Any, Throwable, Long] =
+  ): ZIO[Any, MechanoidError, Long] =
     val eventJson = codec.encodeEvent(event)
 
     transactor
@@ -118,9 +118,13 @@ class PostgresEventStore[S <: MState, E <: MEvent](
         case e: java.sql.SQLException if e.getSQLState == "23505" =>
           ZIO.fail(SequenceConflictError(instanceId, expectedSeqNr, expectedSeqNr))
       }
+      .mapError {
+        case e: MechanoidError => e
+        case e: Throwable      => PersistenceError(e)
+      }
   end append
 
-  override def loadEvents(instanceId: String): ZStream[Any, Throwable, StoredEvent[String, E | Timeout.type]] =
+  override def loadEvents(instanceId: String): ZStream[Any, MechanoidError, StoredEvent[String, E | Timeout.type]] =
     ZStream.fromIterableZIO {
       transactor
         .run {
@@ -134,12 +138,13 @@ class PostgresEventStore[S <: MState, E <: MEvent](
         .flatMap { rows =>
           ZIO.foreach(rows)(rowToStoredEvent)
         }
+        .mapError(PersistenceError(_))
     }
 
   override def loadEventsFrom(
       instanceId: String,
       fromSequenceNr: Long,
-  ): ZStream[Any, Throwable, StoredEvent[String, E | Timeout.type]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[String, E | Timeout.type]] =
     ZStream.fromIterableZIO {
       transactor
         .run {
@@ -154,9 +159,10 @@ class PostgresEventStore[S <: MState, E <: MEvent](
         .flatMap { rows =>
           ZIO.foreach(rows)(rowToStoredEvent)
         }
+        .mapError(PersistenceError(_))
     }
 
-  override def loadSnapshot(instanceId: String): ZIO[Any, Throwable, Option[FSMSnapshot[String, S]]] =
+  override def loadSnapshot(instanceId: String): ZIO[Any, MechanoidError, Option[FSMSnapshot[String, S]]] =
     transactor
       .run {
         sql"""
@@ -182,12 +188,14 @@ class PostgresEventStore[S <: MState, E <: MEvent](
               )
             }
       }
+      .mapError(PersistenceError(_))
 
-  override def saveSnapshot(snapshot: FSMSnapshot[String, S]): ZIO[Any, Throwable, Unit] =
+  override def saveSnapshot(snapshot: FSMSnapshot[String, S]): ZIO[Any, MechanoidError, Unit] =
     val stateJson = codec.encodeState(snapshot.state)
 
-    transactor.run {
-      sql"""
+    transactor
+      .run {
+        sql"""
         INSERT INTO fsm_snapshots (instance_id, state_data, sequence_nr, created_at)
         VALUES (${snapshot.instanceId}, $stateJson::jsonb, ${snapshot.sequenceNr}, ${snapshot.timestamp})
         ON CONFLICT (instance_id) DO UPDATE SET
@@ -195,19 +203,24 @@ class PostgresEventStore[S <: MState, E <: MEvent](
           sequence_nr = EXCLUDED.sequence_nr,
           created_at = EXCLUDED.created_at
       """.dml
-    }.unit
+      }
+      .unit
+      .mapError(PersistenceError(_))
   end saveSnapshot
 
-  override def deleteEventsTo(instanceId: String, toSequenceNr: Long): ZIO[Any, Throwable, Unit] =
-    transactor.run {
-      sql"""
+  override def deleteEventsTo(instanceId: String, toSequenceNr: Long): ZIO[Any, MechanoidError, Unit] =
+    transactor
+      .run {
+        sql"""
         DELETE FROM fsm_events
         WHERE instance_id = $instanceId
           AND sequence_nr <= $toSequenceNr
       """.dml
-    }.unit
+      }
+      .unit
+      .mapError(PersistenceError(_))
 
-  override def highestSequenceNr(instanceId: String): ZIO[Any, Throwable, Long] =
+  override def highestSequenceNr(instanceId: String): ZIO[Any, MechanoidError, Long] =
     transactor
       .run {
         sql"""
@@ -217,6 +230,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
       """.queryValue[Long]
       }
       .map(_.getOrElse(0L))
+      .mapError(PersistenceError(_))
 
   private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, E | Timeout.type]] =
     ZIO

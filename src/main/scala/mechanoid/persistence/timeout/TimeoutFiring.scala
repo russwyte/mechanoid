@@ -53,7 +53,7 @@ object TimeoutFiring:
     */
   def makeCallback[Id, S <: MState, E <: MEvent](
       eventStore: EventStore[Id, S, E]
-  ): (Id, String) => ZIO[Any, Throwable, Unit] =
+  ): (Id, String) => ZIO[Any, MechanoidError, Unit] =
     (instanceId, _) =>
       for
         seqNr <- eventStore.highestSequenceNr(instanceId)
@@ -86,8 +86,8 @@ object TimeoutFiring:
     */
   def makeVerifyingCallback[Id, S <: MState, E <: MEvent](
       eventStore: EventStore[Id, S, E],
-      getCurrentState: Id => ZIO[Any, Throwable, Option[S]],
-  ): (Id, String) => ZIO[Any, Throwable, Unit] =
+      getCurrentState: Id => ZIO[Any, MechanoidError, Option[S]],
+  ): (Id, String) => ZIO[Any, MechanoidError, Unit] =
     (instanceId, expectedState) =>
       for
         currentStateOpt <- getCurrentState(instanceId)
@@ -124,6 +124,6 @@ object TimeoutFiring:
     */
   def makeCallbackDirect[Id, S <: MState, E <: MEvent](
       eventStore: EventStore[Id, S, E]
-  ): (Id, String) => ZIO[Any, Throwable, Unit] =
+  ): (Id, String) => ZIO[Any, MechanoidError, Unit] =
     makeCallback(eventStore)
 end TimeoutFiring

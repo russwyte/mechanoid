@@ -2,6 +2,7 @@ package mechanoid.persistence.command
 
 import zio.*
 import java.time.Instant
+import mechanoid.core.MechanoidError
 
 /** Storage backend for the command queue (transactional outbox pattern).
   *
@@ -73,7 +74,7 @@ trait CommandStore[Id, Cmd]:
       instanceId: Id,
       command: Cmd,
       idempotencyKey: String,
-  ): ZIO[Any, Throwable, PendingCommand[Id, Cmd]]
+  ): ZIO[Any, MechanoidError, PendingCommand[Id, Cmd]]
 
   /** Claim commands for processing.
     *
@@ -98,7 +99,7 @@ trait CommandStore[Id, Cmd]:
       limit: Int,
       claimDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]]
+  ): ZIO[Any, MechanoidError, List[PendingCommand[Id, Cmd]]]
 
   /** Mark a command as successfully completed.
     *
@@ -107,7 +108,7 @@ trait CommandStore[Id, Cmd]:
     * @return
     *   true if the command was marked complete, false if not found or already completed
     */
-  def complete(commandId: Long): ZIO[Any, Throwable, Boolean]
+  def complete(commandId: Long): ZIO[Any, MechanoidError, Boolean]
 
   /** Mark a command as failed.
     *
@@ -127,7 +128,7 @@ trait CommandStore[Id, Cmd]:
       commandId: Long,
       error: String,
       retryAt: Option[Instant],
-  ): ZIO[Any, Throwable, Boolean]
+  ): ZIO[Any, MechanoidError, Boolean]
 
   /** Mark a command as skipped (e.g., duplicate detected at execution time).
     *
@@ -138,7 +139,7 @@ trait CommandStore[Id, Cmd]:
     * @return
     *   true if the command was marked skipped
     */
-  def skip(commandId: Long, reason: String): ZIO[Any, Throwable, Boolean]
+  def skip(commandId: Long, reason: String): ZIO[Any, MechanoidError, Boolean]
 
   /** Get a command by its idempotency key.
     *
@@ -151,7 +152,7 @@ trait CommandStore[Id, Cmd]:
     */
   def getByIdempotencyKey(
       idempotencyKey: String
-  ): ZIO[Any, Throwable, Option[PendingCommand[Id, Cmd]]]
+  ): ZIO[Any, MechanoidError, Option[PendingCommand[Id, Cmd]]]
 
   /** Get all commands for an FSM instance.
     *
@@ -162,7 +163,7 @@ trait CommandStore[Id, Cmd]:
     * @return
     *   All commands for this instance, ordered by enqueue time
     */
-  def getByInstanceId(instanceId: Id): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]]
+  def getByInstanceId(instanceId: Id): ZIO[Any, MechanoidError, List[PendingCommand[Id, Cmd]]]
 
   /** Count commands by status.
     *
@@ -171,7 +172,7 @@ trait CommandStore[Id, Cmd]:
     * @return
     *   Map of status to count
     */
-  def countByStatus: ZIO[Any, Throwable, Map[CommandStatus, Long]]
+  def countByStatus: ZIO[Any, MechanoidError, Map[CommandStatus, Long]]
 
   /** Release expired claims.
     *
@@ -183,5 +184,5 @@ trait CommandStore[Id, Cmd]:
     * @return
     *   Number of claims released
     */
-  def releaseExpiredClaims(now: Instant): ZIO[Any, Throwable, Int]
+  def releaseExpiredClaims(now: Instant): ZIO[Any, MechanoidError, Int]
 end CommandStore

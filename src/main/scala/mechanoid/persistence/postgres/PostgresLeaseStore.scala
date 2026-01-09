@@ -2,6 +2,7 @@ package mechanoid.persistence.postgres
 
 import saferis.*
 import zio.*
+import mechanoid.core.{MechanoidError, PersistenceError}
 import mechanoid.persistence.timeout.*
 import java.time.Instant
 import scala.annotation.unused
@@ -20,7 +21,7 @@ class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
       holder: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Option[Lease]] =
+  ): ZIO[Any, MechanoidError, Option[Lease]] =
     val expiresAt = now.plusMillis(duration.toMillis)
     transactor
       .run {
@@ -37,6 +38,7 @@ class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
       """.queryOne[LeaseRow]
       }
       .map(_.map(rowToLease))
+      .mapError(PersistenceError(_))
   end tryAcquire
 
   override def renew(
@@ -44,7 +46,7 @@ class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
       holder: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Boolean] =
+  ): ZIO[Any, MechanoidError, Boolean] =
     val newExpiry = now.plusMillis(duration.toMillis)
     transactor
       .run {
@@ -57,9 +59,10 @@ class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
   end renew
 
-  override def release(key: String, holder: String): ZIO[Any, Throwable, Boolean] =
+  override def release(key: String, holder: String): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
@@ -69,8 +72,9 @@ class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
 
-  override def get(key: String): ZIO[Any, Throwable, Option[Lease]] =
+  override def get(key: String): ZIO[Any, MechanoidError, Option[Lease]] =
     transactor
       .run {
         sql"""
@@ -80,6 +84,7 @@ class PostgresLeaseStore(transactor: Transactor) extends LeaseStore:
       """.queryOne[LeaseRow]
       }
       .map(_.map(rowToLease))
+      .mapError(PersistenceError(_))
 
   private def rowToLease(row: LeaseRow): Lease =
     Lease(

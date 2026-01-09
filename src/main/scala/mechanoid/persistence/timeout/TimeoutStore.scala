@@ -2,6 +2,7 @@ package mechanoid.persistence.timeout
 
 import zio.*
 import java.time.Instant
+import mechanoid.core.MechanoidError
 
 /** Abstract storage trait for durable timeouts in distributed environments.
   *
@@ -90,7 +91,7 @@ trait TimeoutStore[Id]:
       instanceId: Id,
       state: String,
       deadline: Instant,
-  ): ZIO[Any, Throwable, ScheduledTimeout[Id]]
+  ): ZIO[Any, MechanoidError, ScheduledTimeout[Id]]
 
   /** Cancel a timeout for an FSM instance.
     *
@@ -102,7 +103,7 @@ trait TimeoutStore[Id]:
     * @return
     *   true if a timeout was cancelled, false if none existed
     */
-  def cancel(instanceId: Id): ZIO[Any, Throwable, Boolean]
+  def cancel(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
 
   /** Query expired timeouts that are not currently claimed.
     *
@@ -126,7 +127,7 @@ trait TimeoutStore[Id]:
   def queryExpired(
       limit: Int,
       now: Instant,
-  ): ZIO[Any, Throwable, List[ScheduledTimeout[Id]]]
+  ): ZIO[Any, MechanoidError, List[ScheduledTimeout[Id]]]
 
   /** Atomically claim a timeout for processing.
     *
@@ -161,7 +162,7 @@ trait TimeoutStore[Id]:
       nodeId: String,
       claimDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, ClaimResult]
+  ): ZIO[Any, MechanoidError, ClaimResult]
 
   /** Complete (remove) a timeout after successful processing.
     *
@@ -172,7 +173,7 @@ trait TimeoutStore[Id]:
     * @return
     *   true if deleted, false if not found
     */
-  def complete(instanceId: Id): ZIO[Any, Throwable, Boolean]
+  def complete(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
 
   /** Release a claim without completing.
     *
@@ -184,7 +185,7 @@ trait TimeoutStore[Id]:
     * @return
     *   true if released, false if not found
     */
-  def release(instanceId: Id): ZIO[Any, Throwable, Boolean]
+  def release(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
 
   /** Get the current timeout for an instance (if any).
     *
@@ -195,5 +196,5 @@ trait TimeoutStore[Id]:
     * @return
     *   The scheduled timeout if one exists
     */
-  def get(instanceId: Id): ZIO[Any, Throwable, Option[ScheduledTimeout[Id]]]
+  def get(instanceId: Id): ZIO[Any, MechanoidError, Option[ScheduledTimeout[Id]]]
 end TimeoutStore

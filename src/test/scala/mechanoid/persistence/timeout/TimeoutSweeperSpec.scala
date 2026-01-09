@@ -2,6 +2,7 @@ package mechanoid.persistence.timeout
 
 import zio.*
 import zio.test.*
+import mechanoid.core.PersistenceError
 
 object TimeoutSweeperSpec extends ZIOSpecDefault:
 
@@ -150,7 +151,7 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
           callCount <- Ref.make(0)
           onTimeout = (_: String, _: String) =>
             callCount.update(_ + 1) *>
-              ZIO.fail(new RuntimeException("Simulated failure"))
+              ZIO.fail(PersistenceError(new RuntimeException("Simulated failure")))
 
           config = TimeoutSweeperConfig()
             .withSweepInterval(Duration.fromMillis(50))

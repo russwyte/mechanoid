@@ -2,6 +2,7 @@ package mechanoid.persistence.timeout
 
 import zio.*
 import zio.stream.*
+import mechanoid.core.MechanoidError
 
 /** Leader election service for single-active-sweeper mode.
   *
@@ -76,7 +77,7 @@ object LeaderElection:
       config: LeaderElectionConfig,
       nodeId: String,
       store: LeaseStore,
-  ): ZIO[Scope, Throwable, LeaderElection] =
+  ): ZIO[Scope, MechanoidError, LeaderElection] =
     for
       isLeaderRef <- Ref.make(false)
       hub         <- Hub.bounded[Boolean](16)

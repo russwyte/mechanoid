@@ -1,6 +1,7 @@
 package mechanoid.persistence.timeout
 
 import zio.*
+import mechanoid.core.MechanoidError
 import java.time.Instant
 import scala.collection.mutable
 
@@ -26,7 +27,7 @@ class InMemoryLeaseStore extends LeaseStore:
       holder: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Option[Lease]] =
+  ): ZIO[Any, MechanoidError, Option[Lease]] =
     ZIO.succeed {
       synchronized {
         leases.get(key) match
@@ -74,7 +75,7 @@ class InMemoryLeaseStore extends LeaseStore:
       holder: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Boolean] =
+  ): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         leases.get(key) match
@@ -88,7 +89,7 @@ class InMemoryLeaseStore extends LeaseStore:
       }
     }
 
-  def release(key: String, holder: String): ZIO[Any, Throwable, Boolean] =
+  def release(key: String, holder: String): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         leases.get(key) match
@@ -100,7 +101,7 @@ class InMemoryLeaseStore extends LeaseStore:
       }
     }
 
-  def get(key: String): ZIO[Any, Throwable, Option[Lease]] =
+  def get(key: String): ZIO[Any, MechanoidError, Option[Lease]] =
     ZIO.succeed {
       synchronized {
         leases.get(key)

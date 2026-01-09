@@ -16,7 +16,7 @@ import mechanoid.core.*
   */
 final class StateBuilder[S <: MState, E <: MEvent, R, Err](
     private var definition: FSMDefinition[S, E, R, Err],
-    private val state: S,
+    private val stateOrdinal: Int,
 ):
 
   /** Define an action to execute when entering this state.
@@ -26,7 +26,7 @@ final class StateBuilder[S <: MState, E <: MEvent, R, Err](
   def onEntry[R1 <: R, Err1 >: Err](action: ZIO[R1, Err1, Unit]): StateBuilder[S, E, R1, Err1] =
     definition = definition
       .asInstanceOf[FSMDefinition[S, E, R1, Err1]]
-      .updateLifecycle(state, lc => lc.copy(onEntry = Some(action)))
+      .updateLifecycle(stateOrdinal, lc => lc.copy(onEntry = Some(action)))
       .asInstanceOf[FSMDefinition[S, E, R, Err]]
     this.asInstanceOf[StateBuilder[S, E, R1, Err1]]
 
@@ -37,7 +37,7 @@ final class StateBuilder[S <: MState, E <: MEvent, R, Err](
   def onExit[R1 <: R, Err1 >: Err](action: ZIO[R1, Err1, Unit]): StateBuilder[S, E, R1, Err1] =
     definition = definition
       .asInstanceOf[FSMDefinition[S, E, R1, Err1]]
-      .updateLifecycle(state, lc => lc.copy(onExit = Some(action)))
+      .updateLifecycle(stateOrdinal, lc => lc.copy(onExit = Some(action)))
       .asInstanceOf[FSMDefinition[S, E, R, Err]]
     this.asInstanceOf[StateBuilder[S, E, R1, Err1]]
 

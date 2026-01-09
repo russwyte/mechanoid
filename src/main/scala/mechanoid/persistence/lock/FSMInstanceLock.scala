@@ -2,6 +2,7 @@ package mechanoid.persistence.lock
 
 import zio.*
 import java.time.Instant
+import mechanoid.core.MechanoidError
 
 /** Distributed lock for FSM instances to ensure exactly-once transition semantics.
   *
@@ -92,7 +93,7 @@ trait FSMInstanceLock[Id]:
       nodeId: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, LockResult[Id]]
+  ): ZIO[Any, MechanoidError, LockResult[Id]]
 
   /** Acquire the lock, waiting if necessary.
     *
@@ -114,7 +115,7 @@ trait FSMInstanceLock[Id]:
       nodeId: String,
       duration: Duration,
       timeout: Duration,
-  ): ZIO[Any, Throwable, LockResult[Id]]
+  ): ZIO[Any, MechanoidError, LockResult[Id]]
 
   /** Release a held lock.
     *
@@ -126,7 +127,7 @@ trait FSMInstanceLock[Id]:
     * @return
     *   true if released, false if lock was already released/expired
     */
-  def release(token: LockToken[Id]): ZIO[Any, Throwable, Boolean]
+  def release(token: LockToken[Id]): ZIO[Any, MechanoidError, Boolean]
 
   /** Extend the duration of a held lock.
     *
@@ -145,7 +146,7 @@ trait FSMInstanceLock[Id]:
       token: LockToken[Id],
       additionalDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Option[LockToken[Id]]]
+  ): ZIO[Any, MechanoidError, Option[LockToken[Id]]]
 
   /** Get the current lock holder for an instance.
     *
@@ -156,7 +157,7 @@ trait FSMInstanceLock[Id]:
     * @return
     *   The lock token if locked, None if available
     */
-  def get(instanceId: Id, now: Instant): ZIO[Any, Throwable, Option[LockToken[Id]]]
+  def get(instanceId: Id, now: Instant): ZIO[Any, MechanoidError, Option[LockToken[Id]]]
 
   /** Execute an effect while holding the lock.
     *

@@ -2,6 +2,7 @@ package mechanoid.persistence.postgres
 
 import saferis.*
 import zio.*
+import mechanoid.core.{MechanoidError, PersistenceError}
 import mechanoid.persistence.timeout.*
 import java.time.Instant
 import scala.annotation.unused
@@ -19,8 +20,8 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       instanceId: String,
       state: String,
       deadline: Instant,
-  ): ZIO[Any, Throwable, ScheduledTimeout[String]] =
-    for
+  ): ZIO[Any, MechanoidError, ScheduledTimeout[String]] =
+    (for
       now <- Clock.instant
       _   <- transactor.run {
         sql"""
@@ -33,9 +34,9 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
             claimed_until = NULL
         """.dml
       }
-    yield ScheduledTimeout(instanceId, state, deadline, now, None, None)
+    yield ScheduledTimeout(instanceId, state, deadline, now, None, None)).mapError(PersistenceError(_))
 
-  override def cancel(instanceId: String): ZIO[Any, Throwable, Boolean] =
+  override def cancel(instanceId: String): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
@@ -44,8 +45,9 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
 
-  override def queryExpired(limit: Int, now: Instant): ZIO[Any, Throwable, List[ScheduledTimeout[String]]] =
+  override def queryExpired(limit: Int, now: Instant): ZIO[Any, MechanoidError, List[ScheduledTimeout[String]]] =
     transactor
       .run {
         sql"""
@@ -58,13 +60,14 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       """.query[TimeoutRow]
       }
       .map(_.map(rowToTimeout).toList)
+      .mapError(PersistenceError(_))
 
   override def claim(
       instanceId: String,
       nodeId: String,
       claimDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, ClaimResult] =
+  ): ZIO[Any, MechanoidError, ClaimResult] =
     val claimedUntil = now.plusMillis(claimDuration.toMillis)
     transactor
       .run {
@@ -91,9 +94,13 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
               ClaimResult.NotFound
           }
       }
+      .mapError {
+        case e: MechanoidError => e
+        case e: Throwable      => PersistenceError(e)
+      }
   end claim
 
-  override def complete(instanceId: String): ZIO[Any, Throwable, Boolean] =
+  override def complete(instanceId: String): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
@@ -102,8 +109,9 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
 
-  override def release(instanceId: String): ZIO[Any, Throwable, Boolean] =
+  override def release(instanceId: String): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
@@ -113,8 +121,9 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       """.dml
       }
       .map(_ > 0)
+      .mapError(PersistenceError(_))
 
-  override def get(instanceId: String): ZIO[Any, Throwable, Option[ScheduledTimeout[String]]] =
+  override def get(instanceId: String): ZIO[Any, MechanoidError, Option[ScheduledTimeout[String]]] =
     transactor
       .run {
         sql"""
@@ -124,6 +133,7 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       """.queryOne[TimeoutRow]
       }
       .map(_.map(rowToTimeout))
+      .mapError(PersistenceError(_))
 
   private def rowToTimeout(row: TimeoutRow): ScheduledTimeout[String] =
     ScheduledTimeout(

@@ -2,6 +2,7 @@ package mechanoid.persistence.timeout
 
 import zio.*
 import java.time.Instant
+import mechanoid.core.MechanoidError
 
 /** Abstract storage trait for leader election leases.
   *
@@ -68,7 +69,7 @@ trait LeaseStore:
       holder: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Option[Lease]]
+  ): ZIO[Any, MechanoidError, Option[Lease]]
 
   /** Renew an existing lease.
     *
@@ -90,7 +91,7 @@ trait LeaseStore:
       holder: String,
       duration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, Boolean]
+  ): ZIO[Any, MechanoidError, Boolean]
 
   /** Release a lease voluntarily.
     *
@@ -103,7 +104,7 @@ trait LeaseStore:
     * @return
     *   true if released, false if not held by this holder
     */
-  def release(key: String, holder: String): ZIO[Any, Throwable, Boolean]
+  def release(key: String, holder: String): ZIO[Any, MechanoidError, Boolean]
 
   /** Get the current lease holder (if any).
     *
@@ -114,5 +115,5 @@ trait LeaseStore:
     * @return
     *   The current lease if one exists
     */
-  def get(key: String): ZIO[Any, Throwable, Option[Lease]]
+  def get(key: String): ZIO[Any, MechanoidError, Option[Lease]]
 end LeaseStore

@@ -1,6 +1,7 @@
 package mechanoid.persistence.timeout
 
 import zio.*
+import mechanoid.core.MechanoidError
 import java.time.Instant
 import scala.collection.mutable
 
@@ -25,7 +26,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       instanceId: Id,
       state: String,
       deadline: Instant,
-  ): ZIO[Any, Throwable, ScheduledTimeout[Id]] =
+  ): ZIO[Any, MechanoidError, ScheduledTimeout[Id]] =
     ZIO.succeed {
       synchronized {
         val timeout = ScheduledTimeout(
@@ -39,7 +40,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       }
     }
 
-  def cancel(instanceId: Id): ZIO[Any, Throwable, Boolean] =
+  def cancel(instanceId: Id): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         timeouts.remove(instanceId).isDefined
@@ -49,7 +50,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
   def queryExpired(
       limit: Int,
       now: Instant,
-  ): ZIO[Any, Throwable, List[ScheduledTimeout[Id]]] =
+  ): ZIO[Any, MechanoidError, List[ScheduledTimeout[Id]]] =
     ZIO.succeed {
       synchronized {
         timeouts.values
@@ -65,7 +66,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       nodeId: String,
       claimDuration: Duration,
       now: Instant,
-  ): ZIO[Any, Throwable, ClaimResult] =
+  ): ZIO[Any, MechanoidError, ClaimResult] =
     ZIO.succeed {
       synchronized {
         timeouts.get(instanceId) match
@@ -85,14 +86,14 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       }
     }
 
-  def complete(instanceId: Id): ZIO[Any, Throwable, Boolean] =
+  def complete(instanceId: Id): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         timeouts.remove(instanceId).isDefined
       }
     }
 
-  def release(instanceId: Id): ZIO[Any, Throwable, Boolean] =
+  def release(instanceId: Id): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
         timeouts.get(instanceId) match
@@ -104,7 +105,7 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       }
     }
 
-  def get(instanceId: Id): ZIO[Any, Throwable, Option[ScheduledTimeout[Id]]] =
+  def get(instanceId: Id): ZIO[Any, MechanoidError, Option[ScheduledTimeout[Id]]] =
     ZIO.succeed {
       synchronized {
         timeouts.get(instanceId)
