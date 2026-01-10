@@ -98,12 +98,12 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock]
 
   override def lastSequenceNr: UIO[Long] = underlying.lastSequenceNr
 
-  override def subscribe: ZStream[Any, Nothing, StateChange[S, E | Timeout.type]] =
+  override def subscribe: ZStream[Any, Nothing, StateChange[S, Timed[E]]] =
     underlying.subscribe
 
   override def processStream(
       events: ZStream[R, Err, E]
-  ): ZStream[R, Err | MechanoidError, StateChange[S, E | Timeout.type]] =
+  ): ZStream[R, Err | MechanoidError, StateChange[S, Timed[E]]] =
     // Note: We can't simply delegate to underlying.processStream because
     // it would bypass our locked send(). Instead, we process each event
     // through our send() and construct state changes.
@@ -120,7 +120,7 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock]
       StateChange(
         stateBefore.current,
         newState,
-        event: E | Timeout.type,
+        event: Timed[E],
         stateAfter.lastTransitionAt,
       )
     }

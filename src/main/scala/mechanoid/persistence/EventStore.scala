@@ -129,7 +129,7 @@ import scala.annotation.unused
   *     xa: Transactor[Task]
   * ) extends EventStore[Id, S, E]:
   *
-  *   def append(id: Id, event: E | Timeout.type, expectedSeqNr: Long) =
+  *   def append(id: Id, event: Timed[E], expectedSeqNr: Long) =
   *     sql"""
   *       INSERT INTO events (instance_id, seq_nr, event_data, timestamp)
   *       SELECT $$id, COALESCE(MAX(seq_nr), 0) + 1, $$event, NOW()
@@ -208,9 +208,30 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     */
   def append(
       instanceId: Id,
-      event: E | Timeout.type,
+      event: Timed[E],
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long]
+
+  /** Convenience method to append a user event without explicit wrapping.
+    *
+    * Equivalent to `append(instanceId, Timed.UserEvent(event), expectedSeqNr)`.
+    */
+  final def appendEvent(
+      instanceId: Id,
+      event: E,
+      expectedSeqNr: Long,
+  ): ZIO[Any, MechanoidError, Long] =
+    append(instanceId, Timed.UserEvent(event), expectedSeqNr)
+
+  /** Convenience method to append a timeout event.
+    *
+    * Equivalent to `append(instanceId, Timed.TimeoutEvent, expectedSeqNr)`.
+    */
+  final def appendTimeout(
+      instanceId: Id,
+      expectedSeqNr: Long,
+  ): ZIO[Any, MechanoidError, Long] =
+    append(instanceId, Timed.TimeoutEvent, expectedSeqNr)
 
   /** Load all events for an FSM instance in sequence order.
     *
@@ -221,7 +242,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @return
     *   Stream of stored events
     */
-  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]]
+  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]]
 
   /** Load events starting from a specific sequence number.
     *
@@ -237,7 +258,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
   def loadEventsFrom(
       instanceId: Id,
       fromSequenceNr: Long,
-  ): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]] =
     loadEvents(instanceId).filter(_.sequenceNr > fromSequenceNr)
 
   /** Get the latest snapshot for an FSM instance.

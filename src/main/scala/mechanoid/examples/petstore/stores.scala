@@ -13,13 +13,13 @@ import scala.collection.mutable
 
 /** In-memory EventStore for testing. Thread-safe via synchronized blocks. */
 class InMemoryEventStore[Id, S <: MState, E <: MEvent] extends EventStore[Id, S, E]:
-  private val events    = mutable.Map[Id, mutable.ArrayBuffer[StoredEvent[Id, E | Timeout.type]]]()
+  private val events    = mutable.Map[Id, mutable.ArrayBuffer[StoredEvent[Id, Timed[E]]]]()
   private val snapshots = mutable.Map[Id, FSMSnapshot[Id, S]]()
   private var seqNr     = 0L
 
   override def append(
       instanceId: Id,
-      event: E | Timeout.type,
+      event: Timed[E],
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
     ZIO.succeed {
@@ -33,7 +33,7 @@ class InMemoryEventStore[Id, S <: MState, E <: MEvent] extends EventStore[Id, S,
 
   override def loadEvents(
       instanceId: Id
-  ): ZStream[Any, MechanoidError, StoredEvent[Id, E | Timeout.type]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]] =
     ZStream.fromIterable(events.getOrElse(instanceId, Seq.empty))
 
   override def loadSnapshot(
@@ -59,7 +59,7 @@ class InMemoryEventStore[Id, S <: MState, E <: MEvent] extends EventStore[Id, S,
     }
 
   /** Get all events for an instance (for testing) */
-  def getEvents(instanceId: Id): List[StoredEvent[Id, E | Timeout.type]] =
+  def getEvents(instanceId: Id): List[StoredEvent[Id, Timed[E]]] =
     synchronized { events.getOrElse(instanceId, Seq.empty).toList }
 
   /** Clear all data (for testing) */

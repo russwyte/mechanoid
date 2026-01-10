@@ -289,8 +289,8 @@ object PostgresStressSpec extends ZIOSpecDefault:
         _ <- store.append(instanceId, StressEvent.Finished, 5)
 
         events <- store.loadEvents(instanceId).runCollect
-        timeouts = events.filter(_.event == Timeout)
-        regulars = events.filterNot(_.event == Timeout)
+        timeouts = events.filter(_.event == Timed.TimeoutEvent)
+        regulars = events.filterNot(_.event == Timed.TimeoutEvent)
       yield assertTrue(
         events.length == 5,
         timeouts.length == 2,

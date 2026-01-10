@@ -60,7 +60,7 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
         events <- store.loadEvents("event-test-4").runCollect
       yield assertTrue(
         seqNr == 1L,
-        events.head.event == Timeout,
+        events.head.event == Timed.TimeoutEvent,
       )
     },
     test("loadEvents returns events in sequence order") {

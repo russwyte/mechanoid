@@ -76,7 +76,7 @@ enum OrderEvent extends MEvent:
   case Pay, Ship, Deliver
 
 // Build FSM definition
-val orderFSM = FSMDefinition[OrderState, OrderEvent]()
+val orderFSM = UFSM[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
   .when(Shipped).on(Deliver).goto(Delivered)
@@ -186,16 +186,29 @@ fsm.state.map { s =>
 Use `FSMDefinition` to build your FSM:
 
 ```scala
-val definition = FSMDefinition[MyState, MyEvent]()
+val definition = UFSM[MyState, MyEvent]
   .when(State1).on(Event1).goto(State2)
   .when(State1).on(Event2).stay
   .when(State2).on(Event3).goto(State3)
 ```
 
-For FSMs that require environment or custom error types:
+For FSMs that require environment or custom error types, use one of these type aliases:
 
 ```scala
-val definition = FSMDefinition.typed[MyState, MyEvent, MyEnv, MyError]()
+// With Throwable errors (like ZIO's Task)
+val definition = TaskFSM[MyState, MyEvent]
+
+// With custom errors (like ZIO's IO)
+val definition = IOFSM[MyState, MyEvent, MyError]
+
+// With environment, no errors (like ZIO's URIO)
+val definition = URFSM[MyState, MyEvent, MyEnv]
+
+// With environment and Throwable errors (like ZIO's RIO)
+val definition = RFSM[MyState, MyEvent, MyEnv]
+
+// Full control - specify all type parameters
+val definition = FSMDefinition[MyState, MyEvent, MyEnv, MyError]
 ```
 
 ### Guards
@@ -248,7 +261,7 @@ Execute effects during transitions:
 Define actions that run when entering or leaving a state:
 
 ```scala
-val definition = FSMDefinition[State, Event]()
+val definition = UFSM[State, Event]
   .when(Active).on(Deactivate).goto(Inactive)
   .onState(Active)
     .onEntry(ZIO.logInfo("Entered Active state"))
@@ -263,7 +276,7 @@ Schedule automatic timeout events:
 ```scala
 import scala.concurrent.duration.*
 
-val definition = FSMDefinition[State, Event]()
+val definition = UFSM[State, Event]
   .when(WaitingForPayment).onTimeout.goto(Cancelled)
   .withTimeout(WaitingForPayment, 30.minutes)
 ```
@@ -823,7 +836,7 @@ RetryPolicy.exponentialBackoff(
 Enqueue commands in **entry actions** (they don't run during replay):
 
 ```scala
-val definition = FSMDefinition[OrderState, OrderEvent]()
+val definition = UFSM[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
   // Enqueue command when entering Paid state
@@ -949,7 +962,7 @@ enum OrderEvent extends MEvent:
   case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel
 
 // FSM Definition
-val orderDefinition = FSMDefinition[OrderState, OrderEvent]()
+val orderDefinition = UFSM[OrderState, OrderEvent]
   // Happy path
   .when(Pending).on(RequestPayment).goto(AwaitingPayment)
   .when(AwaitingPayment).on(ConfirmPayment).goto(Paid)
