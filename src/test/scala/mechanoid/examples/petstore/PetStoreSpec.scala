@@ -319,7 +319,7 @@ object PetStoreSpec extends ZIOSpecDefault:
       shipper: Shipper,
       notificationService: NotificationService,
       orderDataRef: Ref[Map[Int, OrderData]],
-      definitionsRef: Ref[Map[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]]],
+      definitionsRef: Ref[Map[Int, FSMDefinition[OrderState, OrderEvent]]],
   ):
     def processCommand(cmd: PendingCommand[Int, PetStoreCommand]): UIO[Unit] =
       val orderId = cmd.instanceId
@@ -436,7 +436,7 @@ object PetStoreSpec extends ZIOSpecDefault:
         eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
         orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
-        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent]])
 
         // Create services with 100% success for deterministic test
         paymentProcessor = PaymentProcessor.make(
@@ -552,7 +552,7 @@ object PetStoreSpec extends ZIOSpecDefault:
         eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
         orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
-        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent]])
 
         paymentProcessor = PaymentProcessor.make(
           PaymentProcessor.Config(successRate = 1.0, minDelayMs = 1, maxDelayMs = 2)
@@ -639,7 +639,7 @@ object PetStoreSpec extends ZIOSpecDefault:
         eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
         orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
-        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent]])
 
         // Payment processor that always fails (0% success)
         paymentProcessor = PaymentProcessor.make(

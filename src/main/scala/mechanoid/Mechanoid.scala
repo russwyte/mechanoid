@@ -1,5 +1,8 @@
 package mechanoid
 
+import mechanoid.core.*
+import mechanoid.dsl.FSMDefinition
+
 object Mechanoid
 
 // Re-export core types
@@ -12,8 +15,8 @@ export core.StateTimeout
 export core.FSMState
 export core.MechanoidError
 export core.InvalidTransitionError
-export core.GuardRejectedError
 export core.FSMStoppedError
+export core.ActionFailedError
 export core.ProcessingTimeoutError
 export core.StateData
 export core.EventData
@@ -22,11 +25,9 @@ export core.SealedEnum
 
 // Re-export DSL
 export dsl.FSMDefinition
-export dsl.UFSM
-export dsl.URFSM
-export dsl.TaskFSM
-export dsl.RFSM
-export dsl.IOFSM
+export dsl.DSLHelpers.goto
+export dsl.DSLHelpers.stay as stayResult
+export dsl.DSLHelpers.stop as stopResult
 
 // Re-export runtime
 export runtime.FSMRuntime
@@ -62,3 +63,18 @@ export core.sensitive
 export core.Redactor
 export core.Redactor.redacted
 export core.Redactor.redactedPretty
+
+/** Create a new FSM definition.
+  *
+  * This is the primary entry point for defining FSMs with a fluent DSL:
+  *
+  * {{{
+  * import mechanoid.*
+  *
+  * val myFSM = fsm[MyState, MyEvent]
+  *   .when(Idle).on(Start).goto(Running)
+  *   .when(Running).on(Stop).goto(Idle)
+  * }}}
+  */
+def fsm[S <: MState: SealedEnum, E <: MEvent: SealedEnum]: FSMDefinition[S, E] =
+  FSMDefinition[S, E]

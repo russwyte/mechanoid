@@ -6,16 +6,14 @@ import mechanoid.dsl.FSMDefinition
 
 /** The runtime interface for an active FSM.
   *
+  * All errors are returned as `MechanoidError`. User errors from transition actions are wrapped in `ActionFailedError`.
+  *
   * @tparam S
   *   The state type
   * @tparam E
   *   The event type
-  * @tparam R
-  *   The ZIO environment required
-  * @tparam Err
-  *   The error type
   */
-trait FSMRuntime[S <: MState, E <: MEvent, R, Err]:
+trait FSMRuntime[S <: MState, E <: MEvent]:
 
   /** Send an event to the FSM and get the transition result.
     *
@@ -26,7 +24,7 @@ trait FSMRuntime[S <: MState, E <: MEvent, R, Err]:
     *
     * If no transition is defined for the current state and event, returns an InvalidTransitionError.
     */
-  def send(event: E): ZIO[R, Err | MechanoidError, TransitionResult[S]]
+  def send(event: E): ZIO[Any, MechanoidError, TransitionResult[S]]
 
   /** Get the current state of the FSM. */
   def currentState: UIO[S]
@@ -49,8 +47,8 @@ end FSMRuntime
 
 object FSMRuntime:
   /** Create a new FSM runtime from a definition and initial state. */
-  def make[S <: MState, E <: MEvent, R, Err](
-      definition: FSMDefinition[S, E, R, Err],
+  def make[S <: MState, E <: MEvent](
+      definition: FSMDefinition[S, E],
       initial: S,
-  ): ZIO[R & Scope, Nothing, FSMRuntime[S, E, R, Err]] =
+  ): ZIO[Scope, Nothing, FSMRuntime[S, E]] =
     FSMRuntimeImpl.make(definition, initial)

@@ -18,8 +18,8 @@ object MermaidVisualizer:
     *     Processing --> Completed: FinishEvent
     * ```
     */
-  def stateDiagram[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def stateDiagram[S <: MState, E <: MEvent](
+      fsm: FSMDefinition[S, E],
       initialState: Option[S] = None,
   ): String =
     val sb = StringBuilder()
@@ -38,22 +38,20 @@ object MermaidVisualizer:
       val fromName = fsm.stateEnum.nameFor(fromOrdinal)
       transitions.foreach { meta =>
         val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label     = meta.description match
+        val label     = meta.annotation match
           case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
           case Some("dynamic")                       => s"$eventName [dynamic]"
           case _                                     => eventName
 
-        val guardLabel = if meta.hasGuard then s"$label [guard]" else label
-
         meta.targetStateOrdinal match
           case Some(targetOrdinal) =>
             val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-            sb.append(s"    $fromName --> $targetName: $guardLabel\n")
-          case None if meta.description.exists(_.startsWith("stop")) =>
-            sb.append(s"    $fromName --> [*]: $guardLabel\n")
+            sb.append(s"    $fromName --> $targetName: $label\n")
+          case None if meta.annotation.exists(_.startsWith("stop")) =>
+            sb.append(s"    $fromName --> [*]: $label\n")
           case None =>
             // Stay transition - self-loop
-            sb.append(s"    $fromName --> $fromName: $guardLabel\n")
+            sb.append(s"    $fromName --> $fromName: $label\n")
       }
     }
 
@@ -134,8 +132,8 @@ object MermaidVisualizer:
     *     style Completed fill:#90EE90
     * ```
     */
-  def flowchart[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def flowchart[S <: MState, E <: MEvent](
+      fsm: FSMDefinition[S, E],
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =
     val sb = StringBuilder()
@@ -156,7 +154,7 @@ object MermaidVisualizer:
     }
 
     // Add terminal node if any stop transitions
-    val hasStopTransitions = fsm.transitionMeta.exists(_.description.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.annotation.exists(_.startsWith("stop")))
     if hasStopTransitions then sb.append("    END([End])\n")
 
     sb.append("\n")
@@ -165,15 +163,15 @@ object MermaidVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     =
-        if meta.hasGuard then s"$eventName [guard]"
-        else eventName
+      val label     = meta.annotation match
+        case Some("dynamic") => s"$eventName [dynamic]"
+        case _               => eventName
 
       meta.targetStateOrdinal match
         case Some(targetOrdinal) =>
           val targetName = fsm.stateEnum.nameFor(targetOrdinal)
           sb.append(s"    $fromName -->|$label| $targetName\n")
-        case None if meta.description.exists(_.startsWith("stop")) =>
+        case None if meta.annotation.exists(_.startsWith("stop")) =>
           sb.append(s"    $fromName -->|$label| END\n")
         case None =>
           sb.append(s"    $fromName -->|$label| $fromName\n")
@@ -241,8 +239,8 @@ object MermaidVisualizer:
     *
     * Shows which commands are triggered when entering each state.
     */
-  def stateDiagramWithCommands[S <: MState, E <: MEvent, R, Err, Cmd](
-      fsm: FSMDefinition[S, E, R, Err],
+  def stateDiagramWithCommands[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E],
       stateCommands: Map[Int, List[String]], // stateOrdinal -> command type names
       initialState: Option[S] = None,
   ): String =
@@ -262,21 +260,19 @@ object MermaidVisualizer:
       val fromName = fsm.stateEnum.nameFor(fromOrdinal)
       transitions.foreach { meta =>
         val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label     = meta.description match
+        val label     = meta.annotation match
           case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
           case Some("dynamic")                       => s"$eventName [dynamic]"
           case _                                     => eventName
 
-        val guardLabel = if meta.hasGuard then s"$label [guard]" else label
-
         meta.targetStateOrdinal match
           case Some(targetOrdinal) =>
             val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-            sb.append(s"    $fromName --> $targetName: $guardLabel\n")
-          case None if meta.description.exists(_.startsWith("stop")) =>
-            sb.append(s"    $fromName --> [*]: $guardLabel\n")
+            sb.append(s"    $fromName --> $targetName: $label\n")
+          case None if meta.annotation.exists(_.startsWith("stop")) =>
+            sb.append(s"    $fromName --> [*]: $label\n")
           case None =>
-            sb.append(s"    $fromName --> $fromName: $guardLabel\n")
+            sb.append(s"    $fromName --> $fromName: $label\n")
       }
     }
 
@@ -404,8 +400,8 @@ object MermaidVisualizer:
     *
     * Shows states in one lane and commands in another, with connections.
     */
-  def flowchartWithCommands[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def flowchartWithCommands[S <: MState, E <: MEvent](
+      fsm: FSMDefinition[S, E],
       stateCommands: Map[Int, List[String]], // stateOrdinal -> command type names
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =

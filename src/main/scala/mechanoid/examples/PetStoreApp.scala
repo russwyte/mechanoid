@@ -445,7 +445,7 @@ object PetStoreApp extends ZIOAppDefault:
       Ref.unsafe.make(Map.empty[Int, OrderData])
     }
 
-    private def createDefinition(orderId: Int): FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
+    private def createDefinition(orderId: Int): FSMDefinition[OrderState, OrderEvent] =
       OrderFSM.definition(
         onPaymentProcessing = enqueuePaymentCommand(orderId),
         onPaid = enqueueShippingCommands(orderId),
@@ -455,7 +455,7 @@ object PetStoreApp extends ZIOAppDefault:
     /** Get an FSM definition suitable for visualization. Uses a dummy orderId since the definition is only used for
       * generating diagrams.
       */
-    def getDefinitionForVisualization: FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
+    def getDefinitionForVisualization: FSMDefinition[OrderState, OrderEvent] =
       createDefinition(0)
 
     private def enqueuePaymentCommand(orderId: Int): ZIO[Any, Throwable, Unit] =

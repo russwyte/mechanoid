@@ -5,21 +5,21 @@ import mechanoid.core.*
 import mechanoid.dsl.FSMDefinition
 import java.time.Instant
 
-private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
-    definition: FSMDefinition[S, E, R, Err],
+private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent](
+    definition: FSMDefinition[S, E],
     stateRef: Ref[FSMState[S]],
     runningRef: Ref[Boolean],
-    sendSelf: Timed[E] => ZIO[R, Err | MechanoidError, TransitionResult[S]],
-) extends FSMRuntime[S, E, R, Err]:
+    sendSelf: Timed[E] => ZIO[Any, MechanoidError, TransitionResult[S]],
+) extends FSMRuntime[S, E]:
 
   override def send(
       event: E
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     sendSelf(event.timed)
 
   private[runtime] def sendInternal(
       event: Timed[E]
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
       running <- runningRef.get
       result  <-
@@ -29,7 +29,7 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
 
   private def processEvent(
       event: Timed[E]
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
       fsmState <- stateRef.get
       currentState   = fsmState.current
@@ -44,21 +44,17 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
   private def executeTransition(
       fsmState: FSMState[S],
       event: Timed[E],
-      transition: Transition[S, Timed[E], S, R, Err],
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+      transition: Transition[S, Timed[E], S],
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
-      // Check guard if present - use fold to preserve types
-      _ <- transition.guard.fold(ZIO.unit)(
-        _.filterOrFail(identity)(GuardRejectedError(fsmState.current, event: MEvent)).unit
-      )
-      result <- transition.action
+      result <- transition.action(fsmState.current, event)
       _      <- handleTransitionResult(fsmState, result)
     yield result
 
   private def handleTransitionResult(
       fsmState: FSMState[S],
       result: TransitionResult[S],
-  ): ZIO[R, Err | MechanoidError, Unit] =
+  ): ZIO[Any, MechanoidError, Unit] =
     result match
       case TransitionResult.Goto(newState) =>
         for
@@ -82,10 +78,10 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
           _ <- runningRef.set(false)
         yield ()
 
-  private def runEntryAction(state: S): ZIO[R, Err, Unit] =
+  private def runEntryAction(state: S): ZIO[Any, MechanoidError, Unit] =
     definition.lifecycles.get(definition.stateEnum.ordinal(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
 
-  private def runExitAction(state: S): ZIO[R, Err, Unit] =
+  private def runExitAction(state: S): ZIO[Any, MechanoidError, Unit] =
     definition.lifecycles.get(definition.stateEnum.ordinal(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
 
   /** Start a timeout for the given state.
@@ -95,7 +91,7 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
     *
     * This avoids the complexity of manually tracking and interrupting fibers.
     */
-  private[runtime] def startTimeout(state: S): ZIO[R, Nothing, Unit] =
+  private[runtime] def startTimeout(state: S): ZIO[Any, Nothing, Unit] =
     val stateOrd = definition.stateEnum.ordinal(state)
     ZIO.foreachDiscard(definition.timeouts.get(stateOrd)) { duration =>
       (ZIO.sleep(zio.Duration.fromScala(duration)) *>
@@ -122,29 +118,29 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
 end FSMRuntimeImpl
 
 object FSMRuntimeImpl:
-  def make[S <: MState, E <: MEvent, R, Err](
-      definition: FSMDefinition[S, E, R, Err],
+  def make[S <: MState, E <: MEvent](
+      definition: FSMDefinition[S, E],
       initial: S,
-  ): ZIO[R & Scope, Nothing, FSMRuntime[S, E, R, Err]] =
+  ): ZIO[Scope, Nothing, FSMRuntime[S, E]] =
     ZIO.acquireRelease(createRuntime(definition, initial))(_.stop)
 
   /** Create and initialize an FSM runtime.
     *
     * This is separated from `make` to make the acquire/release pattern clear.
     */
-  private def createRuntime[S <: MState, E <: MEvent, R, Err](
-      definition: FSMDefinition[S, E, R, Err],
+  private def createRuntime[S <: MState, E <: MEvent](
+      definition: FSMDefinition[S, E],
       initial: S,
-  ): ZIO[R, Nothing, FSMRuntimeImpl[S, E, R, Err]] =
+  ): ZIO[Any, Nothing, FSMRuntimeImpl[S, E]] =
     for
       stateRef   <- Ref.make(FSMState.initial(initial))
       runningRef <- Ref.make(true)
 
       // Create the runtime with self-reference for timeout handling
-      runtimeRef <- Ref.make[Option[FSMRuntimeImpl[S, E, R, Err]]](None)
+      runtimeRef <- Ref.make[Option[FSMRuntimeImpl[S, E]]](None)
 
       sendSelf: (
-          Timed[E] => ZIO[R, Err | MechanoidError, TransitionResult[S]]
+          Timed[E] => ZIO[Any, MechanoidError, TransitionResult[S]]
       ) =
         (event: Timed[E]) =>
           runtimeRef.get.flatMap(

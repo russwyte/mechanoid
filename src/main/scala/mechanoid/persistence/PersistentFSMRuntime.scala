@@ -13,6 +13,8 @@ import java.time.Instant
   * Events are persisted to an EventStore before state changes occur. State can be reconstructed by replaying events
   * from the store.
   *
+  * All errors are returned as `MechanoidError`. User errors from transition actions are wrapped in `ActionFailedError`.
+  *
   * ==Recovery Behavior==
   *
   * On startup via [[PersistentFSMRuntime.apply]]:
@@ -34,12 +36,8 @@ import java.time.Instant
   *   The state type
   * @tparam E
   *   The event type
-  * @tparam R
-  *   The ZIO environment required
-  * @tparam Err
-  *   The error type
   */
-trait PersistentFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] extends FSMRuntime[S, E, R, Err]:
+trait PersistentFSMRuntime[Id, S <: MState, E <: MEvent] extends FSMRuntime[S, E]:
 
   /** The FSM instance identifier. */
   def instanceId: Id
@@ -110,13 +108,13 @@ object PersistentFSMRuntime:
     * @param initialState
     *   The initial state for new instances
     */
-  def apply[Id, S <: MState, E <: MEvent, R, Err](
+  def apply[Id, S <: MState, E <: MEvent](
       id: Id,
-      definition: FSMDefinition[S, E, R, Err],
+      definition: FSMDefinition[S, E],
       initialState: S,
   )(using
       Tag[EventStore[Id, S, E]]
-  ): ZIO[R & Scope & EventStore[Id, S, E], MechanoidError, PersistentFSMRuntime[Id, S, E, R, Err]] =
+  ): ZIO[Scope & EventStore[Id, S, E], MechanoidError, PersistentFSMRuntime[Id, S, E]] =
     ZIO.serviceWithZIO[EventStore[Id, S, E]] { store =>
       ZIO.acquireRelease(
         createRuntime(id, definition, initialState, store, None)
@@ -163,14 +161,14 @@ object PersistentFSMRuntime:
     * @param initialState
     *   The initial state for new instances
     */
-  def withDurableTimeouts[Id, S <: MState, E <: MEvent, R, Err](
+  def withDurableTimeouts[Id, S <: MState, E <: MEvent](
       id: Id,
-      definition: FSMDefinition[S, E, R, Err],
+      definition: FSMDefinition[S, E],
       initialState: S,
   )(using
       Tag[EventStore[Id, S, E]],
       Tag[TimeoutStore[Id]],
-  ): ZIO[R & Scope & EventStore[Id, S, E] & TimeoutStore[Id], MechanoidError, PersistentFSMRuntime[Id, S, E, R, Err]] =
+  ): ZIO[Scope & EventStore[Id, S, E] & TimeoutStore[Id], MechanoidError, PersistentFSMRuntime[Id, S, E]] =
     for
       eventStore   <- ZIO.service[EventStore[Id, S, E]]
       timeoutStore <- ZIO.service[TimeoutStore[Id]]
@@ -223,18 +221,18 @@ object PersistentFSMRuntime:
     * @param lockConfig
     *   Lock configuration (duration, timeout, etc.)
     */
-  def withLocking[Id, S <: MState, E <: MEvent, R, Err](
+  def withLocking[Id, S <: MState, E <: MEvent](
       id: Id,
-      definition: FSMDefinition[S, E, R, Err],
+      definition: FSMDefinition[S, E],
       initialState: S,
       lockConfig: LockConfig = LockConfig.default,
   )(using
       Tag[EventStore[Id, S, E]],
       Tag[FSMInstanceLock[Id]],
   ): ZIO[
-    R & Scope & EventStore[Id, S, E] & FSMInstanceLock[Id],
+    Scope & EventStore[Id, S, E] & FSMInstanceLock[Id],
     MechanoidError,
-    PersistentFSMRuntime[Id, S, E, R, Err],
+    PersistentFSMRuntime[Id, S, E],
   ] =
     for
       eventStore <- ZIO.service[EventStore[Id, S, E]]
@@ -272,9 +270,9 @@ object PersistentFSMRuntime:
     * @param lockConfig
     *   Lock configuration (duration, timeout, etc.)
     */
-  def withLockingAndTimeouts[Id, S <: MState, E <: MEvent, R, Err](
+  def withLockingAndTimeouts[Id, S <: MState, E <: MEvent](
       id: Id,
-      definition: FSMDefinition[S, E, R, Err],
+      definition: FSMDefinition[S, E],
       initialState: S,
       lockConfig: LockConfig = LockConfig.default,
   )(using
@@ -282,9 +280,9 @@ object PersistentFSMRuntime:
       Tag[TimeoutStore[Id]],
       Tag[FSMInstanceLock[Id]],
   ): ZIO[
-    R & Scope & EventStore[Id, S, E] & TimeoutStore[Id] & FSMInstanceLock[Id],
+    Scope & EventStore[Id, S, E] & TimeoutStore[Id] & FSMInstanceLock[Id],
     MechanoidError,
-    PersistentFSMRuntime[Id, S, E, R, Err],
+    PersistentFSMRuntime[Id, S, E],
   ] =
     for
       eventStore   <- ZIO.service[EventStore[Id, S, E]]
@@ -299,13 +297,13 @@ object PersistentFSMRuntime:
     *
     * This is separated from `apply` to make the acquire/release pattern clear.
     */
-  private def createRuntime[Id, S <: MState, E <: MEvent, R, Err](
+  private def createRuntime[Id, S <: MState, E <: MEvent](
       id: Id,
-      definition: FSMDefinition[S, E, R, Err],
+      definition: FSMDefinition[S, E],
       initialState: S,
       store: EventStore[Id, S, E],
       timeoutStore: Option[TimeoutStore[Id]],
-  ): ZIO[R, MechanoidError, PersistentFSMRuntimeImpl[Id, S, E, R, Err]] =
+  ): ZIO[Any, MechanoidError, PersistentFSMRuntimeImpl[Id, S, E]] =
     for
       // Load snapshot and events to rebuild state
       snapshot <- store.loadSnapshot(id)
@@ -324,9 +322,9 @@ object PersistentFSMRuntime:
       runningRef <- Ref.make(true)
 
       // Create self-reference for timeout handling
-      runtimeRef <- Ref.make[Option[PersistentFSMRuntimeImpl[Id, S, E, R, Err]]](None)
+      runtimeRef <- Ref.make[Option[PersistentFSMRuntimeImpl[Id, S, E]]](None)
 
-      sendSelf: (Timed[E] => ZIO[R, Err | MechanoidError, TransitionResult[S]]) =
+      sendSelf: (Timed[E] => ZIO[Any, MechanoidError, TransitionResult[S]]) =
         (event: Timed[E]) =>
           runtimeRef.get.flatMap(
             _.map(_.sendInternal(event))
@@ -352,18 +350,17 @@ object PersistentFSMRuntime:
 
   /** Rebuild FSM state by replaying events.
     *
-    * This applies each event in sequence to reconstruct the current state. Guards are NOT re-evaluated during replay
-    * (events were already validated). Transition actions ARE executed to determine the target state. Entry/exit actions
-    * are NOT executed during replay.
+    * This applies each event in sequence to reconstruct the current state. Transition actions ARE executed to determine
+    * the target state. Entry/exit actions are NOT executed during replay.
     *
     * @throws EventReplayError
     *   if an event doesn't match the current FSM definition
     */
-  private def rebuildState[S <: MState, E <: MEvent, R, Err](
-      definition: FSMDefinition[S, E, R, Err],
+  private def rebuildState[S <: MState, E <: MEvent](
+      definition: FSMDefinition[S, E],
       startState: S,
       events: List[StoredEvent[?, Timed[E]]],
-  ): ZIO[R, EventReplayError, FSMState[S]] =
+  ): ZIO[Any, EventReplayError, FSMState[S]] =
     ZIO.foldLeft(events)(FSMState.initial(startState)) { (fsmState, stored) =>
       val currentOrdinal = definition.stateEnum.ordinal(fsmState.current)
       val eventOrdinal   = definition.eventEnum.ordinal(stored.event)
@@ -371,7 +368,8 @@ object PersistentFSMRuntime:
         case Some(transition) =>
           // Execute the transition action to get the result
           // During replay, errors are ignored (events were already validated when stored)
-          transition.action
+          transition
+            .action(fsmState.current, stored.event)
             .catchAll(_ => ZIO.succeed(TransitionResult.Stay))
             .map {
               case TransitionResult.Goto(newState) =>
@@ -385,23 +383,23 @@ object PersistentFSMRuntime:
     }
 end PersistentFSMRuntime
 
-private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: MEvent, R, Err](
+private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: MEvent](
     val instanceId: Id,
-    definition: FSMDefinition[S, E, R, Err],
+    definition: FSMDefinition[S, E],
     store: EventStore[Id, S, E],
     timeoutStore: Option[TimeoutStore[Id]],
     stateRef: Ref[FSMState[S]],
     seqNrRef: Ref[Long],
     runningRef: Ref[Boolean],
-    sendSelf: Timed[E] => ZIO[R, Err | MechanoidError, TransitionResult[S]],
-) extends PersistentFSMRuntime[Id, S, E, R, Err]:
+    sendSelf: Timed[E] => ZIO[Any, MechanoidError, TransitionResult[S]],
+) extends PersistentFSMRuntime[Id, S, E]:
 
-  override def send(event: E): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  override def send(event: E): ZIO[Any, MechanoidError, TransitionResult[S]] =
     sendSelf(event.timed)
 
   private[persistence] def sendInternal(
       event: Timed[E]
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
       running <- runningRef.get
       result  <-
@@ -411,7 +409,7 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
 
   private def processEvent(
       event: Timed[E]
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
       fsmState <- stateRef.get
       currentState   = fsmState.current
@@ -426,16 +424,12 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
   private def executeTransition(
       fsmState: FSMState[S],
       event: Timed[E],
-      transition: Transition[S, Timed[E], S, R, Err],
-  ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+      transition: Transition[S, Timed[E], S],
+  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
-      // Check guard if present - use fold to preserve types
-      _ <- transition.guard.fold(ZIO.unit)(
-        _.filterOrFail(identity)(GuardRejectedError(fsmState.current, event: MEvent)).unit
-      )
       // Execute the transition action FIRST
       // If it fails (e.g., external service call), the event is NOT persisted
-      result <- transition.action
+      result <- transition.action(fsmState.current, event)
       // Only persist after successful action execution
       // Use optimistic locking to detect concurrent modifications
       currentSeqNr <- seqNrRef.get
@@ -448,7 +442,7 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
   private def handleTransitionResult(
       fsmState: FSMState[S],
       result: TransitionResult[S],
-  ): ZIO[R, Err | MechanoidError, Unit] =
+  ): ZIO[Any, MechanoidError, Unit] =
     result match
       case TransitionResult.Goto(newState) =>
         for
@@ -475,10 +469,10 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
           _ <- runningRef.set(false)
         yield ()
 
-  private def runEntryAction(state: S): ZIO[R, Err, Unit] =
+  private def runEntryAction(state: S): ZIO[Any, MechanoidError, Unit] =
     definition.lifecycles.get(definition.stateEnum.ordinal(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
 
-  private def runExitAction(state: S): ZIO[R, Err, Unit] =
+  private def runExitAction(state: S): ZIO[Any, MechanoidError, Unit] =
     definition.lifecycles.get(definition.stateEnum.ordinal(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
 
   /** Cancel any pending timeout for this FSM instance.
@@ -500,7 +494,7 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
     *   - Forks a fiber that sleeps, then fires if still in same state shape
     *   - Does NOT survive node failures
     */
-  private[persistence] def startTimeout(state: S): ZIO[R, Nothing, Unit] =
+  private[persistence] def startTimeout(state: S): ZIO[Any, Nothing, Unit] =
     val stateOrd = definition.stateEnum.ordinal(state)
     ZIO.foreachDiscard(definition.timeouts.get(stateOrd)) { duration =>
       timeoutStore match

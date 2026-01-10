@@ -2,8 +2,7 @@ package mechanoid
 
 import zio.*
 import zio.test.*
-import mechanoid.core.*
-import mechanoid.dsl.*
+import mechanoid.*
 import mechanoid.visualization.*
 import java.time.Instant
 
@@ -18,9 +17,9 @@ object VisualizationSpec extends ZIOSpecDefault:
     case Finish
     case Error(reason: String) extends TestEvent
 
-  val testFSM: FSMDefinition[TestState, TestEvent, Any, Nothing] =
+  val testFSM: FSMDefinition[TestState, TestEvent] =
     import TestState.*, TestEvent.*
-    UFSM[TestState, TestEvent]
+    fsm[TestState, TestEvent]
       .when(Idle)
       .on(Start)
       .goto(Running)

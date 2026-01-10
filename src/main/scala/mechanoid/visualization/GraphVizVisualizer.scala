@@ -32,8 +32,8 @@ object GraphVizVisualizer:
     * }
     * ```
     */
-  def digraph[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def digraph[S <: MState, E <: MEvent](
+      fsm: FSMDefinition[S, E],
       name: String = "FSM",
       initialState: Option[S] = None,
       config: Config = Config.default,
@@ -85,7 +85,7 @@ object GraphVizVisualizer:
     }
 
     // Add terminal state marker if needed
-    val hasStopTransitions = fsm.transitionMeta.exists(_.description.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.annotation.exists(_.startsWith("stop")))
     if hasStopTransitions then sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
 
     sb.append("\n")
@@ -94,15 +94,15 @@ object GraphVizVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     =
-        if meta.hasGuard then s"$eventName\\n[guard]"
-        else eventName
+      val label     = meta.annotation match
+        case Some("dynamic") => s"$eventName\\n[dynamic]"
+        case _               => eventName
 
       meta.targetStateOrdinal match
         case Some(targetOrdinal) =>
           val targetName = fsm.stateEnum.nameFor(targetOrdinal)
           sb.append(s"    $fromName -> $targetName [label=\"$label\"];\n")
-        case None if meta.description.exists(_.startsWith("stop")) =>
+        case None if meta.annotation.exists(_.startsWith("stop")) =>
           sb.append(s"    $fromName -> __end__ [label=\"$label\"];\n")
         case None =>
           // Self-loop for stay
@@ -115,8 +115,8 @@ object GraphVizVisualizer:
 
   /** Generate a digraph with execution trace highlighting.
     */
-  def digraphWithTrace[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def digraphWithTrace[S <: MState, E <: MEvent](
+      fsm: FSMDefinition[S, E],
       trace: ExecutionTrace[S, E],
       name: String = "FSM",
       config: Config = Config.default,
@@ -180,7 +180,7 @@ object GraphVizVisualizer:
     sb.append(s"    __start__ -> $initName;\n")
 
     // Add terminal state marker if needed
-    val hasStopTransitions = fsm.transitionMeta.exists(_.description.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.annotation.exists(_.startsWith("stop")))
     if hasStopTransitions then sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
 
     sb.append("\n")
@@ -189,9 +189,9 @@ object GraphVizVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     =
-        if meta.hasGuard then s"$eventName\\n[guard]"
-        else eventName
+      val label     = meta.annotation match
+        case Some("dynamic") => s"$eventName\\n[dynamic]"
+        case _               => eventName
 
       val targetOrd = meta.targetStateOrdinal.getOrElse(meta.fromStateOrdinal)
       val isTaken   = takenTransitions.contains((meta.fromStateOrdinal, targetOrd))
@@ -201,7 +201,7 @@ object GraphVizVisualizer:
         case Some(targetOrdinal) =>
           val targetName = fsm.stateEnum.nameFor(targetOrdinal)
           sb.append(s"    $fromName -> $targetName [label=\"$label\"$edgeStyle];\n")
-        case None if meta.description.exists(_.startsWith("stop")) =>
+        case None if meta.annotation.exists(_.startsWith("stop")) =>
           sb.append(s"    $fromName -> __end__ [label=\"$label\"$edgeStyle];\n")
         case None =>
           sb.append(s"    $fromName -> $fromName [label=\"$label\"$edgeStyle];\n")

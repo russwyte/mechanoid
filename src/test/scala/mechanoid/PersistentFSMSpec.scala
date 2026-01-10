@@ -80,7 +80,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should persist events on transition") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -109,7 +109,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should rebuild state from persisted events") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -150,7 +150,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should save and restore from snapshot") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -185,7 +185,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should return instance ID") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -202,7 +202,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should lookup current state directly from store") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -232,25 +232,25 @@ object PersistentFSMSpec extends ZIOSpecDefault:
       )).provide(storeLayer)
     },
 
-    // Guard tests
-    test("should execute transition when guard passes") {
-      val store                                    = new InMemoryEventStore[String, OrderState, OrderEvent]
-      val storeLayer                               = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val guard: ZIO[Any, Nothing, Boolean]        = ZIO.succeed(true)
-      val definition: UFSM[OrderState, OrderEvent] =
-        UFSM[OrderState, OrderEvent]
+    // executeWith tests
+    test("should execute transition with executeWith and persist event") {
+      val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
+      val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
+      val definition =
+        fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
-          .when(guard)
-          .goto(Paid)
+          .executeWith { (state, event) =>
+            ZIO.succeed(TransitionResult.Goto(Paid))
+          }
 
       ZIO
         .scoped {
           for
-            fsm   <- PersistentFSMRuntime("order-guard-pass", definition, Pending)
+            fsm   <- PersistentFSMRuntime("order-executewith", definition, Pending)
             _     <- fsm.send(Pay)
             state <- fsm.currentState
-            events = store.getEvents("order-guard-pass")
+            events = store.getEvents("order-executewith")
           yield assertTrue(
             state == Paid,
             events.length == 1,
@@ -259,38 +259,48 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         }
         .provide(storeLayer)
     },
-    test("should reject transition when guard fails and not persist event") {
-      val store                                    = new InMemoryEventStore[String, OrderState, OrderEvent]
-      val storeLayer                               = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val guard: ZIO[Any, Nothing, Boolean]        = ZIO.succeed(false)
-      val definition: UFSM[OrderState, OrderEvent] =
-        UFSM[OrderState, OrderEvent]
+    test("should not persist event when executeWith fails") {
+      case class PaymentError(msg: String)
+
+      val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
+      val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
+      val definition =
+        fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
-          .when(guard)
-          .goto(Paid)
+          .executeWith { (state, event) =>
+            ZIO.fail(PaymentError("Payment declined"))
+          }
 
+      // User errors are wrapped in ActionFailedError
       ZIO
         .scoped {
-          for
-            fsm   <- PersistentFSMRuntime("order-guard-fail", definition, Pending)
-            error <- fsm.send(Pay).flip
-            state <- fsm.currentState
-            events = store.getEvents("order-guard-fail")
-          yield assertTrue(
-            error.isInstanceOf[GuardRejectedError],
-            state == Pending,
-            events.isEmpty, // Event should NOT be persisted when guard fails
-          )
+          PersistentFSMRuntime("order-executewith-fail", definition, Pending).flatMap { fsm =>
+            fsm.send(Pay).flip.flatMap { error =>
+              fsm.currentState.map { state =>
+                val events = store.getEvents("order-executewith-fail")
+                error match
+                  case ActionFailedError(PaymentError(msg)) =>
+                    assertTrue(
+                      msg == "Payment declined",
+                      state == Pending,
+                      events.isEmpty, // Event should NOT be persisted when executeWith fails
+                    )
+                  case _ =>
+                    throw new AssertionError(s"Unexpected error type: $error")
+              }
+            }
+          }
         }
         .provide(storeLayer)
+        .catchAll(_ => ZIO.succeed(assertTrue(false)))
     },
 
     // Stay/Stop tests
     test("should stay in state when configured") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .stay
@@ -313,7 +323,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should stop FSM and report not running") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -335,7 +345,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should return Stop result after FSM is stopped") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -355,7 +365,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should rebuild from snapshot plus subsequent events") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -414,10 +424,10 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should not execute entry/exit actions during replay") {
       for
         actionLog <- Ref.make(List.empty[String])
-        store                                    = new InMemoryEventStore[String, OrderState, OrderEvent]
-        storeLayer                               = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-        definition: UFSM[OrderState, OrderEvent] =
-          UFSM[OrderState, OrderEvent]
+        store      = new InMemoryEventStore[String, OrderState, OrderEvent]
+        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
+        definition =
+          fsm[OrderState, OrderEvent]
             .when(Pending)
             .on(Pay)
             .goto(Paid)
@@ -463,7 +473,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should track highest sequence number") {
       val store      = new InMemoryEventStore[String, OrderState, OrderEvent]
       val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val definition = UFSM[OrderState, OrderEvent]
+      val definition = fsm[OrderState, OrderEvent]
         .when(Pending)
         .on(Pay)
         .goto(Paid)
@@ -496,8 +506,8 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         ZIO.fail("External service unavailable")
 
       // Build definition that uses the failing action
-      val definition: IOFSM[OrderState, OrderEvent, String] =
-        UFSM[OrderState, OrderEvent]
+      val definition =
+        fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
           .execute(failingAction)
@@ -518,11 +528,15 @@ object PersistentFSMSpec extends ZIOSpecDefault:
 
       testEffect.map { case (errorOrResult, state, events) =>
         val error = errorOrResult.left.toOption.get
-        assertTrue(
-          error == "External service unavailable", // The String error passes through as-is
-          state == Pending,                        // State unchanged
-          events.isEmpty,                          // Event NOT persisted on failure
-        )
+        error match
+          case ActionFailedError(msg: String) =>
+            assertTrue(
+              msg == "External service unavailable", // User errors wrapped in ActionFailedError
+              state == Pending,                      // State unchanged
+              events.isEmpty,                        // Event NOT persisted on failure
+            )
+          case _ =>
+            throw new AssertionError(s"Unexpected error type: $error")
       }
     },
     test("should allow retry of failed transition using ZIO combinators") {
@@ -539,8 +553,8 @@ object PersistentFSMSpec extends ZIOSpecDefault:
             else ZIO.succeed(TransitionResult.Goto(Paid))
           }
 
-        definition: IOFSM[OrderState, OrderEvent, String] =
-          UFSM[OrderState, OrderEvent]
+        definition =
+          fsm[OrderState, OrderEvent]
             .when(Pending)
             .on(Pay)
             .execute(serviceThatEventuallySucceeds)
@@ -571,8 +585,8 @@ object PersistentFSMSpec extends ZIOSpecDefault:
       val failingPayment: ZIO[Any, String, TransitionResult[OrderState]] =
         ZIO.fail("Payment gateway timeout")
 
-      val definition: IOFSM[OrderState, OrderEvent, String] =
-        UFSM[OrderState, OrderEvent]
+      val definition =
+        fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
           .execute(failingPayment)
@@ -612,7 +626,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         // EventStore with optimistic locking enabled
         val store      = new ConcurrentEventStore[String, OrderState, OrderEvent]
         val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-        val definition = UFSM[OrderState, OrderEvent]
+        val definition = fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
           .goto(Paid)
@@ -644,7 +658,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
       test("should allow append when sequence matches") {
         val store      = new ConcurrentEventStore[String, OrderState, OrderEvent]
         val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-        val definition = UFSM[OrderState, OrderEvent]
+        val definition = fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
           .goto(Paid)
@@ -670,7 +684,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
       test("should rebuild consistent state across multiple instances") {
         val store      = new ConcurrentEventStore[String, OrderState, OrderEvent]
         val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-        val definition = UFSM[OrderState, OrderEvent]
+        val definition = fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
           .goto(Paid)
@@ -714,7 +728,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         // This test demonstrates the recommended pattern for handling conflicts
         val store      = new ConcurrentEventStore[String, OrderState, OrderEvent]
         val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-        val definition = UFSM[OrderState, OrderEvent]
+        val definition = fsm[OrderState, OrderEvent]
           .when(Pending)
           .on(Pay)
           .goto(Paid)

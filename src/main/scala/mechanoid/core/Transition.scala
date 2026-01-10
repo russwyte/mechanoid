@@ -5,44 +5,39 @@ import scala.concurrent.duration.Duration
 
 /** A transition definition from one state to another via an event.
   *
+  * All transition actions return `MechanoidError` as the error type. User errors are wrapped in `ActionFailedError`.
+  *
   * @tparam S
   *   The base state type
   * @tparam E
   *   The event type that triggers this transition
-  * @tparam R
-  *   The ZIO environment required
-  * @tparam Err
-  *   The error type
-  * @param guard
-  *   Optional predicate that must be true for the transition to occur
+  * @tparam S2
+  *   The target state type
   * @param action
-  *   The effect to execute, returning the transition result
+  *   A function that receives the current state and event, returning the transition result
   * @param description
   *   Optional human-readable description of this transition
   */
-final case class Transition[-S <: MState, -E <: MEvent, +S2 <: MState, -R, +Err](
-    guard: Option[ZIO[R, Err, Boolean]],
-    action: ZIO[R, Err, TransitionResult[S2]],
+final case class Transition[-S <: MState, -E <: MEvent, +S2 <: MState](
+    action: (S, E) => ZIO[Any, MechanoidError, TransitionResult[S2]],
     description: Option[String] = None,
 )
 
 object Transition:
   /** Create a simple transition that goes to a target state. */
-  def goto[S <: MState, E <: MEvent, S2 <: MState](target: S2): Transition[S, E, S2, Any, Nothing] =
-    Transition(None, ZIO.succeed(TransitionResult.Goto(target)), None)
+  def goto[S <: MState, E <: MEvent, S2 <: MState](target: S2): Transition[S, E, S2] =
+    Transition((_, _) => ZIO.succeed(TransitionResult.Goto(target)), None)
 
   /** Create a transition that stays in the current state. */
-  def stay[S <: MState, E <: MEvent]: Transition[S, E, S, Any, Nothing] =
-    Transition(None, ZIO.succeed(TransitionResult.Stay), None)
+  def stay[S <: MState, E <: MEvent]: Transition[S, E, S] =
+    Transition((_, _) => ZIO.succeed(TransitionResult.Stay), None)
 
 /** Entry and exit actions for a state.
   *
+  * All lifecycle actions return `MechanoidError` as the error type. User errors are wrapped in `ActionFailedError`.
+  *
   * @tparam S
   *   The state type
-  * @tparam R
-  *   The ZIO environment required
-  * @tparam Err
-  *   The error type
   * @param onEntry
   *   Action to execute when entering this state
   * @param onExit
@@ -52,15 +47,15 @@ object Transition:
   * @param onExitDescription
   *   Human-readable description of exit action (for visualization)
   */
-final case class StateLifecycle[-S <: MState, -R, +Err](
-    onEntry: Option[ZIO[R, Err, Unit]] = None,
-    onExit: Option[ZIO[R, Err, Unit]] = None,
+final case class StateLifecycle[-S <: MState](
+    onEntry: Option[ZIO[Any, MechanoidError, Unit]] = None,
+    onExit: Option[ZIO[Any, MechanoidError, Unit]] = None,
     onEntryDescription: Option[String] = None,
     onExitDescription: Option[String] = None,
 )
 
 object StateLifecycle:
-  def empty[S <: MState]: StateLifecycle[S, Any, Nothing] =
+  def empty[S <: MState]: StateLifecycle[S] =
     StateLifecycle(None, None, None, None)
 
 /** Timeout configuration for a state.
@@ -72,12 +67,8 @@ object StateLifecycle:
   *   The state type this timeout applies to
   * @tparam S2
   *   The potential target state type
-  * @tparam R
-  *   The ZIO environment required
-  * @tparam Err
-  *   The error type
   */
-final case class StateTimeout[-S <: MState, +S2 <: MState, -R, +Err](
+final case class StateTimeout[-S <: MState, +S2 <: MState](
     duration: Duration,
-    action: ZIO[R, Err, TransitionResult[S2]],
+    action: ZIO[Any, MechanoidError, TransitionResult[S2]],
 )

@@ -21,20 +21,17 @@ final case class InvalidTransitionError(
     message: String = "No transition defined",
 ) extends MechanoidError
 
-/** Error indicating a guard condition prevented the transition.
-  *
-  * @param currentState
-  *   The state the FSM was in
-  * @param event
-  *   The event that was sent
-  */
-final case class GuardRejectedError(
-    currentState: MState,
-    event: MEvent,
-) extends MechanoidError
-
 /** Error indicating the FSM has been stopped. */
 final case class FSMStoppedError(reason: Option[String]) extends MechanoidError
+
+/** Error wrapping a user-defined error from an action.
+  *
+  * When using `executeWith`, user errors are wrapped in this type to maintain consistent error handling across the FSM.
+  *
+  * @param cause
+  *   The underlying user error
+  */
+final case class ActionFailedError[+E](cause: E) extends MechanoidError
 
 /** Error indicating a timeout occurred during event processing.
   *

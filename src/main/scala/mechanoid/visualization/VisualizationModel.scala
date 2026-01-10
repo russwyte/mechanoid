@@ -9,8 +9,7 @@ case class TransitionMeta(
     fromStateOrdinal: Int,
     eventOrdinal: Int,
     targetStateOrdinal: Option[Int], // None for Stay, Some for Goto
-    hasGuard: Boolean,
-    description: Option[String] = None,
+    annotation: Option[String] = None,
 )
 
 /** Metadata about a state for visualization. */
