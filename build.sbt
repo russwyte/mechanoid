@@ -16,10 +16,10 @@ lazy val root = project
     organization         := "io.github.russwyte",
     organizationName     := "russwyte",
     organizationHomepage := Some(url("https://github.com/russwyte")),
-    scmInfo := Some(
+    scmInfo              := Some(
       ScmInfo(
         url("https://github.com/russwyte/mechanoid"),
-        "scm:git@github.com:russwyte/mechanoid.git"
+        "scm:git@github.com:russwyte/mechanoid.git",
       )
     ),
     developers := List(
@@ -27,7 +27,7 @@ lazy val root = project
         id = "russwyte",
         name = "Russ White",
         email = "356303+russwyte@users.noreply.github.com",
-        url = url("https://github.com/russwyte")
+        url = url("https://github.com/russwyte"),
       )
     ),
     publishMavenStyle      := true,
@@ -36,23 +36,22 @@ lazy val root = project
     publishTo              := sonatypePublishToBundle.value,
     versionScheme          := Some("early-semver"),
     libraryDependencies ++= Seq(
-      "io.github.russwyte"  %% "saferis"            % "0.1.1",
-      "dev.zio"             %% "zio"                % zioVersion,
-      "dev.zio"             %% "zio-streams"        % zioVersion,
-      "dev.zio"             %% "zio-logging"        % "2.5.2",
-      "dev.zio"             %% "zio-logging-slf4j"  % "2.5.2",
-      "dev.zio"             %% "zio-json"           % "0.7.42",
-      "dev.zio"             %% "zio-test"           % zioVersion % Test,
-      "dev.zio"             %% "zio-test-sbt"       % zioVersion % Test,
-      "dev.zio"             %% "zio-test-magnolia"  % zioVersion % Test,
-      "org.testcontainers"   % "postgresql"         % "1.21.4"   % Test,
-      "org.postgresql"       % "postgresql"         % "42.7.8"   % Test
+      "io.github.russwyte" %% "saferis"           % "0.1.1",
+      "dev.zio"            %% "zio"               % zioVersion,
+      "dev.zio"            %% "zio-streams"       % zioVersion,
+      "dev.zio"            %% "zio-logging"       % "2.5.2",
+      "dev.zio"            %% "zio-logging-slf4j" % "2.5.2",
+      "dev.zio"            %% "zio-json"          % "0.7.42",
+      "dev.zio"            %% "zio-test"          % zioVersion % Test,
+      "dev.zio"            %% "zio-test-sbt"      % zioVersion % Test,
+      "dev.zio"            %% "zio-test-magnolia" % zioVersion % Test,
+      "org.testcontainers"  % "postgresql"        % "1.21.4"   % Test,
+      "org.postgresql"      % "postgresql"        % "42.7.8"   % Test,
     ),
     scalacOptions ++= Seq(
       "-deprecation",
       "-Wunused:all",
       "-feature",
-      "-language:implicitConversions"
     ),
-    scalafixDependencies += "com.github.vovapolu" %% "scaluzzi" % "0.1.23"
+    scalafixDependencies += "com.github.vovapolu" %% "scaluzzi" % "0.1.23",
   )

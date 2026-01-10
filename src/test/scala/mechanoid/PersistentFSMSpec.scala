@@ -3,7 +3,7 @@ package mechanoid
 import zio.*
 import zio.stream.*
 import zio.test.*
-import mechanoid.core.{MechanoidError, Timeout}
+import mechanoid.core.{MechanoidError, Timed}
 import mechanoid.persistence.*
 import java.time.Instant
 import scala.collection.mutable
@@ -101,7 +101,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
               state == Paid,
               seqNr == 1L,
               events.length == 1,
-              events.head.event == Timed.UserEvent(Pay),
+              events.head.event == Pay.timed,
             )
         }
         .provide(storeLayer)
@@ -254,7 +254,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
           yield assertTrue(
             state == Paid,
             events.length == 1,
-            events.head.event == Timed.UserEvent(Pay),
+            events.head.event == Pay.timed,
           )
         }
         .provide(storeLayer)
@@ -601,7 +601,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         assertTrue(
           state == Shipped,   // Transitioned to error state
           events.length == 1, // Only the Ship event was persisted
-          events.head.event == Timed.UserEvent(Ship),
+          events.head.event == Ship.timed,
         )
       }
     },
@@ -633,7 +633,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
           // Simulate another node that loaded state at seqNr=0 and tries to append
           // This should fail because expected seqNr (0) doesn't match actual (1)
           conflictResult <- store
-            .append("order-concurrent", Pay, 0L)
+            .append("order-concurrent", Pay.timed, 0L)
             .either
         yield assertTrue(
           result1 == 1L,
@@ -727,7 +727,7 @@ object PersistentFSMSpec extends ZIOSpecDefault:
 
         (for
           // Manually insert an event to simulate external write (seqNr starts at 0)
-          _ <- store.append("order-retry-conflict", Pay, 0L)
+          _ <- store.append("order-retry-conflict", Pay.timed, 0L)
 
           // Now create FSM - it loads events, sees Pay already happened
           result <- ZIO.scoped {

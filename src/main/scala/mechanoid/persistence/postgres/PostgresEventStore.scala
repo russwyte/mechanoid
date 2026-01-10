@@ -55,8 +55,8 @@ object EventCodec:
 
     def decodeEvent(json: String): Either[Throwable, Timed[E]] =
       json.fromJson[EventWrapper] match
-        case Right(EventWrapper(_, Some(true))) => Right(Timeout)
-        case Right(EventWrapper(Some(e), _))    => Right(e)
+        case Right(EventWrapper(_, Some(true))) => Right(Timed.TimeoutEvent)
+        case Right(EventWrapper(Some(e), _))    => Right(Timed.UserEvent(e))
         case Right(_)                           => Left(new RuntimeException(s"Invalid event wrapper: $json"))
         case Left(err)                          => Left(new RuntimeException(err))
 

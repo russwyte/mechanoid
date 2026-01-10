@@ -188,7 +188,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         // 100 concurrent attempts to append sequence 1
         results <- ZIO.foreachPar(1 to 100) { i =>
-          store.append(instanceId, StressEvent.Started(s"data-$i"), 1).either
+          store.append(instanceId, StressEvent.Started(s"data-$i").timed, 1).either
         }
 
         successes = results.collect { case Right(seqNr) => seqNr }
@@ -212,7 +212,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         results <- ZIO.foreachPar(instanceIds) { instanceId =>
           ZIO.foreach(1 to 10) { seq =>
-            store.append(instanceId, StressEvent.Progressed(seq), seq.toLong)
+            store.append(instanceId, StressEvent.Progressed(seq).timed, seq.toLong)
           }
         }
 
@@ -231,14 +231,14 @@ object PostgresStressSpec extends ZIOSpecDefault:
         instanceId = uniqueId("snapshot-stress")
 
         // Append events sequentially first
-        _ <- ZIO.foreach(1 to 10)(i => store.append(instanceId, StressEvent.Progressed(i), i.toLong))
+        _ <- ZIO.foreach(1 to 10)(i => store.append(instanceId, StressEvent.Progressed(i).timed, i.toLong))
 
         // Save snapshot at seq 5
         now <- Clock.instant
         _   <- store.saveSnapshot(FSMSnapshot(instanceId, StressState.Processing, 5L, now))
 
         // Continue appending while also overwriting snapshot
-        fiber1 <- ZIO.foreach(11 to 20)(i => store.append(instanceId, StressEvent.Progressed(i), i.toLong)).fork
+        fiber1 <- ZIO.foreach(11 to 20)(i => store.append(instanceId, StressEvent.Progressed(i).timed, i.toLong)).fork
         fiber2 <- store.saveSnapshot(FSMSnapshot(instanceId, StressState.WaitingForTimeout, 10L, now)).fork
 
         _ <- fiber1.join
@@ -260,7 +260,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         instanceId = uniqueId("delete-stress")
 
         // Add events
-        _ <- ZIO.foreach(1 to 20)(i => store.append(instanceId, StressEvent.Progressed(i), i.toLong))
+        _ <- ZIO.foreach(1 to 20)(i => store.append(instanceId, StressEvent.Progressed(i).timed, i.toLong))
 
         // Start loading while deleting
         loadFiber   <- store.loadEvents(instanceId).runCollect.fork
@@ -282,11 +282,11 @@ object PostgresStressSpec extends ZIOSpecDefault:
         instanceId = uniqueId("timeout-mix")
 
         // Alternate between regular events and timeouts
-        _ <- store.append(instanceId, StressEvent.Started("begin"), 1)
-        _ <- store.append(instanceId, Timeout, 2)
-        _ <- store.append(instanceId, StressEvent.Progressed(1), 3)
-        _ <- store.append(instanceId, Timeout, 4)
-        _ <- store.append(instanceId, StressEvent.Finished, 5)
+        _ <- store.append(instanceId, StressEvent.Started("begin").timed, 1)
+        _ <- store.append(instanceId, Timed.TimeoutEvent, 2)
+        _ <- store.append(instanceId, StressEvent.Progressed(1).timed, 3)
+        _ <- store.append(instanceId, Timed.TimeoutEvent, 4)
+        _ <- store.append(instanceId, StressEvent.Finished.timed, 5)
 
         events <- store.loadEvents(instanceId).runCollect
         timeouts = events.filter(_.event == Timed.TimeoutEvent)
@@ -989,8 +989,8 @@ object PostgresStressSpec extends ZIOSpecDefault:
                   for
                     // Got the lock, append events
                     highest <- eventStore.highestSequenceNr(instanceId)
-                    _       <- eventStore.append(instanceId, StressEvent.Started(nodeId), highest + 1)
-                    _       <- eventStore.append(instanceId, StressEvent.Progressed(1), highest + 2)
+                    _       <- eventStore.append(instanceId, StressEvent.Started(nodeId).timed, highest + 1)
+                    _       <- eventStore.append(instanceId, StressEvent.Progressed(1).timed, highest + 2)
 
                     // Maybe schedule a timeout
                     timeoutNow <- Clock.instant
@@ -1043,7 +1043,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
             }
             // Append many events
             _ <- ZIO.foreach(1 to 100) { i =>
-              eventStore.append(instanceId, StressEvent.Progressed(i), i.toLong).either
+              eventStore.append(instanceId, StressEvent.Progressed(i).timed, i.toLong).either
             }
           yield ()
 
@@ -1071,7 +1071,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         now <- Clock.instant
 
         // Append some events first
-        _ <- ZIO.foreach(1 to 10)(i => eventStore.append(instanceId, StressEvent.Progressed(i), i.toLong))
+        _ <- ZIO.foreach(1 to 10)(i => eventStore.append(instanceId, StressEvent.Progressed(i).timed, i.toLong))
 
         // 20 concurrent snapshot saves with different states
         _ <- ZIO.foreachPar(1 to 20) { i =>

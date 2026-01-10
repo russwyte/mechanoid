@@ -239,39 +239,6 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
 
-    // Subscription tests
-    test("should publish state changes to subscribers") {
-      val definition = UFSM[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
-        .when(Green)
-        .on(Timer)
-        .goto(Yellow)
-
-      ZIO.scoped {
-        for
-          fsm <- definition.build(Red)
-          // Use a queue to collect state changes
-          queue <- Queue.unbounded[StateChange[TrafficLight, Timed[TrafficEvent]]]
-          // Start collecting in background
-          _ <- fsm.subscribe.foreach(queue.offer).fork
-          // Give subscriber time to connect - needs to be long enough for slow CI
-          _ <- ZIO.sleep(200.millis)
-          _ <- fsm.send(Timer) // Red -> Green
-          _ <- fsm.send(Timer) // Green -> Yellow
-          // Wait for exactly 2 events with timeout
-          change1 <- queue.take.timeout(5.seconds).someOrFail(new RuntimeException("Timeout waiting for change 1"))
-          change2 <- queue.take.timeout(5.seconds).someOrFail(new RuntimeException("Timeout waiting for change 2"))
-        yield assertTrue(
-          change1.from == Red,
-          change1.to == Green,
-          change2.from == Green,
-          change2.to == Yellow,
-        )
-      }
-    } @@ TestAspect.flaky(3),
-
     // FSMState metadata tests
     test("should track state metadata") {
       val definition = UFSM[TrafficLight, TrafficEvent]

@@ -186,18 +186,15 @@ object VisualizationSpec extends ZIOSpecDefault:
       },
     ),
     suite("ExecutionTrace")(
-      test("fromStateChanges creates trace correctly") {
-        val changes = List(
-          StateChange(TestState.Idle, TestState.Running, TestEvent.Start, Instant.now),
-          StateChange(TestState.Running, TestState.Completed, TestEvent.Finish, Instant.now),
-        )
-        val trace = ExecutionTrace.fromStateChanges("test-1", TestState.Idle, TestState.Completed, changes)
+      test("empty creates trace with no steps") {
+        val trace = ExecutionTrace.empty[TestState, TestEvent]("test-1", TestState.Idle)
         assertTrue(
           trace.instanceId == "test-1",
           trace.initialState == TestState.Idle,
-          trace.currentState == TestState.Completed,
-          trace.stepCount == 2,
-          trace.visitedStates == Set(TestState.Idle, TestState.Running, TestState.Completed),
+          trace.currentState == TestState.Idle,
+          trace.isEmpty,
+          trace.stepCount == 0,
+          trace.visitedStates == Set(TestState.Idle),
         )
       }
     ),

@@ -1,7 +1,6 @@
 package mechanoid.persistence.lock
 
 import zio.*
-import zio.stream.*
 import mechanoid.core.*
 import mechanoid.persistence.*
 
@@ -97,34 +96,6 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock]
   override def history: UIO[List[S]] = underlying.history
 
   override def lastSequenceNr: UIO[Long] = underlying.lastSequenceNr
-
-  override def subscribe: ZStream[Any, Nothing, StateChange[S, Timed[E]]] =
-    underlying.subscribe
-
-  override def processStream(
-      events: ZStream[R, Err, E]
-  ): ZStream[R, Err | MechanoidError, StateChange[S, Timed[E]]] =
-    // Note: We can't simply delegate to underlying.processStream because
-    // it would bypass our locked send(). Instead, we process each event
-    // through our send() and construct state changes.
-    val results: ZStream[R, Err | MechanoidError, (FSMState[S], TransitionResult[S], FSMState[S], E)] =
-      events.mapZIO { (event: E) =>
-        for
-          stateBefore <- underlying.state
-          result      <- send(event)
-          stateAfter  <- underlying.state
-        yield (stateBefore, result, stateAfter, event)
-      }
-
-    results.collect { case (stateBefore, TransitionResult.Goto(newState), stateAfter, event) =>
-      StateChange(
-        stateBefore.current,
-        newState,
-        event: Timed[E],
-        stateAfter.lastTransitionAt,
-      )
-    }
-  end processStream
 
   override def stop: UIO[Unit] = underlying.stop
 

@@ -1,7 +1,6 @@
 package mechanoid.runtime
 
 import zio.*
-import zio.stream.*
 import mechanoid.core.*
 import mechanoid.dsl.FSMDefinition
 import java.time.Instant
@@ -9,7 +8,6 @@ import java.time.Instant
 private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
     definition: FSMDefinition[S, E, R, Err],
     stateRef: Ref[FSMState[S]],
-    hub: Hub[StateChange[S, Timed[E]]],
     runningRef: Ref[Boolean],
     sendSelf: Timed[E] => ZIO[R, Err | MechanoidError, TransitionResult[S]],
 ) extends FSMRuntime[S, E, R, Err]:
@@ -17,7 +15,7 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
   override def send(
       event: E
   ): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
-    sendSelf(event)
+    sendSelf(event.timed)
 
   private[runtime] def sendInternal(
       event: Timed[E]
@@ -54,12 +52,11 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
         _.filterOrFail(identity)(GuardRejectedError(fsmState.current, event: MEvent)).unit
       )
       result <- transition.action
-      _      <- handleTransitionResult(fsmState, event, result)
+      _      <- handleTransitionResult(fsmState, result)
     yield result
 
   private def handleTransitionResult(
       fsmState: FSMState[S],
-      event: Timed[E],
       result: TransitionResult[S],
   ): ZIO[R, Err | MechanoidError, Unit] =
     result match
@@ -68,16 +65,8 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
           // Run exit action for current state
           _ <- runExitAction(fsmState.current)
           // Update state
-          now    = Instant.now()
-          change = StateChange[S, Timed[E]](
-            fsmState.current,
-            newState,
-            event,
-            now,
-          )
+          now = Instant.now()
           _ <- stateRef.update(_.transitionTo(newState, now))
-          // Publish change to observers
-          _ <- hub.publish(change)
           // Run entry action for new state
           _ <- runEntryAction(newState)
           // Start timeout for new state if configured
@@ -112,28 +101,18 @@ private[runtime] final class FSMRuntimeImpl[S <: MState, E <: MEvent, R, Err](
       (ZIO.sleep(zio.Duration.fromScala(duration)) *>
         stateRef.get.flatMap { currentFsmState =>
           // Compare by ordinal (shape) not exact value - timeout fires if still in same state shape
-          ZIO.when(definition.stateEnum.ordinal(currentFsmState.current) == stateOrd)(sendInternal(Timeout).ignore)
+          ZIO.when(definition.stateEnum.ordinal(currentFsmState.current) == stateOrd)(
+            sendInternal(Timed.TimeoutEvent).ignore
+          )
         }).forkDaemon
     }
+  end startTimeout
 
   override def currentState: UIO[S] = stateRef.get.map(_.current)
 
   override def state: UIO[FSMState[S]] = stateRef.get
 
   override def history: UIO[List[S]] = stateRef.get.map(_.history)
-
-  override def subscribe: ZStream[Any, Nothing, StateChange[S, Timed[E]]] =
-    ZStream.fromHub(hub)
-
-  override def processStream(
-      events: ZStream[R, Err, E]
-  ): ZStream[R, Err | MechanoidError, StateChange[S, Timed[E]]] =
-    events
-      .mapZIO(event => send(event).map(result => (event, result)))
-      .collect { case (event, TransitionResult.Goto(_)) =>
-        event
-      }
-      .flatMap(_ => ZStream.fromHub(hub).take(1))
 
   override def stop: UIO[Unit] = runningRef.set(false)
 
@@ -159,7 +138,6 @@ object FSMRuntimeImpl:
   ): ZIO[R, Nothing, FSMRuntimeImpl[S, E, R, Err]] =
     for
       stateRef   <- Ref.make(FSMState.initial(initial))
-      hub        <- Hub.bounded[StateChange[S, Timed[E]]](256)
       runningRef <- Ref.make(true)
 
       // Create the runtime with self-reference for timeout handling
@@ -177,7 +155,6 @@ object FSMRuntimeImpl:
       runtime = new FSMRuntimeImpl(
         definition,
         stateRef,
-        hub,
         runningRef,
         sendSelf,
       )

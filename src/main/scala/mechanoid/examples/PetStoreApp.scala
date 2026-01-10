@@ -3,6 +3,7 @@ package mechanoid.examples
 import zio.*
 import zio.Console.printLine
 import mechanoid.*
+import mechanoid.core.Timed
 import mechanoid.persistence.*
 import mechanoid.persistence.command.*
 import java.time.Instant

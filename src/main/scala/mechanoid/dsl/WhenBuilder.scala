@@ -20,9 +20,9 @@ final class WhenBuilder[S <: MState, E <: MEvent, R, Err](
 
   /** Define a transition triggered by a specific event. */
   def on(event: E): TransitionBuilder[S, E, R, Err] =
-    new TransitionBuilder(definition, fromStateOrdinal, event, None)
+    new TransitionBuilder(definition, fromStateOrdinal, event.timed, None)
 
   /** Define a transition triggered by the timeout event. */
   def onTimeout: TransitionBuilder[S, E, R, Err] =
-    new TransitionBuilder(definition, fromStateOrdinal, Timeout, None)
+    new TransitionBuilder(definition, fromStateOrdinal, Timed.TimeoutEvent, None)
 end WhenBuilder

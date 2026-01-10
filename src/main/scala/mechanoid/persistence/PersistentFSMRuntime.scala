@@ -1,7 +1,6 @@
 package mechanoid.persistence
 
 import zio.*
-import zio.stream.*
 import mechanoid.core.*
 import mechanoid.dsl.FSMDefinition
 import mechanoid.runtime.FSMRuntime
@@ -322,7 +321,6 @@ object PersistentFSMRuntime:
       // Initialize runtime state
       stateRef   <- Ref.make(rebuiltState)
       seqNrRef   <- Ref.make(events.lastOption.map(_.sequenceNr).getOrElse(startSeqNr))
-      hub        <- Hub.bounded[StateChange[S, Timed[E]]](256)
       runningRef <- Ref.make(true)
 
       // Create self-reference for timeout handling
@@ -342,7 +340,6 @@ object PersistentFSMRuntime:
         timeoutStore,
         stateRef,
         seqNrRef,
-        hub,
         runningRef,
         sendSelf,
       )
@@ -395,13 +392,12 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
     timeoutStore: Option[TimeoutStore[Id]],
     stateRef: Ref[FSMState[S]],
     seqNrRef: Ref[Long],
-    hub: Hub[StateChange[S, Timed[E]]],
     runningRef: Ref[Boolean],
     sendSelf: Timed[E] => ZIO[R, Err | MechanoidError, TransitionResult[S]],
 ) extends PersistentFSMRuntime[Id, S, E, R, Err]:
 
   override def send(event: E): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
-    sendSelf(event)
+    sendSelf(event.timed)
 
   private[persistence] def sendInternal(
       event: Timed[E]
@@ -446,12 +442,11 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
       seqNr        <- store.append(instanceId, event, currentSeqNr)
       _            <- seqNrRef.set(seqNr)
       // Update state
-      _ <- handleTransitionResult(fsmState, event, result)
+      _ <- handleTransitionResult(fsmState, result)
     yield result
 
   private def handleTransitionResult(
       fsmState: FSMState[S],
-      event: Timed[E],
       result: TransitionResult[S],
   ): ZIO[R, Err | MechanoidError, Unit] =
     result match
@@ -462,16 +457,8 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
           // Run exit action for current state
           _ <- runExitAction(fsmState.current)
           // Update state
-          now    = Instant.now()
-          change = StateChange[S, Timed[E]](
-            fsmState.current,
-            newState,
-            event,
-            now,
-          )
+          now = Instant.now()
           _ <- stateRef.update(_.transitionTo(newState, now))
-          // Publish change to observers
-          _ <- hub.publish(change)
           // Run entry action for new state
           _ <- runEntryAction(newState)
           // Start timeout for new state if configured
@@ -481,7 +468,7 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
       case TransitionResult.Stay =>
         ZIO.unit
 
-      case TransitionResult.Stop(reason) =>
+      case TransitionResult.Stop(_) =>
         for
           _ <- cancelTimeout
           _ <- runExitAction(fsmState.current)
@@ -529,7 +516,9 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
           (ZIO.sleep(zio.Duration.fromScala(duration)) *>
             stateRef.get.flatMap { currentFsmState =>
               // Compare by ordinal (shape) not exact value - timeout fires if still in same state shape
-              ZIO.when(definition.stateEnum.ordinal(currentFsmState.current) == stateOrd)(sendInternal(Timeout).ignore)
+              ZIO.when(definition.stateEnum.ordinal(currentFsmState.current) == stateOrd)(
+                sendInternal(Timed.TimeoutEvent).ignore
+              )
             }).forkDaemon.unit
     }
   end startTimeout
@@ -541,19 +530,6 @@ private[persistence] final class PersistentFSMRuntimeImpl[Id, S <: MState, E <: 
   override def history: UIO[List[S]] = stateRef.get.map(_.history)
 
   override def lastSequenceNr: UIO[Long] = seqNrRef.get
-
-  override def subscribe: ZStream[Any, Nothing, StateChange[S, Timed[E]]] =
-    ZStream.fromHub(hub)
-
-  override def processStream(
-      events: ZStream[R, Err, E]
-  ): ZStream[R, Err | MechanoidError, StateChange[S, Timed[E]]] =
-    events
-      .mapZIO(event => send(event).map(result => (event, result)))
-      .collect { case (event, TransitionResult.Goto(_)) =>
-        event
-      }
-      .flatMap(_ => ZStream.fromHub(hub).take(1))
 
   override def stop: UIO[Unit] = runningRef.set(false)
 

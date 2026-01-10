@@ -41,21 +41,6 @@ case class TraceStep[S <: MState, E <: MEvent](
 ):
   def isSelfTransition: Boolean = from == to
 
-object TraceStep:
-  def fromStateChange[S <: MState, E <: MEvent](
-      seqNr: Int,
-      change: StateChange[S, E],
-  ): TraceStep[S, E] =
-    TraceStep(
-      sequenceNumber = seqNr,
-      from = change.from,
-      to = change.to,
-      event = change.triggeredBy,
-      timestamp = change.timestamp,
-      isTimeout = change.isTimeoutTriggered,
-    )
-end TraceStep
-
 /** Complete execution trace for runtime visualization. */
 case class ExecutionTrace[S <: MState, E <: MEvent](
     instanceId: String,
@@ -71,15 +56,10 @@ case class ExecutionTrace[S <: MState, E <: MEvent](
 end ExecutionTrace
 
 object ExecutionTrace:
-  def fromStateChanges[S <: MState, E <: MEvent](
+  /** Create an empty trace starting from an initial state. */
+  def empty[S <: MState, E <: MEvent](
       instanceId: String,
       initialState: S,
-      currentState: S,
-      changes: List[StateChange[S, E]],
   ): ExecutionTrace[S, E] =
-    val steps = changes.zipWithIndex.map { case (change, idx) =>
-      TraceStep.fromStateChange(idx + 1, change)
-    }
-    ExecutionTrace(instanceId, initialState, currentState, steps)
-  end fromStateChanges
+    ExecutionTrace(instanceId, initialState, initialState, Nil)
 end ExecutionTrace

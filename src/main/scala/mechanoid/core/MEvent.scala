@@ -14,15 +14,15 @@ object MEvent:
   /** Extension method providing ordinal access via typeclass, avoiding name collision with Scala 3 enum's ordinal. */
   extension [E <: MEvent](e: E)(using se: SealedEnum[E]) private[mechanoid] inline def fsmOrdinal: Int = se.ordinal(e)
 
+  /** Wrap an event as a Timed event for use with EventStore. Internal use only. */
+  extension [E <: MEvent](e: E) private[mechanoid] def timed: Timed[E] = Timed.UserEvent(e)
+
 /** Sealed ADT for events that include the built-in Timeout event.
   *
   * This sealed trait allows FSM transitions to handle both user-defined events and timeout events uniformly, with full
   * type safety and no unchecked casts.
   *
-  * User events are automatically wrapped via implicit conversion, so users can write:
-  * {{{
-  * fsm.send(MyEvent.Start)  // automatically becomes Timed.UserEvent(MyEvent.Start)
-  * }}}
+  * This is an internal type - user events are wrapped explicitly at API boundaries.
   */
 sealed trait Timed[+E <: MEvent] extends MEvent
 
@@ -32,12 +32,6 @@ object Timed:
 
   /** Singleton for timeout events. Internal only - use isTimeout to check. */
   private[mechanoid] case object TimeoutEvent extends Timed[Nothing]
-
-  /** Automatic conversion from user events to Timed - enables transparent API. */
-  given userEventConversion[E <: MEvent]: Conversion[E, Timed[E]] = UserEvent(_)
-
-  /** Conversion from Timeout singleton to Timed. */
-  given timeoutConversion: Conversion[Timeout.type, Timed[Nothing]] = _ => TimeoutEvent
 
   /** Derive SealedEnum for Timed event types using the base event's SealedEnum. */
   given sealedEnum[E <: MEvent](using base: SealedEnum[E]): SealedEnum[Timed[E]] with
@@ -83,10 +77,9 @@ end Timed
 trait EventData[D]:
   def data: D
 
-/** Built-in timeout event.
+/** Built-in timeout event. Internal use only.
   *
-  * This event is automatically sent when a state's timeout duration elapses. Users can handle it like any other event
-  * in their transition definitions.
+  * This event is automatically sent when a state's timeout duration elapses.
   */
-case object Timeout extends MEvent:
+private[mechanoid] case object Timeout extends MEvent:
   val Ordinal: Int = -1
