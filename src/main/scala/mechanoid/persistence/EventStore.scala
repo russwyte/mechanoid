@@ -35,10 +35,9 @@ import scala.annotation.unused
   *   _     <- ZIO.when(seqNr % 100 == 0)(fsm.saveSnapshot)
   * yield ()
   *
-  * // Example: Snapshot on specific state transitions
-  * fsm.subscribe.foreach { change =>
-  *   ZIO.when(change.to == CompletedState)(fsm.saveSnapshot)
-  * }
+  * // Example: Snapshot on specific state transitions (use entry actions)
+  * // In your FSM definition:
+  * // .onState(CompletedState).onEntry(fsm.saveSnapshot).done
   *
   * // Example: Periodic snapshots with ZIO Schedule
   * fsm.saveSnapshot

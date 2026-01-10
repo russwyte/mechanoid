@@ -19,8 +19,6 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 - [Running FSMs](#running-fsms)
   - [In-Memory Runtime](#in-memory-runtime)
   - [Sending Events](#sending-events)
-  - [Subscribing to State Changes](#subscribing-to-state-changes)
-  - [Stream Processing](#stream-processing)
 - [Persistence](#persistence)
   - [Event Sourcing Model](#event-sourcing-model)
   - [EventStore Interface](#eventstore-interface)
@@ -132,9 +130,9 @@ enum TrafficEvent extends MEvent:
   case Timer, EmergencyOverride
 ```
 
-**Built-in events:**
+**Timeouts:**
 
-- `Timeout` - Automatically sent when a state's timeout expires
+Timeout events are handled internally by the runtime. When a state's timeout expires, a timeout transition is automatically triggered if one is defined. You don't need to define or handle timeout events explicitly - just use `.onTimeout` in your FSM definition.
 
 **Event data:**
 
@@ -323,33 +321,6 @@ Possible errors:
 - `InvalidTransitionError` - No transition defined for state/event
 - `GuardRejectedError` - Guard condition failed
 
-### Subscribing to State Changes
-
-React to state transitions:
-
-```scala
-fsm.subscribe.foreach { change =>
-  ZIO.logInfo(s"${change.from} -> ${change.to} via ${change.triggeredBy}")
-}.fork
-```
-
-`StateChange` contains:
-- `from` / `to` - States
-- `triggeredBy` - The event (may be `Timeout`)
-- `timestamp` - When the transition occurred
-
-### Stream Processing
-
-Process a stream of events:
-
-```scala
-val events: ZStream[Any, Nothing, MyEvent] = ???
-
-fsm.processStream(events).foreach { change =>
-  ZIO.logInfo(s"Processed: $change")
-}
-```
-
 ---
 
 ## Persistence
@@ -378,13 +349,21 @@ Implement `EventStore[Id, S, E]` for your storage backend:
 
 ```scala
 trait EventStore[Id, S <: MState, E <: MEvent]:
-  def append(instanceId: Id, event: E | Timeout.type, expectedSeqNr: Long): ZIO[Any, Throwable, Long]
-  def loadEvents(instanceId: Id): ZStream[Any, Throwable, StoredEvent[Id, E | Timeout.type]]
-  def loadEventsFrom(instanceId: Id, fromSeqNr: Long): ZStream[Any, Throwable, StoredEvent[Id, E | Timeout.type]]
-  def loadSnapshot(instanceId: Id): ZIO[Any, Throwable, Option[FSMSnapshot[Id, S]]]
-  def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, Throwable, Unit]
-  def highestSequenceNr(instanceId: Id): ZIO[Any, Throwable, Long]
+  // Core method - events are wrapped in Timed[E] internally
+  def append(instanceId: Id, event: Timed[E], expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
+
+  // Convenience methods (built-in, no need to override)
+  def appendEvent(instanceId: Id, event: E, expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
+  def appendTimeout(instanceId: Id, expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
+
+  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]]
+  def loadEventsFrom(instanceId: Id, fromSeqNr: Long): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]]
+  def loadSnapshot(instanceId: Id): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]]
+  def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, MechanoidError, Unit]
+  def highestSequenceNr(instanceId: Id): ZIO[Any, MechanoidError, Long]
 ```
+
+**Note**: `Timed[E]` is an internal wrapper that distinguishes user events from timeout events. You only need to handle this in your `append` implementation - serialize both types appropriately.
 
 **Critical**: `append` must implement optimistic locking - atomically check that `expectedSeqNr` matches the current highest sequence number, then increment. This prevents lost updates in concurrent scenarios.
 
@@ -1271,16 +1250,15 @@ val program = ZIO.scoped {
       OrderState.Pending
     )
 
-    // Subscribe to changes
-    _ <- fsm.subscribe.foreach { change =>
-      ZIO.logInfo(s"Order transitioned: ${change.from} -> ${change.to}")
-    }.fork
-
     // Process order
     _ <- fsm.send(OrderEvent.RequestPayment)
 
     // Wait for payment (will timeout after 30 minutes if not received)
     // Even if this node crashes, another node's sweeper will fire the timeout
+
+    // Check current state
+    state <- fsm.currentState
+    _ <- ZIO.logInfo(s"Current state: $state")
 
   yield ()
 }.provide(eventStoreLayer, timeoutStoreLayer)

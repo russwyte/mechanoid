@@ -46,7 +46,7 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 - [Core Concepts](docs/DOCUMENTATION.md#core-concepts) - States, events, transitions
 - [Defining FSMs](docs/DOCUMENTATION.md#defining-fsms) - Guards, actions, timeouts
-- [Running FSMs](docs/DOCUMENTATION.md#running-fsms) - Runtime, subscriptions, streams
+- [Running FSMs](docs/DOCUMENTATION.md#running-fsms) - Runtime, sending events
 - [Persistence](docs/DOCUMENTATION.md#persistence) - Event sourcing, snapshots, recovery
 - [Durable Timeouts](docs/DOCUMENTATION.md#durable-timeouts) - TimeoutStore, sweepers, leader election
 - [Distributed Locking](docs/DOCUMENTATION.md#distributed-locking) - Exactly-once transitions, FSMInstanceLock
