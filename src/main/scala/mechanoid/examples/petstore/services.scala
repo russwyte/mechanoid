@@ -17,7 +17,7 @@ trait PaymentProcessor:
 object PaymentProcessor:
   /** Configuration for payment processor */
   case class Config(
-      successRate: Double = 0.85,
+      successRate: Double = 0.65,
       minDelayMs: Long = 125,
       maxDelayMs: Long = 375,
   )
@@ -58,7 +58,7 @@ trait Shipper:
 object Shipper:
   /** Configuration for shipper */
   case class Config(
-      successRate: Double = 0.95,
+      successRate: Double = 0.65,
       minDelayMs: Long = 75,
       maxDelayMs: Long = 200,
   )

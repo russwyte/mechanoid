@@ -12,8 +12,6 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [FSM State Container](#fsm-state-container)
 - [Defining FSMs](#defining-fsms)
   - [Basic Definition](#basic-definition)
-  - [Guards](#guards)
-  - [Actions](#actions)
   - [Entry and Exit Actions](#entry-and-exit-actions)
   - [Timeouts](#timeouts)
 - [Running FSMs](#running-fsms)
@@ -80,7 +78,7 @@ enum OrderEvent extends MEvent:
   case Pay, Ship, Deliver
 
 // Build FSM definition
-val orderFSM = UFSM[OrderState, OrderEvent]
+val orderFSM = fsm[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
   .when(Shipped).on(Deliver).goto(Delivered)
@@ -187,85 +185,25 @@ fsm.state.map { s =>
 
 ### Basic Definition
 
-Use `FSMDefinition` to build your FSM:
+Use `fsm[S, E]` to build your FSM:
 
 ```scala
-val definition = UFSM[MyState, MyEvent]
+import mechanoid.*
+
+val definition = fsm[MyState, MyEvent]
   .when(State1).on(Event1).goto(State2)
   .when(State1).on(Event2).stay
   .when(State2).on(Event3).goto(State3)
 ```
 
-For FSMs that require environment or custom error types, use one of these type aliases:
-
-```scala
-// With Throwable errors (like ZIO's Task)
-val definition = TaskFSM[MyState, MyEvent]
-
-// With custom errors (like ZIO's IO)
-val definition = IOFSM[MyState, MyEvent, MyError]
-
-// With environment, no errors (like ZIO's URIO)
-val definition = URFSM[MyState, MyEvent, MyEnv]
-
-// With environment and Throwable errors (like ZIO's RIO)
-val definition = RFSM[MyState, MyEvent, MyEnv]
-
-// Full control - specify all type parameters
-val definition = FSMDefinition[MyState, MyEvent, MyEnv, MyError]
-```
-
-### Guards
-
-Guards are predicates that must be true for a transition to occur:
-
-```scala
-// Simple boolean guard
-.when(Pending).on(Pay).when(amount > 0).goto(Paid)
-
-// Lazy evaluation
-.when(Pending).on(Pay).whenEval(checkInventory()).goto(Paid)
-
-// ZIO-based guard (can access environment, fail with errors)
-.when(Pending)
-  .on(Pay)
-  .when(
-    ZIO.serviceWithZIO[PaymentService](_.isValid(payment))
-  )
-  .goto(Paid)
-```
-
-If a guard returns `false`, the transition is rejected with `GuardRejectedError`.
-
-### Actions
-
-Execute effects during transitions:
-
-```scala
-// Execute action that determines the outcome
-.when(Processing)
-  .on(Complete)
-  .execute {
-    for
-      result <- processOrder
-    yield
-      if result.success then TransitionResult.Goto(Completed)
-      else TransitionResult.Goto(Failed)
-  }
-
-// Execute action then transition
-.when(Pending)
-  .on(Pay)
-  .executing(notifyPaymentReceived)
-  .goto(Paid)
-```
+All FSM definitions share the same type: `FSMDefinition[S, E]`. The library uses a single, simple type without environment or error type parameters—all errors are unified under `MechanoidError`.
 
 ### Entry and Exit Actions
 
 Define actions that run when entering or leaving a state:
 
 ```scala
-val definition = UFSM[State, Event]
+val definition = fsm[State, Event]
   .when(Active).on(Deactivate).goto(Inactive)
   .onState(Active)
     .onEntry(ZIO.logInfo("Entered Active state"))
@@ -280,7 +218,7 @@ Schedule automatic timeout events:
 ```scala
 import scala.concurrent.duration.*
 
-val definition = UFSM[State, Event]
+val definition = fsm[State, Event]
   .when(WaitingForPayment).onTimeout.goto(Cancelled)
   .withTimeout(WaitingForPayment, 30.minutes)
 ```
@@ -319,7 +257,6 @@ yield result match
 
 Possible errors:
 - `InvalidTransitionError` - No transition defined for state/event
-- `GuardRejectedError` - Guard condition failed
 
 ---
 
@@ -641,21 +578,21 @@ This provides:
 
 ### The Side Effect Problem
 
-When using persistence, FSM state can be recovered by replaying events. However, **side effects** present a challenge:
+When using persistence, FSM state can be recovered by replaying events. However, **side effects** present a challenge.
+
+Mechanoid's FSM transitions are statically resolvable—all target states are known at compile time. Side effects should be handled through:
 
 | Action Type | Runs During Replay | Safe for Side Effects |
 |------------|-------------------|----------------------|
-| `.executing(action)` | Yes | No - will re-run |
 | `.onState(s).onEntry(action)` | No | Yes |
 | `.onState(s).onExit(action)` | No | Yes |
-
-If your transition executes an expensive or non-idempotent operation (like charging a credit card), it could run again during recovery.
+| **Command Queue** | No (commands persisted) | Yes |
 
 **Solutions:**
 
-1. **Entry actions**: Put side effects in entry actions (they don't run during replay)
+1. **Entry/Exit actions**: Put side effects in lifecycle actions (they don't run during replay)
 2. **Idempotent operations**: Design side effects to be safely repeatable
-3. **Command Queue**: Persist commands for separate execution (this section)
+3. **Command Queue**: Persist commands for separate execution (recommended for complex workflows)
 
 ### Transactional Outbox Pattern
 
@@ -821,7 +758,7 @@ RetryPolicy.exponentialBackoff(
 Enqueue commands in **entry actions** (they don't run during replay):
 
 ```scala
-val definition = UFSM[OrderState, OrderEvent]
+val definition = fsm[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
   // Enqueue command when entering Paid state
@@ -1193,9 +1130,9 @@ val spec = TransitionSpecBuilder.start
 | Error | Cause |
 |-------|-------|
 | `InvalidTransitionError(state, event)` | No transition defined for state/event combination |
-| `GuardRejectedError(state, event)` | Guard condition returned false |
 | `FSMStoppedError(reason)` | FSM has been stopped |
-| `ProcessingTimeoutError(state, event, duration)` | Timeout during event processing |
+| `ProcessingTimeoutError(state, duration)` | Timeout during event processing |
+| `ActionFailedError(cause)` | User-defined error from lifecycle action |
 | `PersistenceError(cause)` | Persistence operation failed |
 | `SequenceConflictError(expected, actual, instanceId)` | Concurrent modification detected |
 | `EventReplayError(state, event, sequenceNr)` | Stored event doesn't match FSM definition |
@@ -1220,7 +1157,7 @@ enum OrderEvent extends MEvent:
   case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel
 
 // FSM Definition
-val orderDefinition = UFSM[OrderState, OrderEvent]
+val orderDefinition = fsm[OrderState, OrderEvent]
   // Happy path
   .when(Pending).on(RequestPayment).goto(AwaitingPayment)
   .when(AwaitingPayment).on(ConfirmPayment).goto(Paid)

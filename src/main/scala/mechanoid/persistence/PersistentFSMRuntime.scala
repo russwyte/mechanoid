@@ -13,7 +13,7 @@ import java.time.Instant
   * Events are persisted to an EventStore before state changes occur. State can be reconstructed by replaying events
   * from the store.
   *
-  * All errors are returned as `MechanoidError`. User errors from transition actions are wrapped in `ActionFailedError`.
+  * All errors are returned as `MechanoidError`. User errors from lifecycle actions are wrapped in `ActionFailedError`.
   *
   * ==Recovery Behavior==
   *

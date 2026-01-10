@@ -6,7 +6,7 @@ import mechanoid.dsl.FSMDefinition
 
 /** The runtime interface for an active FSM.
   *
-  * All errors are returned as `MechanoidError`. User errors from transition actions are wrapped in `ActionFailedError`.
+  * All errors are returned as `MechanoidError`. User errors from lifecycle actions are wrapped in `ActionFailedError`.
   *
   * @tparam S
   *   The state type

@@ -24,8 +24,8 @@ enum OrderState extends MState:
 enum OrderEvent extends MEvent:
   case Pay, Ship
 
-// Build FSM definition (UFSM = pure FSM, no environment, no errors)
-val orderFSM = UFSM[OrderState, OrderEvent]
+// Build FSM definition
+val orderFSM = fsm[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
 
@@ -45,7 +45,7 @@ val program = ZIO.scoped {
 See the [full documentation](docs/DOCUMENTATION.md) for:
 
 - [Core Concepts](docs/DOCUMENTATION.md#core-concepts) - States, events, transitions
-- [Defining FSMs](docs/DOCUMENTATION.md#defining-fsms) - Guards, actions, timeouts
+- [Defining FSMs](docs/DOCUMENTATION.md#defining-fsms) - Entry/exit actions, timeouts
 - [Running FSMs](docs/DOCUMENTATION.md#running-fsms) - Runtime, sending events
 - [Persistence](docs/DOCUMENTATION.md#persistence) - Event sourcing, snapshots, recovery
 - [Durable Timeouts](docs/DOCUMENTATION.md#durable-timeouts) - TimeoutStore, sweepers, leader election
@@ -57,12 +57,8 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 | Component | Description |
 |-----------|-------------|
-| `FSMDefinition` | Builder for defining state machines (use type aliases below) |
-| `UFSM` | Pure FSM - no environment, no errors (`FSMDefinition[S, E, Any, Nothing]`) |
-| `TaskFSM` | FSM with Throwable errors (`FSMDefinition[S, E, Any, Throwable]`) |
-| `IOFSM` | FSM with custom errors (`FSMDefinition[S, E, Any, Err]`) |
-| `URFSM` | FSM with environment, no errors (`FSMDefinition[S, E, R, Nothing]`) |
-| `RFSM` | FSM with environment and Throwable (`FSMDefinition[S, E, R, Throwable]`) |
+| `fsm[S, E]` | Entry point for defining state machines |
+| `FSMDefinition[S, E]` | Builder type for FSM definitions |
 | `FSMRuntime` | In-memory FSM execution |
 | `PersistentFSMRuntime` | Event-sourced FSM with persistence |
 | `TimeoutSweeper` | Background service for durable timeouts |
@@ -90,7 +86,7 @@ val program = ZIO.scoped {
 import mechanoid.persistence.timeout.*
 
 // FSM with timeout that survives node failures
-val definition = UFSM[State, Event]
+val definition = fsm[State, Event]
   .when(AwaitingPayment).onTimeout.goto(Cancelled)
   .withTimeout(AwaitingPayment, 30.minutes)
 

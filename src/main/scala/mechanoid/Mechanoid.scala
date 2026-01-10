@@ -25,9 +25,6 @@ export core.SealedEnum
 
 // Re-export DSL
 export dsl.FSMDefinition
-export dsl.DSLHelpers.goto
-export dsl.DSLHelpers.stay as stayResult
-export dsl.DSLHelpers.stop as stopResult
 
 // Re-export runtime
 export runtime.FSMRuntime
@@ -50,6 +47,7 @@ export core.SequenceConflictError
 export core.EventReplayError
 
 // Re-export visualization
+export visualization.TransitionKind
 export visualization.TransitionMeta
 export visualization.StateMeta
 export visualization.FSMMeta

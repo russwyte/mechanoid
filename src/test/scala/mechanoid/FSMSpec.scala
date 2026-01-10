@@ -131,45 +131,6 @@ object FSMSpec extends ZIOSpecDefault:
         yield assertTrue(error.isInstanceOf[InvalidTransitionError])
       }
     },
-    test("should execute transition with executeWith") {
-      val definition =
-        fsm[TrafficLight, TrafficEvent]
-          .when(Red)
-          .on(Timer)
-          .executeWith { (state, event) =>
-            ZIO.succeed(TransitionResult.Goto(Green))
-          }
-
-      ZIO.scoped {
-        for
-          fsm   <- definition.build(Red)
-          _     <- fsm.send(Timer)
-          state <- fsm.currentState
-        yield assertTrue(state == Green)
-      }
-    },
-    test("executeWith should provide state and event") {
-      for
-        receivedRef <- Ref.make(Option.empty[(TrafficLight, TrafficEvent)])
-        definition =
-          fsm[TrafficLight, TrafficEvent]
-            .when(Red)
-            .on(Timer)
-            .executeWith { (state, event) =>
-              receivedRef.set(Some((state, event))).as(TransitionResult.Goto(Green))
-            }
-        _ <- ZIO.scoped {
-          for
-            fsm <- definition.build(Red)
-            _   <- fsm.send(Timer)
-          yield ()
-        }
-        received <- receivedRef.get
-      yield assertTrue(
-        received == Some((Red, Timer))
-      )
-    },
-
     // Entry/Exit action tests
     test("should execute entry action on initial state") {
       for
@@ -353,51 +314,6 @@ object FSMSpec extends ZIOSpecDefault:
           _       <- fsm.send(Emergency)
           history <- fsm.history
         yield assertTrue(history.isEmpty)
-      }
-    },
-
-    // executeWith with conditional logic (replaces guard pattern)
-    test("executeWith with conditional logic") {
-      // Instead of guards, use executeWith for conditional transitions
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .executeWith { (state, event) =>
-          // Conditional logic inside executeWith replaces guards
-          if state == Red then ZIO.succeed(TransitionResult.Goto(Green))
-          else ZIO.succeed(TransitionResult.Stay)
-        }
-
-      ZIO.scoped {
-        for
-          fsm   <- definition.build(Red)
-          _     <- fsm.send(Timer)
-          state <- fsm.currentState
-        yield assertTrue(state == Green)
-      }
-    },
-    test("executeWith can fail with domain error") {
-      case class CustomError(msg: String)
-
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .executeWith { (state, event) =>
-          ZIO.fail(CustomError("Not allowed"))
-        }
-
-      // User errors are wrapped in ActionFailedError
-      ZIO.scoped {
-        definition.build(Red).flatMap { fsm =>
-          fsm.send(Timer).either.map {
-            case Left(ActionFailedError(CustomError(msg))) =>
-              assertTrue(msg == "Not allowed")
-            case Left(error) =>
-              throw new AssertionError(s"Unexpected error type: $error")
-            case Right(_) =>
-              throw new AssertionError("Should have failed")
-          }
-        }
       }
     },
 

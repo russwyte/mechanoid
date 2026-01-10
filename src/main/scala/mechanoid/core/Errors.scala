@@ -26,7 +26,8 @@ final case class FSMStoppedError(reason: Option[String]) extends MechanoidError
 
 /** Error wrapping a user-defined error from an action.
   *
-  * When using `executeWith`, user errors are wrapped in this type to maintain consistent error handling across the FSM.
+  * User errors from lifecycle actions (entry/exit) are wrapped in this type to maintain consistent error handling
+  * across the FSM.
   *
   * @param cause
   *   The underlying user error

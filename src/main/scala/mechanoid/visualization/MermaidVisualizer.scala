@@ -38,20 +38,16 @@ object MermaidVisualizer:
       val fromName = fsm.stateEnum.nameFor(fromOrdinal)
       transitions.foreach { meta =>
         val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label     = meta.annotation match
-          case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
-          case Some("dynamic")                       => s"$eventName [dynamic]"
-          case _                                     => eventName
 
-        meta.targetStateOrdinal match
-          case Some(targetOrdinal) =>
-            val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-            sb.append(s"    $fromName --> $targetName: $label\n")
-          case None if meta.annotation.exists(_.startsWith("stop")) =>
+        meta.kind match
+          case TransitionKind.Goto =>
+            val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+            sb.append(s"    $fromName --> $targetName: $eventName\n")
+          case TransitionKind.Stay =>
+            sb.append(s"    $fromName --> $fromName: $eventName\n")
+          case TransitionKind.Stop(reason) =>
+            val label = reason.fold(s"$eventName [stop]")(r => s"$eventName [stop: $r]")
             sb.append(s"    $fromName --> [*]: $label\n")
-          case None =>
-            // Stay transition - self-loop
-            sb.append(s"    $fromName --> $fromName: $label\n")
       }
     }
 
@@ -154,7 +150,7 @@ object MermaidVisualizer:
     }
 
     // Add terminal node if any stop transitions
-    val hasStopTransitions = fsm.transitionMeta.exists(_.annotation.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.kind.isInstanceOf[TransitionKind.Stop])
     if hasStopTransitions then sb.append("    END([End])\n")
 
     sb.append("\n")
@@ -163,18 +159,15 @@ object MermaidVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     = meta.annotation match
-        case Some("dynamic") => s"$eventName [dynamic]"
-        case _               => eventName
 
-      meta.targetStateOrdinal match
-        case Some(targetOrdinal) =>
-          val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-          sb.append(s"    $fromName -->|$label| $targetName\n")
-        case None if meta.annotation.exists(_.startsWith("stop")) =>
-          sb.append(s"    $fromName -->|$label| END\n")
-        case None =>
-          sb.append(s"    $fromName -->|$label| $fromName\n")
+      meta.kind match
+        case TransitionKind.Goto =>
+          val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+          sb.append(s"    $fromName -->|$eventName| $targetName\n")
+        case TransitionKind.Stay =>
+          sb.append(s"    $fromName -->|$eventName| $fromName\n")
+        case TransitionKind.Stop(_) =>
+          sb.append(s"    $fromName -->|$eventName| END\n")
     }
 
     // Highlight current state and visited path if trace provided
@@ -260,19 +253,16 @@ object MermaidVisualizer:
       val fromName = fsm.stateEnum.nameFor(fromOrdinal)
       transitions.foreach { meta =>
         val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label     = meta.annotation match
-          case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
-          case Some("dynamic")                       => s"$eventName [dynamic]"
-          case _                                     => eventName
 
-        meta.targetStateOrdinal match
-          case Some(targetOrdinal) =>
-            val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-            sb.append(s"    $fromName --> $targetName: $label\n")
-          case None if meta.annotation.exists(_.startsWith("stop")) =>
+        meta.kind match
+          case TransitionKind.Goto =>
+            val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+            sb.append(s"    $fromName --> $targetName: $eventName\n")
+          case TransitionKind.Stay =>
+            sb.append(s"    $fromName --> $fromName: $eventName\n")
+          case TransitionKind.Stop(reason) =>
+            val label = reason.fold(s"$eventName [stop]")(r => s"$eventName [stop: $r]")
             sb.append(s"    $fromName --> [*]: $label\n")
-          case None =>
-            sb.append(s"    $fromName --> $fromName: $label\n")
       }
     }
 

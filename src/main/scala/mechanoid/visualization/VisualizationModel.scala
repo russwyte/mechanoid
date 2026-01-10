@@ -4,12 +4,18 @@ import scala.concurrent.duration.Duration
 import java.time.Instant
 import mechanoid.core.*
 
+/** The kind of transition for visualization purposes. */
+enum TransitionKind:
+  case Goto                         // Transition to a specific state
+  case Stay                         // Remain in current state
+  case Stop(reason: Option[String]) // Terminal transition
+
 /** Metadata about a transition for visualization purposes. */
 case class TransitionMeta(
     fromStateOrdinal: Int,
     eventOrdinal: Int,
-    targetStateOrdinal: Option[Int], // None for Stay, Some for Goto
-    annotation: Option[String] = None,
+    targetStateOrdinal: Option[Int], // None for Stay/Stop, Some for Goto
+    kind: TransitionKind,
 )
 
 /** Metadata about a state for visualization. */

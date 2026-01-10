@@ -85,7 +85,7 @@ object GraphVizVisualizer:
     }
 
     // Add terminal state marker if needed
-    val hasStopTransitions = fsm.transitionMeta.exists(_.annotation.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.kind.isInstanceOf[TransitionKind.Stop])
     if hasStopTransitions then sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
 
     sb.append("\n")
@@ -94,19 +94,15 @@ object GraphVizVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     = meta.annotation match
-        case Some("dynamic") => s"$eventName\\n[dynamic]"
-        case _               => eventName
 
-      meta.targetStateOrdinal match
-        case Some(targetOrdinal) =>
-          val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-          sb.append(s"    $fromName -> $targetName [label=\"$label\"];\n")
-        case None if meta.annotation.exists(_.startsWith("stop")) =>
-          sb.append(s"    $fromName -> __end__ [label=\"$label\"];\n")
-        case None =>
-          // Self-loop for stay
-          sb.append(s"    $fromName -> $fromName [label=\"$label\"];\n")
+      meta.kind match
+        case TransitionKind.Goto =>
+          val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+          sb.append(s"    $fromName -> $targetName [label=\"$eventName\"];\n")
+        case TransitionKind.Stay =>
+          sb.append(s"    $fromName -> $fromName [label=\"$eventName\"];\n")
+        case TransitionKind.Stop(_) =>
+          sb.append(s"    $fromName -> __end__ [label=\"$eventName\"];\n")
     }
 
     sb.append("}\n")
@@ -180,7 +176,7 @@ object GraphVizVisualizer:
     sb.append(s"    __start__ -> $initName;\n")
 
     // Add terminal state marker if needed
-    val hasStopTransitions = fsm.transitionMeta.exists(_.annotation.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.kind.isInstanceOf[TransitionKind.Stop])
     if hasStopTransitions then sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
 
     sb.append("\n")
@@ -189,22 +185,19 @@ object GraphVizVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     = meta.annotation match
-        case Some("dynamic") => s"$eventName\\n[dynamic]"
-        case _               => eventName
 
       val targetOrd = meta.targetStateOrdinal.getOrElse(meta.fromStateOrdinal)
       val isTaken   = takenTransitions.contains((meta.fromStateOrdinal, targetOrd))
       val edgeStyle = if isTaken then ", penwidth=2, color=blue" else ""
 
-      meta.targetStateOrdinal match
-        case Some(targetOrdinal) =>
-          val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-          sb.append(s"    $fromName -> $targetName [label=\"$label\"$edgeStyle];\n")
-        case None if meta.annotation.exists(_.startsWith("stop")) =>
-          sb.append(s"    $fromName -> __end__ [label=\"$label\"$edgeStyle];\n")
-        case None =>
-          sb.append(s"    $fromName -> $fromName [label=\"$label\"$edgeStyle];\n")
+      meta.kind match
+        case TransitionKind.Goto =>
+          val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+          sb.append(s"    $fromName -> $targetName [label=\"$eventName\"$edgeStyle];\n")
+        case TransitionKind.Stay =>
+          sb.append(s"    $fromName -> $fromName [label=\"$eventName\"$edgeStyle];\n")
+        case TransitionKind.Stop(_) =>
+          sb.append(s"    $fromName -> __end__ [label=\"$eventName\"$edgeStyle];\n")
     }
 
     sb.append("}\n")
