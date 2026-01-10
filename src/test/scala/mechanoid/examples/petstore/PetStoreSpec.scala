@@ -124,7 +124,7 @@ object PetStoreSpec extends ZIOSpecDefault:
           case _ => false),
         events.exists(_.event match
           case Timed.UserEvent(OrderEvent.PaymentSucceeded(txnId)) => txnId == "TXN-XYZ789"
-          case _                                                    => false),
+          case _                                                   => false),
       )
     },
   )
@@ -526,11 +526,11 @@ object PetStoreSpec extends ZIOSpecDefault:
         // Payment event recorded
         events.exists(_.event match
           case Timed.UserEvent(OrderEvent.PaymentSucceeded(_)) => true
-          case _                                                => false),
+          case _                                               => false),
         // Shipping event recorded
         events.exists(_.event match
           case Timed.UserEvent(OrderEvent.ShipmentDispatched(_, _, _)) => true
-          case _                                                        => false),
+          case _                                                       => false),
       )
     },
     test("multiple orders processed concurrently") {

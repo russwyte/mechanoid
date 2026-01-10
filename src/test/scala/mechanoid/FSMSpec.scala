@@ -132,7 +132,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should execute transition when guard passes") {
-      val guard: ZIO[Any, Nothing, Boolean]                                   = ZIO.succeed(true)
+      val guard: ZIO[Any, Nothing, Boolean]            = ZIO.succeed(true)
       val definition: UFSM[TrafficLight, TrafficEvent] =
         UFSM[TrafficLight, TrafficEvent]
           .when(Red)
@@ -149,7 +149,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should reject transition when guard fails") {
-      val guard: ZIO[Any, Nothing, Boolean]                                   = ZIO.succeed(false)
+      val guard: ZIO[Any, Nothing, Boolean]            = ZIO.succeed(false)
       val definition: UFSM[TrafficLight, TrafficEvent] =
         UFSM[TrafficLight, TrafficEvent]
           .when(Red)
@@ -371,7 +371,7 @@ object FSMSpec extends ZIOSpecDefault:
     test("should evaluate guard dynamically") {
       for
         permitRef <- Ref.make(false)
-        guard                                                               = permitRef.get
+        guard                                        = permitRef.get
         definition: UFSM[TrafficLight, TrafficEvent] =
           UFSM[TrafficLight, TrafficEvent]
             .when(Red)

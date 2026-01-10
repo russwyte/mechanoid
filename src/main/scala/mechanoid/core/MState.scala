@@ -23,8 +23,7 @@ trait MState
 
 object MState:
   /** Extension method providing ordinal access via typeclass, avoiding name collision with Scala 3 enum's ordinal. */
-  extension [S <: MState](s: S)(using se: SealedEnum[S])
-    private[mechanoid] inline def fsmOrdinal: Int = se.ordinal(s)
+  extension [S <: MState](s: S)(using se: SealedEnum[S]) private[mechanoid] inline def fsmOrdinal: Int = se.ordinal(s)
 
 /** Marker trait for terminal states that cannot transition further. */
 trait TerminalState extends MState

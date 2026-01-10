@@ -234,9 +234,9 @@ object PersistentFSMSpec extends ZIOSpecDefault:
 
     // Guard tests
     test("should execute transition when guard passes") {
-      val store                             = new InMemoryEventStore[String, OrderState, OrderEvent]
-      val storeLayer                        = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val guard: ZIO[Any, Nothing, Boolean] = ZIO.succeed(true)
+      val store                                    = new InMemoryEventStore[String, OrderState, OrderEvent]
+      val storeLayer                               = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
+      val guard: ZIO[Any, Nothing, Boolean]        = ZIO.succeed(true)
       val definition: UFSM[OrderState, OrderEvent] =
         UFSM[OrderState, OrderEvent]
           .when(Pending)
@@ -260,9 +260,9 @@ object PersistentFSMSpec extends ZIOSpecDefault:
         .provide(storeLayer)
     },
     test("should reject transition when guard fails and not persist event") {
-      val store                             = new InMemoryEventStore[String, OrderState, OrderEvent]
-      val storeLayer                        = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
-      val guard: ZIO[Any, Nothing, Boolean] = ZIO.succeed(false)
+      val store                                    = new InMemoryEventStore[String, OrderState, OrderEvent]
+      val storeLayer                               = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
+      val guard: ZIO[Any, Nothing, Boolean]        = ZIO.succeed(false)
       val definition: UFSM[OrderState, OrderEvent] =
         UFSM[OrderState, OrderEvent]
           .when(Pending)
@@ -414,8 +414,8 @@ object PersistentFSMSpec extends ZIOSpecDefault:
     test("should not execute entry/exit actions during replay") {
       for
         actionLog <- Ref.make(List.empty[String])
-        store      = new InMemoryEventStore[String, OrderState, OrderEvent]
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
+        store                                    = new InMemoryEventStore[String, OrderState, OrderEvent]
+        storeLayer                               = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](store)
         definition: UFSM[OrderState, OrderEvent] =
           UFSM[OrderState, OrderEvent]
             .when(Pending)
