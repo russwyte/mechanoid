@@ -1,7 +1,5 @@
 package mechanoid.core
 
-import scala.deriving.Mirror
-
 /** Base trait for all FSM states.
   *
   * User-defined states should extend this trait, typically using Scala 3 enums:
@@ -23,6 +21,11 @@ import scala.deriving.Mirror
   */
 trait MState
 
+object MState:
+  /** Extension method providing ordinal access via typeclass, avoiding name collision with Scala 3 enum's ordinal. */
+  extension [S <: MState](s: S)(using se: SealedEnum[S])
+    private[mechanoid] inline def fsmOrdinal: Int = se.ordinal(s)
+
 /** Marker trait for terminal states that cannot transition further. */
 trait TerminalState extends MState
 
@@ -43,9 +46,9 @@ trait StateData[D]:
   * enables matching on `Failed(_)` without caring about the specific reason.
   */
 object StateShape:
-  /** Extract ordinal from a state using compile-time Mirror.
+  /** Extract ordinal from a state using SealedEnum.
     *
     * This is captured at FSMDefinition creation time when the concrete state type is known.
     */
-  inline def ordinalOf[S <: MState](state: S)(using m: Mirror.SumOf[S]): Int =
-    m.ordinal(state)
+  def ordinalOf[S <: MState](state: S)(using se: SealedEnum[S]): Int =
+    se.ordinal(state)

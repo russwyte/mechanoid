@@ -17,7 +17,7 @@ import mechanoid.core.*
 final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
     private val definition: FSMDefinition[S, E, R, Err],
     private val fromStateOrdinal: Int,
-    private val event: E | Timeout.type,
+    private val event: Timed[E],
     private val guard: Option[ZIO[R, Err, Boolean]],
 ):
 
@@ -57,7 +57,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
 
   /** Transition to the specified target state. */
   def goto(targetState: S): FSMDefinition[S, E, R, Err] =
-    val transition = Transition[S, E | Timeout.type, S, R, Err](
+    val transition = Transition[S, Timed[E], S, R, Err](
       guard,
       ZIO.succeed(TransitionResult.Goto(targetState)),
       None,
@@ -66,7 +66,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
 
   /** Stay in the current state (no transition). */
   def stay: FSMDefinition[S, E, R, Err] =
-    val transition = Transition[S, E | Timeout.type, S, R, Err](
+    val transition = Transition[S, Timed[E], S, R, Err](
       guard,
       ZIO.succeed(TransitionResult.Stay),
       None,
@@ -75,7 +75,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
 
   /** Stop the FSM. */
   def stop: FSMDefinition[S, E, R, Err] =
-    val transition = Transition[S, E | Timeout.type, S, R, Err](
+    val transition = Transition[S, Timed[E], S, R, Err](
       guard,
       ZIO.succeed(TransitionResult.Stop(None)),
       None,
@@ -84,7 +84,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
 
   /** Stop the FSM with a reason. */
   def stop(reason: String): FSMDefinition[S, E, R, Err] =
-    val transition = Transition[S, E | Timeout.type, S, R, Err](
+    val transition = Transition[S, Timed[E], S, R, Err](
       guard,
       ZIO.succeed(TransitionResult.Stop(Some(reason))),
       None,
@@ -96,7 +96,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
     * The action can perform side effects and return any TransitionResult.
     */
   def execute[R1 <: R, Err1 >: Err](action: ZIO[R1, Err1, TransitionResult[S]]): FSMDefinition[S, E, R1, Err1] =
-    val transition = Transition[S, E | Timeout.type, S, R1, Err1](
+    val transition = Transition[S, Timed[E], S, R1, Err1](
       guard.asInstanceOf[Option[ZIO[R1, Err1, Boolean]]],
       action,
       None,
@@ -119,13 +119,13 @@ end TransitionBuilder
 final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
     private val definition: FSMDefinition[S, E, R, Err],
     private val fromStateOrdinal: Int,
-    private val event: E | Timeout.type,
+    private val event: Timed[E],
     private val guard: Option[ZIO[R, Err, Boolean]],
     private val action: ZIO[R, Err, Unit],
 ):
   /** After executing the action, transition to the target state. */
   def goto(targetState: S): FSMDefinition[S, E, R, Err] =
-    val transition = Transition[S, E | Timeout.type, S, R, Err](
+    val transition = Transition[S, Timed[E], S, R, Err](
       guard,
       action.as(TransitionResult.Goto(targetState)),
       None,
@@ -134,7 +134,7 @@ final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
 
   /** After executing the action, stay in the current state. */
   def stay: FSMDefinition[S, E, R, Err] =
-    val transition = Transition[S, E | Timeout.type, S, R, Err](
+    val transition = Transition[S, Timed[E], S, R, Err](
       guard,
       action.as(TransitionResult.Stay),
       None,

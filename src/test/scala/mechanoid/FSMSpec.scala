@@ -45,7 +45,7 @@ object FSMSpec extends ZIOSpecDefault:
 
   def spec = suite("FSM Spec")(
     test("should start in initial state") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -58,7 +58,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should transition on valid event") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -75,7 +75,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should follow transition sequence") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -101,7 +101,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should stay in state when configured") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Emergency)
         .stay
@@ -118,7 +118,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should fail on invalid transition") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -133,8 +133,8 @@ object FSMSpec extends ZIOSpecDefault:
     },
     test("should execute transition when guard passes") {
       val guard: ZIO[Any, Nothing, Boolean]                                   = ZIO.succeed(true)
-      val definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
-        FSMDefinition[TrafficLight, TrafficEvent]
+      val definition: UFSM[TrafficLight, TrafficEvent] =
+        UFSM[TrafficLight, TrafficEvent]
           .when(Red)
           .on(Timer)
           .when(guard)
@@ -150,8 +150,8 @@ object FSMSpec extends ZIOSpecDefault:
     },
     test("should reject transition when guard fails") {
       val guard: ZIO[Any, Nothing, Boolean]                                   = ZIO.succeed(false)
-      val definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
-        FSMDefinition[TrafficLight, TrafficEvent]
+      val definition: UFSM[TrafficLight, TrafficEvent] =
+        UFSM[TrafficLight, TrafficEvent]
           .when(Red)
           .on(Timer)
           .when(guard)
@@ -169,8 +169,8 @@ object FSMSpec extends ZIOSpecDefault:
     test("should execute entry action on initial state") {
       for
         entryRef <- Ref.make(false)
-        definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
-          FSMDefinition[TrafficLight, TrafficEvent]
+        definition: UFSM[TrafficLight, TrafficEvent] =
+          UFSM[TrafficLight, TrafficEvent]
             .when(Red)
             .on(Timer)
             .goto(Green)
@@ -184,8 +184,8 @@ object FSMSpec extends ZIOSpecDefault:
     test("should execute entry and exit actions on transition") {
       for
         log <- Ref.make(List.empty[String])
-        definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
-          FSMDefinition[TrafficLight, TrafficEvent]
+        definition: UFSM[TrafficLight, TrafficEvent] =
+          UFSM[TrafficLight, TrafficEvent]
             .when(Red)
             .on(Timer)
             .goto(Green)
@@ -207,7 +207,7 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Stop tests
     test("should stop FSM and report not running") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -225,7 +225,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should return Stop result after FSM is stopped") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -241,7 +241,7 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Subscription tests
     test("should publish state changes to subscribers") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -253,7 +253,7 @@ object FSMSpec extends ZIOSpecDefault:
         for
           fsm <- definition.build(Red)
           // Use a queue to collect state changes
-          queue <- Queue.unbounded[StateChange[TrafficLight, TrafficEvent | Timeout.type]]
+          queue <- Queue.unbounded[StateChange[TrafficLight, Timed[TrafficEvent]]]
           // Start collecting in background
           _ <- fsm.subscribe.foreach(queue.offer).fork
           // Give subscriber time to connect - needs to be long enough for slow CI
@@ -274,7 +274,7 @@ object FSMSpec extends ZIOSpecDefault:
 
     // FSMState metadata tests
     test("should track state metadata") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -299,8 +299,8 @@ object FSMSpec extends ZIOSpecDefault:
     test("should run entry action when transitioning directly") {
       for
         enteredYellow <- Ref.make(false)
-        definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
-          FSMDefinition[TrafficLight, TrafficEvent]
+        definition: UFSM[TrafficLight, TrafficEvent] =
+          UFSM[TrafficLight, TrafficEvent]
             .when(Red)
             .on(Timer)
             .goto(Yellow)
@@ -323,7 +323,7 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Timeout tests - using live clock
     test("should trigger timeout event after duration") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -346,7 +346,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should cancel timeout when transitioning to new state") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .goto(Green)
@@ -372,8 +372,8 @@ object FSMSpec extends ZIOSpecDefault:
       for
         permitRef <- Ref.make(false)
         guard                                                               = permitRef.get
-        definition: FSMDefinition[TrafficLight, TrafficEvent, Any, Nothing] =
-          FSMDefinition[TrafficLight, TrafficEvent]
+        definition: UFSM[TrafficLight, TrafficEvent] =
+          UFSM[TrafficLight, TrafficEvent]
             .when(Red)
             .on(Timer)
             .when(guard)
@@ -398,7 +398,7 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Stay does not add to history
     test("should not add to history on stay") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Emergency)
         .stay
@@ -416,7 +416,7 @@ object FSMSpec extends ZIOSpecDefault:
     // Ergonomic guard tests
     test("should use simple boolean guard") {
       // No ZIO wrapping needed for simple guards
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .when(true) // Simple boolean - no ZIO.succeed needed
@@ -439,7 +439,7 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should use whenEval for lazy guard evaluation") {
-      val definition = FSMDefinition[TrafficLight, TrafficEvent]
+      val definition = UFSM[TrafficLight, TrafficEvent]
         .when(Red)
         .on(Timer)
         .whenEval {
@@ -461,7 +461,7 @@ object FSMSpec extends ZIOSpecDefault:
     // Sealed trait hierarchy tests
     test("should handle sealed trait hierarchy with case classes") {
       // Build FSM with transitions between different state types
-      val definition = FSMDefinition[DocumentState, DocumentEvent]
+      val definition = UFSM[DocumentState, DocumentEvent]
         .when(Draft)
         .on(SubmitForReview("reviewer1"))
         .goto(UnderReview("reviewer1"))
@@ -494,7 +494,7 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionState.*
       import ConnectionEvent.*
 
-      val definition = FSMDefinition[ConnectionState, ConnectionEvent]
+      val definition = UFSM[ConnectionState, ConnectionEvent]
         .when(Disconnected)
         .on(Connect)
         .goto(Connecting(1))
@@ -529,7 +529,7 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionEvent.*
 
       // Define transitions with "template" values - actual data doesn't matter for matching
-      val definition = FSMDefinition[ConnectionState, ConnectionEvent]
+      val definition = UFSM[ConnectionState, ConnectionEvent]
         .when(Failed("")) // Will match ANY Failed(_)
         .on(Connect)
         .goto(Connecting(1))
@@ -573,8 +573,8 @@ object FSMSpec extends ZIOSpecDefault:
         actionLog <- Ref.make(List.empty[String])
 
         // Define entry/exit actions with template states - they match by shape
-        definition: FSMDefinition[ConnectionState, ConnectionEvent, Any, Nothing] =
-          FSMDefinition[ConnectionState, ConnectionEvent]
+        definition: UFSM[ConnectionState, ConnectionEvent] =
+          UFSM[ConnectionState, ConnectionEvent]
             .when(Disconnected)
             .on(Connect)
             .goto(Connecting(1))
@@ -612,7 +612,7 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionEvent.*
 
       // Define transitions with "template" event values
-      val definition = FSMDefinition[ConnectionState, ConnectionEvent]
+      val definition = UFSM[ConnectionState, ConnectionEvent]
         .when(Disconnected)
         .on(Connect) // Simple case object
         .goto(Connecting(1))

@@ -24,8 +24,8 @@ enum OrderState extends MState:
 enum OrderEvent extends MEvent:
   case Pay, Ship
 
-// Build FSM definition
-val orderFSM = FSMDefinition[OrderState, OrderEvent]()
+// Build FSM definition (UFSM = pure FSM, no environment, no errors)
+val orderFSM = UFSM[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
 
@@ -57,7 +57,12 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 | Component | Description |
 |-----------|-------------|
-| `FSMDefinition` | Builder for defining state machines |
+| `FSMDefinition` | Builder for defining state machines (use type aliases below) |
+| `UFSM` | Pure FSM - no environment, no errors (`FSMDefinition[S, E, Any, Nothing]`) |
+| `TaskFSM` | FSM with Throwable errors (`FSMDefinition[S, E, Any, Throwable]`) |
+| `IOFSM` | FSM with custom errors (`FSMDefinition[S, E, Any, Err]`) |
+| `URFSM` | FSM with environment, no errors (`FSMDefinition[S, E, R, Nothing]`) |
+| `RFSM` | FSM with environment and Throwable (`FSMDefinition[S, E, R, Throwable]`) |
 | `FSMRuntime` | In-memory FSM execution |
 | `PersistentFSMRuntime` | Event-sourced FSM with persistence |
 | `TimeoutSweeper` | Background service for durable timeouts |
@@ -85,7 +90,7 @@ val program = ZIO.scoped {
 import mechanoid.persistence.timeout.*
 
 // FSM with timeout that survives node failures
-val definition = FSMDefinition[State, Event]()
+val definition = UFSM[State, Event]
   .when(AwaitingPayment).onTimeout.goto(Cancelled)
   .withTimeout(AwaitingPayment, 30.minutes)
 

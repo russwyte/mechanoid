@@ -4,7 +4,7 @@ import saferis.*
 import zio.*
 import zio.json.*
 import zio.stream.*
-import mechanoid.core.{*, given}
+import mechanoid.core.*
 import mechanoid.persistence.*
 import java.time.Instant
 import scala.annotation.unused
@@ -25,8 +25,8 @@ import scala.annotation.unused
   * }}}
   */
 trait EventCodec[S <: MState, E <: MEvent]:
-  def encodeEvent(event: E | Timeout.type): String
-  def decodeEvent(json: String): Either[Throwable, E | Timeout.type]
+  def encodeEvent(event: Timed[E]): String
+  def decodeEvent(json: String): Either[Throwable, Timed[E]]
   def encodeState(state: S): String
   def decodeState(json: String): Either[Throwable, S]
 
@@ -47,11 +47,13 @@ object EventCodec:
       given JsonEncoder[EventWrapper] = JsonEncoder.derived
       given JsonDecoder[EventWrapper] = JsonDecoder.derived
 
-    def encodeEvent(event: E | Timeout.type): String = event match
-      case Timeout         => """{"timeout":true}"""
-      case e: E @unchecked => s"""{"event":${e.toJson}}"""
+    def encodeEvent(event: Timed[E]): String = event match
+      case Timed.TimeoutEvent =>
+        EventWrapper(None, Some(true)).toJson
+      case ue: Timed.UserEvent[?] =>
+        EventWrapper(Some(ue.event.asInstanceOf[E]), None).toJson
 
-    def decodeEvent(json: String): Either[Throwable, E | Timeout.type] =
+    def decodeEvent(json: String): Either[Throwable, Timed[E]] =
       json.fromJson[EventWrapper] match
         case Right(EventWrapper(_, Some(true))) => Right(Timeout)
         case Right(EventWrapper(Some(e), _))    => Right(e)
@@ -84,7 +86,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
 
   override def append(
       instanceId: String,
-      event: E | Timeout.type,
+      event: Timed[E],
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
     val eventJson = codec.encodeEvent(event)
@@ -124,7 +126,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
       }
   end append
 
-  override def loadEvents(instanceId: String): ZStream[Any, MechanoidError, StoredEvent[String, E | Timeout.type]] =
+  override def loadEvents(instanceId: String): ZStream[Any, MechanoidError, StoredEvent[String, Timed[E]]] =
     ZStream.fromIterableZIO {
       transactor
         .run {
@@ -144,7 +146,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
   override def loadEventsFrom(
       instanceId: String,
       fromSequenceNr: Long,
-  ): ZStream[Any, MechanoidError, StoredEvent[String, E | Timeout.type]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[String, Timed[E]]] =
     ZStream.fromIterableZIO {
       transactor
         .run {
@@ -232,7 +234,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
       .map(_.getOrElse(0L))
       .mapError(PersistenceError(_))
 
-  private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, E | Timeout.type]] =
+  private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, Timed[E]]] =
     ZIO
       .fromEither(codec.decodeEvent(row.eventData))
       .mapError(e => new RuntimeException(s"Failed to decode event: ${e.getMessage}", e))

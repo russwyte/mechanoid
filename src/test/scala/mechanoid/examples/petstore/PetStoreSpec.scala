@@ -119,12 +119,12 @@ object PetStoreSpec extends ZIOSpecDefault:
       yield assertTrue(
         events.length == 2,
         events.exists(_.event match
-          case OrderEvent.InitiatePayment(amount, method) =>
+          case Timed.UserEvent(OrderEvent.InitiatePayment(amount, method)) =>
             amount == BigDecimal(299.99) && method == "MasterCard ****1234"
           case _ => false),
         events.exists(_.event match
-          case OrderEvent.PaymentSucceeded(txnId) => txnId == "TXN-XYZ789"
-          case _                                  => false),
+          case Timed.UserEvent(OrderEvent.PaymentSucceeded(txnId)) => txnId == "TXN-XYZ789"
+          case _                                                    => false),
       )
     },
   )
@@ -525,12 +525,12 @@ object PetStoreSpec extends ZIOSpecDefault:
         events.nonEmpty,
         // Payment event recorded
         events.exists(_.event match
-          case OrderEvent.PaymentSucceeded(_) => true
-          case _                              => false),
+          case Timed.UserEvent(OrderEvent.PaymentSucceeded(_)) => true
+          case _                                                => false),
         // Shipping event recorded
         events.exists(_.event match
-          case OrderEvent.ShipmentDispatched(_, _, _) => true
-          case _                                      => false),
+          case Timed.UserEvent(OrderEvent.ShipmentDispatched(_, _, _)) => true
+          case _                                                        => false),
       )
     },
     test("multiple orders processed concurrently") {

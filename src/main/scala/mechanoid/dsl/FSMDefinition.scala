@@ -4,7 +4,6 @@ import zio.*
 import mechanoid.core.*
 import mechanoid.runtime.FSMRuntime
 import scala.concurrent.duration.Duration
-import scala.deriving.Mirror
 import scala.annotation.publicInBinary
 
 /** Builder for defining a finite state machine.
@@ -23,11 +22,12 @@ import scala.annotation.publicInBinary
   *   The error type
   */
 final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary private[mechanoid] (
-    private[mechanoid] val transitions: Map[(Int, Int), Transition[S, E | Timeout.type, S, R, Err]],
+    private[mechanoid] val transitions: Map[(Int, Int), Transition[S, Timed[E], S, R, Err]],
     private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, R, Err]],
     private[mechanoid] val timeouts: Map[Int, Duration],
-    private[mechanoid] val stateOrdinal: S => Int,
-    private[mechanoid] val eventOrdinal: (E | Timeout.type) => Int,
+)(using
+    private[mechanoid] val stateEnum: SealedEnum[S],
+    private[mechanoid] val eventEnum: SealedEnum[Timed[E]],
 ):
 
   /** Start defining transitions from a specific state.
@@ -36,14 +36,14 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
     * will match any `Failed(_)` state.
     */
   def when(state: S): WhenBuilder[S, E, R, Err] =
-    new WhenBuilder(this, stateOrdinal(state))
+    new WhenBuilder(this, state.fsmOrdinal)
 
   /** Define entry/exit actions for a state.
     *
     * The state's shape is used for matching, so actions defined for `Failed("")` will run for any `Failed(_)`.
     */
   def onState(state: S): StateBuilder[S, E, R, Err] =
-    new StateBuilder(this, stateOrdinal(state))
+    new StateBuilder(this, state.fsmOrdinal)
 
   /** Set a timeout for a state.
     *
@@ -51,20 +51,18 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
     * sent. The state's shape is used for matching.
     */
   def withTimeout(state: S, duration: Duration): FSMDefinition[S, E, R, Err] =
-    new FSMDefinition(transitions, lifecycles, timeouts + (stateOrdinal(state) -> duration), stateOrdinal, eventOrdinal)
+    new FSMDefinition(transitions, lifecycles, timeouts + (state.fsmOrdinal -> duration))
 
   /** Add a transition to the definition. */
   private[dsl] def addTransition(
       fromOrdinal: Int,
-      event: E | Timeout.type,
-      transition: Transition[S, E | Timeout.type, S, R, Err],
+      event: Timed[E],
+      transition: Transition[S, Timed[E], S, R, Err],
   ): FSMDefinition[S, E, R, Err] =
     new FSMDefinition(
-      transitions + ((fromOrdinal, eventOrdinal(event)) -> transition),
+      transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
       lifecycles,
       timeouts,
-      stateOrdinal,
-      eventOrdinal,
     )
 
   /** Update lifecycle for a state. */
@@ -73,7 +71,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
       f: StateLifecycle[S, R, Err] => StateLifecycle[S, R, Err],
   ): FSMDefinition[S, E, R, Err] =
     val current = lifecycles.getOrElse(stateOrd, StateLifecycle.empty)
-    new FSMDefinition(transitions, lifecycles + (stateOrd -> f(current)), timeouts, stateOrdinal, eventOrdinal)
+    new FSMDefinition(transitions, lifecycles + (stateOrd -> f(current)), timeouts)
 
   /** Build and start the FSM runtime with the given initial state. */
   def build(initial: S): ZIO[R & Scope, Nothing, FSMRuntime[S, E, R, Err]] =
@@ -81,42 +79,23 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
 end FSMDefinition
 
 object FSMDefinition:
-  // Special ordinal for Timeout (not part of user's event enum)
-  private val TimeoutOrdinal: Int = -1
-
-  /** Create a new FSM definition with no environment requirements.
+  /** Create a new FSM definition.
     *
-    * Uses Scala 3's Mirror to extract state and event ordinals at compile time, enabling rich types (case classes with
-    * data) to work correctly.
+    * Uses compile-time derivation to extract state and event ordinals, enabling rich types (case classes with data) to
+    * work correctly.
+    *
+    * Both state and event types must be sealed traits or enums. Attempting to use non-sealed types will result in a
+    * clear compile-time error.
+    *
+    * @tparam S
+    *   The state type (must be sealed)
+    * @tparam E
+    *   The event type (must be sealed)
+    * @tparam R
+    *   The ZIO environment required by transitions (default: Any)
+    * @tparam Err
+    *   The error type for transitions (default: Nothing)
     */
-  inline def apply[S <: MState, E <: MEvent](using
-      sm: Mirror.SumOf[S],
-      em: Mirror.SumOf[E],
-  ): FSMDefinition[S, E, Any, Nothing] =
-    new FSMDefinition(
-      Map.empty,
-      Map.empty,
-      Map.empty,
-      (s: S) => sm.ordinal(s),
-      (e: E | Timeout.type) =>
-        e match
-          case Timeout => TimeoutOrdinal
-          case ev: E   => em.ordinal(ev),
-    )
-
-  /** Create a new FSM definition with specific environment and error types. */
-  inline def typed[S <: MState, E <: MEvent, R, Err](using
-      sm: Mirror.SumOf[S],
-      em: Mirror.SumOf[E],
-  ): FSMDefinition[S, E, R, Err] =
-    new FSMDefinition(
-      Map.empty,
-      Map.empty,
-      Map.empty,
-      (s: S) => sm.ordinal(s),
-      (e: E | Timeout.type) =>
-        e match
-          case Timeout => TimeoutOrdinal
-          case ev: E   => em.ordinal(ev),
-    )
+  def apply[S <: MState: SealedEnum, E <: MEvent: SealedEnum, R, Err]: FSMDefinition[S, E, R, Err] =
+    new FSMDefinition(Map.empty, Map.empty, Map.empty)
 end FSMDefinition

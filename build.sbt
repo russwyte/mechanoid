@@ -51,7 +51,8 @@ lazy val root = project
     scalacOptions ++= Seq(
       "-deprecation",
       "-Wunused:all",
-      "-feature"
+      "-feature",
+      "-language:implicitConversions"
     ),
     scalafixDependencies += "com.github.vovapolu" %% "scaluzzi" % "0.1.23"
   )

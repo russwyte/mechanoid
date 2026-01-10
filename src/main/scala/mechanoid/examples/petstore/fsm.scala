@@ -62,7 +62,7 @@ object OrderFSM:
       onShipped: ZIO[Any, Throwable, Unit] = ZIO.unit,
   ): FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
     import OrderState.*, OrderEvent.*, T.*
-    FSMDefinition[OrderState, OrderEvent]
+    TaskFSM[OrderState, OrderEvent]
       // Created -> PaymentProcessing on InitiatePayment
       .when(Created)
       .on(InitiatePayment(amount, str))
