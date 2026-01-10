@@ -5,13 +5,11 @@ object Mechanoid
 // Re-export core types
 export core.MState
 export core.MEvent
-export core.Timeout
 export core.TransitionResult
 export core.Transition
 export core.StateLifecycle
 export core.StateTimeout
 export core.FSMState
-export core.StateChange
 export core.MechanoidError
 export core.InvalidTransitionError
 export core.GuardRejectedError
@@ -20,7 +18,6 @@ export core.ProcessingTimeoutError
 export core.StateData
 export core.EventData
 export core.TerminalState
-export core.Timed
 export core.SealedEnum
 
 // Re-export DSL

@@ -42,7 +42,7 @@ object PostgresTestContainer:
   final case class DataSourceProvider(container: PostgresTestContainer):
     import container.postgres
 
-    def dataSource =
+    def dataSource: DataSource =
       val ds = PGSimpleDataSource()
       ds.setURL(postgres.getJdbcUrl())
       ds.setUser(postgres.getUsername())
@@ -51,10 +51,20 @@ object PostgresTestContainer:
   end DataSourceProvider
 
   object DataSourceProvider:
-    private val base                                           = ZLayer.derive[DataSourceProvider]
+    def makeDataSource(container: PostgresTestContainer): DataSource =
+      val ds = PGSimpleDataSource()
+      ds.setURL(container.postgres.getJdbcUrl())
+      ds.setUser(container.postgres.getUsername())
+      ds.setPassword(container.postgres.getPassword())
+      ds
+
     val datasource: URLayer[PostgresTestContainer, DataSource] =
-      base.flatMap(l => ZLayer.succeed(l.get.dataSource))
+      ZLayer.scoped[PostgresTestContainer] {
+        ZIO.service[PostgresTestContainer].map(makeDataSource)
+      }
     val provider: ZLayer[PostgresTestContainer, Nothing, ConnectionProvider] =
-      DataSourceProvider.datasource >>> ConnectionProvider.FromDataSource.layer
-    val default = PostgresTestContainer.default >>> provider
+      datasource >>> ConnectionProvider.FromDataSource.layer
+    val default: ZLayer[Any, Nothing, ConnectionProvider] =
+      PostgresTestContainer.default >>> provider
+  end DataSourceProvider
 end PostgresTestContainer

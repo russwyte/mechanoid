@@ -58,7 +58,7 @@ object TimeoutFiring:
       for
         seqNr <- eventStore.highestSequenceNr(instanceId)
         _     <- eventStore
-          .append(instanceId, Timeout, seqNr)
+          .append(instanceId, Timed.TimeoutEvent, seqNr)
           .catchSome { case _: SequenceConflictError =>
             // State changed concurrently - timeout may no longer be relevant
             // This is fine; the FSM has moved on
@@ -97,7 +97,7 @@ object TimeoutFiring:
             for
               seqNr <- eventStore.highestSequenceNr(instanceId)
               _     <- eventStore
-                .append(instanceId, Timeout, seqNr)
+                .append(instanceId, Timed.TimeoutEvent, seqNr)
                 .catchSome { case _: SequenceConflictError =>
                   ZIO.logDebug(
                     s"Timeout for $instanceId skipped due to concurrent modification"

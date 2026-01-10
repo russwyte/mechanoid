@@ -214,14 +214,14 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
 
   /** Convenience method to append a user event without explicit wrapping.
     *
-    * Equivalent to `append(instanceId, Timed.UserEvent(event), expectedSeqNr)`.
+    * Equivalent to `append(instanceId, event.timed, expectedSeqNr)`.
     */
   final def appendEvent(
       instanceId: Id,
       event: E,
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
-    append(instanceId, Timed.UserEvent(event), expectedSeqNr)
+    append(instanceId, event.timed, expectedSeqNr)
 
   /** Convenience method to append a timeout event.
     *

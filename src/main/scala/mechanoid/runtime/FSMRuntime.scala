@@ -1,7 +1,6 @@
 package mechanoid.runtime
 
 import zio.*
-import zio.stream.*
 import mechanoid.core.*
 import mechanoid.dsl.FSMDefinition
 
@@ -37,18 +36,6 @@ trait FSMRuntime[S <: MState, E <: MEvent, R, Err]:
 
   /** Get the history of previous states (most recent first). */
   def history: UIO[List[S]]
-
-  /** Subscribe to state changes.
-    *
-    * Returns a stream that emits a StateChange whenever the FSM transitions from one state to another.
-    */
-  def subscribe: ZStream[Any, Nothing, StateChange[S, Timed[E]]]
-
-  /** Process events from a stream.
-    *
-    * Each event in the input stream is sent to the FSM. Returns a stream of state changes that occurred.
-    */
-  def processStream(events: ZStream[R, Err, E]): ZStream[R, Err | MechanoidError, StateChange[S, Timed[E]]]
 
   /** Stop the FSM gracefully. */
   def stop: UIO[Unit]
