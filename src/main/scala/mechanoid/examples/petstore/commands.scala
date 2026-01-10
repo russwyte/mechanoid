@@ -1,6 +1,7 @@
 package mechanoid.examples.petstore
 
 import zio.json.*
+import mechanoid.core.sensitive
 
 // ============================================
 // Commands
@@ -8,24 +9,24 @@ import zio.json.*
 
 enum PetStoreCommand derives JsonCodec:
   case ProcessPayment(
-      orderId: String,
-      customerId: String,
-      customerName: String,
+      orderId: Int,
+      @sensitive customerId: String,
+      @sensitive customerName: String,
       petName: String,
       amount: BigDecimal,
-      paymentMethod: String,
+      @sensitive paymentMethod: String,
   )
   case RequestShipping(
-      orderId: String,
+      orderId: Int,
       petName: String,
-      customerName: String,
-      customerAddress: String,
+      @sensitive customerName: String,
+      @sensitive customerAddress: String,
       correlationId: String,
   )
   case SendNotification(
-      orderId: String,
-      customerEmail: String,
-      customerName: String,
+      orderId: Int,
+      @sensitive customerEmail: String,
+      @sensitive customerName: String,
       petName: String,
       notificationType: String,
       messageId: String,

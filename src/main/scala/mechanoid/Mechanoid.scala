@@ -21,6 +21,7 @@ export core.StateData
 export core.EventData
 export core.TerminalState
 export core.Timed
+export core.SealedEnum
 
 // Re-export DSL
 export dsl.FSMDefinition
@@ -49,3 +50,18 @@ export persistence.PersistentFSMRuntime
 export core.PersistenceError
 export core.SequenceConflictError
 export core.EventReplayError
+
+// Re-export visualization
+export visualization.TransitionMeta
+export visualization.StateMeta
+export visualization.FSMMeta
+export visualization.TraceStep
+export visualization.ExecutionTrace
+export visualization.MermaidVisualizer
+export visualization.GraphVizVisualizer
+
+// Re-export redaction
+export core.sensitive
+export core.Redactor
+export core.Redactor.redacted
+export core.Redactor.redactedPretty

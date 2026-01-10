@@ -43,15 +43,25 @@ object Transition:
   *   The ZIO environment required
   * @tparam Err
   *   The error type
+  * @param onEntry
+  *   Action to execute when entering this state
+  * @param onExit
+  *   Action to execute when exiting this state
+  * @param onEntryDescription
+  *   Human-readable description of entry action (for visualization)
+  * @param onExitDescription
+  *   Human-readable description of exit action (for visualization)
   */
 final case class StateLifecycle[-S <: MState, -R, +Err](
     onEntry: Option[ZIO[R, Err, Unit]] = None,
     onExit: Option[ZIO[R, Err, Unit]] = None,
+    onEntryDescription: Option[String] = None,
+    onExitDescription: Option[String] = None,
 )
 
 object StateLifecycle:
   def empty[S <: MState]: StateLifecycle[S, Any, Nothing] =
-    StateLifecycle(None, None)
+    StateLifecycle(None, None, None, None)
 
 /** Timeout configuration for a state.
   *

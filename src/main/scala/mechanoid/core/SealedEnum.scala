@@ -1,6 +1,7 @@
 package mechanoid.core
 
 import scala.annotation.implicitNotFound
+import scala.compiletime.*
 import scala.deriving.Mirror
 
 /** Type class that proves a type is a sealed enum or sealed trait.
@@ -20,9 +21,26 @@ import scala.deriving.Mirror
 trait SealedEnum[T]:
   /** Extract the ordinal (case index) from an instance. */
   def ordinal(value: T): Int
+
+  /** Get all case names as an array, indexed by ordinal. */
+  def caseNames: Array[String]
+
+  /** Get the name for a specific ordinal. */
+  def nameFor(ordinal: Int): String = caseNames(ordinal)
+
+  /** Get the name for an instance. */
+  def nameOf(value: T): String = nameFor(ordinal(value))
 end SealedEnum
 
 object SealedEnum:
+  /** Extract case names from a tuple of string literals. */
+  private inline def extractNames[T <: Tuple]: Array[String] =
+    inline erasedValue[T] match
+      case _: EmptyTuple => Array.empty[String]
+      case _: (head *: tail) =>
+        constValue[head].toString +: extractNames[tail]
+
   /** Automatically derive SealedEnum for any type with a Mirror.SumOf (sealed types and enums). */
-  given derived[T](using m: Mirror.SumOf[T]): SealedEnum[T] with
-    def ordinal(value: T): Int = m.ordinal(value.asInstanceOf[m.MirroredMonoType])
+  inline given derived[T](using m: Mirror.SumOf[T]): SealedEnum[T] = new SealedEnum[T]:
+    def ordinal(value: T): Int    = m.ordinal(value.asInstanceOf[m.MirroredMonoType])
+    val caseNames: Array[String]  = extractNames[m.MirroredElemLabels]

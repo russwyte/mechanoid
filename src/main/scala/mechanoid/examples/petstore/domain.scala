@@ -31,7 +31,7 @@ object Customer:
 
 /** Order data stored with the FSM */
 case class OrderData(
-    orderId: String,
+    orderId: Int,
     pet: Pet,
     customer: Customer,
     correlationId: String,
