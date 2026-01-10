@@ -50,6 +50,7 @@ object Timed:
     override def nameFor(ordinal: Int): String =
       if ordinal == Timeout.Ordinal then "Timeout"
       else base.nameFor(ordinal)
+  end sealedEnum
 
   /** Extension method providing ordinal access for timed events. */
   extension [E <: MEvent](e: Timed[E])(using base: SealedEnum[E])
@@ -68,6 +69,7 @@ object Timed:
     def isTimeout: Boolean = e match
       case TimeoutEvent => true
       case _            => false
+  end extension
 end Timed
 
 /** Event that carries a payload.

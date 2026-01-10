@@ -4,11 +4,12 @@
 
 ## Command Summary
 
-- Completed: 6
+- Completed: 7
 
 ## FSM + Commands Sequence Diagram
 
 ```mermaid
+%%{init: {'themeCSS': '.noteText { text-align: left !important; }'}}%%
 sequenceDiagram
     participant FSM as Order-4
     participant CQ as CommandQueue
@@ -24,27 +25,31 @@ sequenceDiagram
     FSM->>FSM: PaymentSucceeded
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=4<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=2ebacd1d-7410-4a03-9bf2-10509b491106
+    Note right of CQ: orderId=4<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=f7d8cfa1-f80a-4c4a-91cd-afd32a81175d
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=4<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=f1b8a14e-6a04-49fc-bd3a-db4d2b29cea3
+    Note right of CQ: orderId=4<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=95ecf72f-ac34-4c8a-a436-6275ce637b52
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: RequestShipping
     Note over FSM: ShippingRequested
     FSM->>FSM: ShipmentDispatched
     Note over FSM: Shipped
+    FSM->>CQ: enqueue(NotificationCallback)
+    Note right of CQ: messageId=95ecf72f-ac34-4c8a-a436-6275ce637b52<br/>delivered=true<br/>error=None
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=2ebacd1d-7410-4a03-9bf2-10509b491106<br/>trackingNumber=TRACK-136253<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=4 business days<br/>success=true<br/>error=None
+    Note right of CQ: correlationId=f7d8cfa1-f80a-4c4a-91cd-afd32a81175d<br/>trackingNumber=TRACK-709793<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=5 business days<br/>success=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=4<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=shipped<br/>messageId=f1b8a14e-6a04-49fc-bd3a-db4d2b29cea3-shipped
+    Note right of CQ: orderId=4<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=shipped<br/>messageId=95ecf72f-ac34-4c8a-a436-6275ce637b52-shipped
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=f1b8a14e-6a04-49fc-bd3a-db4d2b29cea3-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=95ecf72f-ac34-4c8a-a436-6275ce637b52-shipped<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Shipped

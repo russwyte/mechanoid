@@ -54,6 +54,7 @@ object TraceStep:
       timestamp = change.timestamp,
       isTimeout = change.isTimeoutTriggered,
     )
+end TraceStep
 
 /** Complete execution trace for runtime visualization. */
 case class ExecutionTrace[S <: MState, E <: MEvent](
@@ -62,11 +63,12 @@ case class ExecutionTrace[S <: MState, E <: MEvent](
     currentState: S,
     steps: List[TraceStep[S, E]],
 ):
-  def isEmpty: Boolean       = steps.isEmpty
-  def stepCount: Int         = steps.size
-  def isTerminal: Boolean    = steps.lastOption.exists(s => s.to == s.from && s.isTimeout)
-  def visitedStates: Set[S]  = steps.flatMap(s => Set(s.from, s.to)).toSet + initialState
+  def isEmpty: Boolean        = steps.isEmpty
+  def stepCount: Int          = steps.size
+  def isTerminal: Boolean     = steps.lastOption.exists(s => s.to == s.from && s.isTimeout)
+  def visitedStates: Set[S]   = steps.flatMap(s => Set(s.from, s.to)).toSet + initialState
   def triggeredEvents: Set[E] = steps.map(_.event).toSet
+end ExecutionTrace
 
 object ExecutionTrace:
   def fromStateChanges[S <: MState, E <: MEvent](
@@ -79,3 +81,5 @@ object ExecutionTrace:
       TraceStep.fromStateChange(idx + 1, change)
     }
     ExecutionTrace(instanceId, initialState, currentState, steps)
+  end fromStateChanges
+end ExecutionTrace

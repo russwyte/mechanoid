@@ -56,9 +56,8 @@ object OrderFSM:
     * @param onShipped
     *   Action to run when entering Shipped state
     *
-    * Note: This method is inline to preserve the expression trees of the action parameters, allowing the
-    * ExpressionName macro to extract the actual function names (e.g., "enqueuePaymentCommand") rather than
-    * just the parameter names.
+    * Note: This method is inline to preserve the expression trees of the action parameters, allowing the ExpressionName
+    * macro to extract the actual function names (e.g., "enqueuePaymentCommand") rather than just the parameter names.
     */
   inline def definition(
       inline onPaymentProcessing: ZIO[Any, Throwable, Unit],

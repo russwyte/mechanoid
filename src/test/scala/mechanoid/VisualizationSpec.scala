@@ -21,9 +21,16 @@ object VisualizationSpec extends ZIOSpecDefault:
   val testFSM: FSMDefinition[TestState, TestEvent, Any, Nothing] =
     import TestState.*, TestEvent.*
     UFSM[TestState, TestEvent]
-      .when(Idle).on(Start).goto(Running)
-      .when(Running).on(Finish).goto(Completed)
-      .when(Running).on(Error("")).goto(Failed)
+      .when(Idle)
+      .on(Start)
+      .goto(Running)
+      .when(Running)
+      .on(Finish)
+      .goto(Completed)
+      .when(Running)
+      .on(Error(""))
+      .goto(Failed)
+  end testFSM
 
   def spec = suite("Visualization")(
     suite("SealedEnum name extraction")(
@@ -52,16 +59,16 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
       },
       test("metadata includes correct source states") {
-        val sources = testFSM.transitionMeta.map(_.fromStateOrdinal).toSet
-        val idleOrd = testFSM.stateEnum.ordinal(TestState.Idle)
+        val sources    = testFSM.transitionMeta.map(_.fromStateOrdinal).toSet
+        val idleOrd    = testFSM.stateEnum.ordinal(TestState.Idle)
         val runningOrd = testFSM.stateEnum.ordinal(TestState.Running)
         assertTrue(sources == Set(idleOrd, runningOrd))
       },
       test("metadata includes correct target states") {
-        val targets = testFSM.transitionMeta.flatMap(_.targetStateOrdinal).toSet
-        val runningOrd = testFSM.stateEnum.ordinal(TestState.Running)
+        val targets      = testFSM.transitionMeta.flatMap(_.targetStateOrdinal).toSet
+        val runningOrd   = testFSM.stateEnum.ordinal(TestState.Running)
         val completedOrd = testFSM.stateEnum.ordinal(TestState.Completed)
-        val failedOrd = testFSM.stateEnum.ordinal(TestState.Failed)
+        val failedOrd    = testFSM.stateEnum.ordinal(TestState.Failed)
         assertTrue(targets == Set(runningOrd, completedOrd, failedOrd))
       },
     ),
@@ -166,7 +173,7 @@ object VisualizationSpec extends ZIOSpecDefault:
       test("ExecutionTrace has toMermaidSequenceDiagram extension") {
         given SealedEnum[TestState] = summon
         given SealedEnum[TestEvent] = summon
-        val trace = ExecutionTrace(
+        val trace                   = ExecutionTrace(
           instanceId = "test-1",
           initialState = TestState.Idle,
           currentState = TestState.Running,
@@ -192,7 +199,7 @@ object VisualizationSpec extends ZIOSpecDefault:
           trace.stepCount == 2,
           trace.visitedStates == Set(TestState.Idle, TestState.Running, TestState.Completed),
         )
-      },
+      }
     ),
   )
 end VisualizationSpec

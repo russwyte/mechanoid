@@ -9,8 +9,8 @@ object GraphVizVisualizer:
 
   /** Configuration for GraphViz output. */
   case class Config(
-      rankDir: String = "LR",           // LR (left-right) or TB (top-bottom)
-      nodeShape: String = "ellipse",    // ellipse, box, circle, etc.
+      rankDir: String = "LR",        // LR (left-right) or TB (top-bottom)
+      nodeShape: String = "ellipse", // ellipse, box, circle, etc.
       fontSize: Int = 12,
       visitedColor: String = "#ADD8E6", // Light blue
       currentColor: String = "#90EE90", // Light green
@@ -47,9 +47,12 @@ object GraphVizVisualizer:
     sb.append("\n")
 
     // Collect all states
-    val allStates = fsm.transitionMeta.flatMap { meta =>
-      List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
-    }.distinct.sorted
+    val allStates = fsm.transitionMeta
+      .flatMap { meta =>
+        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+      }
+      .distinct
+      .sorted
 
     // Define state nodes with labels showing timeout/lifecycle info
     allStates.foreach { stateOrdinal =>
@@ -83,8 +86,7 @@ object GraphVizVisualizer:
 
     // Add terminal state marker if needed
     val hasStopTransitions = fsm.transitionMeta.exists(_.description.exists(_.startsWith("stop")))
-    if hasStopTransitions then
-      sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
+    if hasStopTransitions then sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
 
     sb.append("\n")
 
@@ -92,7 +94,7 @@ object GraphVizVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label =
+      val label     =
         if meta.hasGuard then s"$eventName\\n[guard]"
         else eventName
 
@@ -109,6 +111,7 @@ object GraphVizVisualizer:
 
     sb.append("}\n")
     sb.toString
+  end digraph
 
   /** Generate a digraph with execution trace highlighting.
     */
@@ -127,9 +130,12 @@ object GraphVizVisualizer:
     sb.append("\n")
 
     // Collect all states
-    val allStates = fsm.transitionMeta.flatMap { meta =>
-      List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
-    }.distinct.sorted
+    val allStates = fsm.transitionMeta
+      .flatMap { meta =>
+        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+      }
+      .distinct
+      .sorted
 
     // Track visited states and transitions
     val visitedStateOrdinals = trace.visitedStates.map(fsm.stateEnum.ordinal)
@@ -137,8 +143,8 @@ object GraphVizVisualizer:
 
     // Build set of taken transitions (from, event, to)
     val takenTransitions = trace.steps.map { step =>
-      val fromOrd  = fsm.stateEnum.ordinal(step.from)
-      val toOrd    = fsm.stateEnum.ordinal(step.to)
+      val fromOrd = fsm.stateEnum.ordinal(step.from)
+      val toOrd   = fsm.stateEnum.ordinal(step.to)
       // Note: eventOrd not used directly since we match on (from, to) pairs
       (fromOrd, toOrd)
     }.toSet
@@ -175,8 +181,7 @@ object GraphVizVisualizer:
 
     // Add terminal state marker if needed
     val hasStopTransitions = fsm.transitionMeta.exists(_.description.exists(_.startsWith("stop")))
-    if hasStopTransitions then
-      sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
+    if hasStopTransitions then sb.append(s"    __end__ [shape=doublecircle, width=0.3, label=\"\"];\n")
 
     sb.append("\n")
 
@@ -184,7 +189,7 @@ object GraphVizVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label =
+      val label     =
         if meta.hasGuard then s"$eventName\\n[guard]"
         else eventName
 
@@ -204,6 +209,7 @@ object GraphVizVisualizer:
 
     sb.append("}\n")
     sb.toString
+  end digraphWithTrace
 
   /** Generate a timeline diagram showing execution history.
     *
@@ -236,8 +242,8 @@ object GraphVizVisualizer:
 
     // Create edges with event labels
     trace.steps.zipWithIndex.foreach { case (step, idx) =>
-      val fromNode = s"s$idx"
-      val toNode   = s"s${idx + 1}"
+      val fromNode  = s"s$idx"
+      val toNode    = s"s${idx + 1}"
       val eventName =
         if step.isTimeout then "Timeout"
         else eventEnum.nameOf(step.event)
@@ -246,6 +252,7 @@ object GraphVizVisualizer:
 
     sb.append("}\n")
     sb.toString
+  end timeline
 
   private def formatDuration(d: Duration): String =
     if d.toMillis < 1000 then s"${d.toMillis}ms"

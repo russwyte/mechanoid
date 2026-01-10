@@ -36,11 +36,12 @@ object SealedEnum:
   /** Extract case names from a tuple of string literals. */
   private inline def extractNames[T <: Tuple]: Array[String] =
     inline erasedValue[T] match
-      case _: EmptyTuple => Array.empty[String]
+      case _: EmptyTuple     => Array.empty[String]
       case _: (head *: tail) =>
         constValue[head].toString +: extractNames[tail]
 
   /** Automatically derive SealedEnum for any type with a Mirror.SumOf (sealed types and enums). */
   inline given derived[T](using m: Mirror.SumOf[T]): SealedEnum[T] = new SealedEnum[T]:
-    def ordinal(value: T): Int    = m.ordinal(value.asInstanceOf[m.MirroredMonoType])
-    val caseNames: Array[String]  = extractNames[m.MirroredElemLabels]
+    def ordinal(value: T): Int   = m.ordinal(value.asInstanceOf[m.MirroredMonoType])
+    val caseNames: Array[String] = extractNames[m.MirroredElemLabels]
+end SealedEnum

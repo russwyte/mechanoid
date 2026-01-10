@@ -40,8 +40,8 @@ object Redactor:
 
   /** Extension method to call redactPretty on any value with a Redactor instance (multi-line format). */
   extension [T](value: T)(using redactor: Redactor[T])
-    def redactedPretty: String                 = redactor.redactPretty(value)
-    def redactedPretty(indent: Int): String    = redactor.redactPretty(value, indent)
+    def redactedPretty: String              = redactor.redactPretty(value)
+    def redactedPretty(indent: Int): String = redactor.redactPretty(value, indent)
 
   /** Create a Redactor from a function. */
   def instance[T](f: T => String): Redactor[T] = new Redactor[T]:
@@ -83,6 +83,7 @@ object Redactor:
     else
       // Non-product type - just use toString
       '{ instance[T](_.toString) }
+  end autoImpl
 
   private def sumImpl[T: Type](sym: Quotes#reflectModule#Symbol)(using Quotes): Expr[Redactor[T]] =
     import quotes.reflect.*
@@ -126,18 +127,18 @@ object Redactor:
                     if isSensitive then s"$name={redacted}"
                     else s"$name=${p.productElement(idx)}"
                   }
-                  if sep.contains("\n") then
-                    s"$prefix(\n$initialPad${fieldStrs.mkString(sep)}\n)"
-                  else
-                    s"$prefix(${fieldStrs.mkString(sep)})"
+                  if sep.contains("\n") then s"$prefix(\n$initialPad${fieldStrs.mkString(sep)}\n)"
+                  else s"$prefix(${fieldStrs.mkString(sep)})"
                 case _ =>
                   if p.productArity == 0 then prefix
                   else
                     val elems = (0 until p.productArity).map(i => p.productElement(i)).mkString(sep)
                     if sep.contains("\n") then s"$prefix(\n$initialPad$elems\n)"
                     else s"$prefix($elems)"
+              end match
             case other => other.toString
     }
+  end sumImpl
 
   private def productImpl[T: Type](sym: Quotes#reflectModule#Symbol)(using Quotes): Expr[Redactor[T]] =
     import quotes.reflect.*
@@ -175,10 +176,10 @@ object Redactor:
               if isSensitive then s"$name={redacted}"
               else s"$name=${p.productElement(idx)}"
             }
-            if sep.contains("\n") then
-              s"$className(\n$initialPad${fieldStrs.mkString(sep)}\n)"
-            else
-              s"$className(${fieldStrs.mkString(sep)})"
+            if sep.contains("\n") then s"$className(\n$initialPad${fieldStrs.mkString(sep)}\n)"
+            else s"$className(${fieldStrs.mkString(sep)})"
       }
+    end if
+  end productImpl
 
 end Redactor

@@ -36,6 +36,7 @@ package object visualization:
         config: GraphVizVisualizer.Config = GraphVizVisualizer.Config.default,
     ): String =
       GraphVizVisualizer.digraphWithTrace(fsm, trace, name, config)
+  end extension
 
   /** Extension methods for visualizing execution traces. */
   extension [S <: MState, E <: MEvent](trace: ExecutionTrace[S, E])
@@ -47,3 +48,4 @@ package object visualization:
     /** Generate a GraphViz timeline. */
     def toGraphVizTimeline(using stateEnum: SealedEnum[S], eventEnum: SealedEnum[E]): String =
       GraphVizVisualizer.timeline(trace, stateEnum, eventEnum)
+end visualization

@@ -9,6 +9,7 @@
 ## FSM + Commands Sequence Diagram
 
 ```mermaid
+%%{init: {'themeCSS': '.noteText { text-align: left !important; }'}}%%
 sequenceDiagram
     participant FSM as Order-1
     participant CQ as CommandQueue
@@ -24,11 +25,11 @@ sequenceDiagram
     FSM->>FSM: PaymentSucceeded
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=1<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=67fcce8a-29c1-47b8-9f08-52a191c4f235
+    Note right of CQ: orderId=1<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=ef767adb-e434-4e35-9bc6-b232b29e6a27
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=012de062-da24-487f-92db-fdaf403ac054
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=684782af-3bd0-4837-9395-ee2d49ef1e84
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: RequestShipping
@@ -36,19 +37,19 @@ sequenceDiagram
     FSM->>FSM: ShipmentDispatched
     Note over FSM: Shipped
     FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=67fcce8a-29c1-47b8-9f08-52a191c4f235<br/>trackingNumber=TRACK-898311<br/>carrier=PetExpress<br/>estimatedDelivery=3 business days<br/>success=true<br/>error=None
+    Note right of CQ: correlationId=ef767adb-e434-4e35-9bc6-b232b29e6a27<br/>trackingNumber=TRACK-707522<br/>carrier=PetExpress<br/>estimatedDelivery=6 business days<br/>success=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=shipped<br/>messageId=012de062-da24-487f-92db-fdaf403ac054-shipped
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=shipped<br/>messageId=684782af-3bd0-4837-9395-ee2d49ef1e84-shipped
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=012de062-da24-487f-92db-fdaf403ac054<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=684782af-3bd0-4837-9395-ee2d49ef1e84<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=012de062-da24-487f-92db-fdaf403ac054-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=684782af-3bd0-4837-9395-ee2d49ef1e84-shipped<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Shipped

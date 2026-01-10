@@ -38,7 +38,7 @@ object MermaidVisualizer:
       val fromName = fsm.stateEnum.nameFor(fromOrdinal)
       transitions.foreach { meta =>
         val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label = meta.description match
+        val label     = meta.description match
           case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
           case Some("dynamic")                       => s"$eventName [dynamic]"
           case _                                     => eventName
@@ -65,16 +65,16 @@ object MermaidVisualizer:
 
     // Add notes for states with entry/exit actions
     fsm.lifecycles.foreach { case (stateOrdinal, lifecycle) =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+      val stateName   = fsm.stateEnum.nameFor(stateOrdinal)
       val annotations = List(
         lifecycle.onEntry.map(_ => simplifyFunctionName(lifecycle.onEntryDescription.getOrElse("entry action"))),
         lifecycle.onExit.map(_ => simplifyFunctionName(lifecycle.onExitDescription.getOrElse("exit action"))),
       ).flatten
-      if annotations.nonEmpty then
-        sb.append(s"    note left of $stateName: ${annotations.mkString(", ")}\n")
+      if annotations.nonEmpty then sb.append(s"    note left of $stateName: ${annotations.mkString(", ")}\n")
     }
 
     sb.toString
+  end stateDiagram
 
   /** Generate a sequence diagram showing execution trace.
     *
@@ -119,6 +119,7 @@ object MermaidVisualizer:
     sb.append(s"    Note over FSM: Current: ${stateEnum.nameOf(trace.currentState)}\n")
 
     sb.toString
+  end sequenceDiagram
 
   /** Generate a flowchart showing execution path with highlighting.
     *
@@ -141,9 +142,12 @@ object MermaidVisualizer:
     sb.append("flowchart LR\n")
 
     // Collect all states
-    val allStates = fsm.transitionMeta.flatMap { meta =>
-      List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
-    }.distinct.sorted
+    val allStates = fsm.transitionMeta
+      .flatMap { meta =>
+        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+      }
+      .distinct
+      .sorted
 
     // Define state nodes
     allStates.foreach { stateOrdinal =>
@@ -161,7 +165,7 @@ object MermaidVisualizer:
     fsm.transitionMeta.foreach { meta =>
       val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
       val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label =
+      val label     =
         if meta.hasGuard then s"$eventName [guard]"
         else eventName
 
@@ -189,6 +193,7 @@ object MermaidVisualizer:
     }
 
     sb.toString
+  end flowchart
 
   private def formatDuration(d: Duration): String =
     if d.toMillis < 1000 then s"${d.toMillis}ms"
@@ -211,16 +216,16 @@ object MermaidVisualizer:
     *   - formattedDetails is the parameters formatted for a Note box with line breaks
     */
   private def formatCommandForMermaid(text: String): (String, String) =
-    val openParen = text.indexOf('(')
+    val openParen  = text.indexOf('(')
     val closeParen = text.lastIndexOf(')')
     if openParen > 0 && closeParen > openParen then
       val cmdType = text.substring(0, openParen)
-      val args = text.substring(openParen + 1, closeParen)
+      val args    = text.substring(openParen + 1, closeParen)
       // Escape each arg first, then join with line breaks
       val formattedArgs = args.split(", ").map(escapeMermaid).mkString("<br/>")
       (cmdType, formattedArgs)
-    else
-      (escapeMermaid(text), "")
+    else (escapeMermaid(text), "")
+  end formatCommandForMermaid
 
   // ============================================
   // Enhanced Visualizations with Command Info
@@ -257,7 +262,7 @@ object MermaidVisualizer:
       val fromName = fsm.stateEnum.nameFor(fromOrdinal)
       transitions.foreach { meta =>
         val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label = meta.description match
+        val label     = meta.description match
           case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
           case Some("dynamic")                       => s"$eventName [dynamic]"
           case _                                     => eventName
@@ -298,6 +303,7 @@ object MermaidVisualizer:
     }
 
     sb.toString
+  end stateDiagramWithCommands
 
   /** Simplify a fully qualified function name to just the method name for cleaner display. */
   private def simplifyFunctionName(fqn: String): String =
@@ -317,6 +323,8 @@ object MermaidVisualizer:
       commandName: Cmd => String,
   ): String =
     val sb = StringBuilder()
+    // Add CSS to left-align note text
+    sb.append("%%{init: {'themeCSS': '.noteText { text-align: left !important; }'}}%%\n")
     sb.append("sequenceDiagram\n")
     sb.append(s"    participant FSM as ${trace.instanceId}\n")
     sb.append("    participant CQ as CommandQueue\n")
@@ -349,47 +357,48 @@ object MermaidVisualizer:
           step.timestamp.plusMillis(100)
         )
       do
-        val cmd      = sortedCommands(cmdIdx)
-        val fullName = commandName(cmd.command)
+        val cmd                   = sortedCommands(cmdIdx)
+        val fullName              = commandName(cmd.command)
         val (cmdType, cmdDetails) = formatCommandForMermaid(fullName)
-        val statusIcon = cmd.status match
+        val statusIcon            = cmd.status match
           case CommandStatus.Completed => "✅"
           case CommandStatus.Failed    => "❌"
           case CommandStatus.Skipped   => "⏭️"
-          case _                        => "⏳"
+          case _                       => "⏳"
 
         sb.append(s"    FSM->>CQ: enqueue($cmdType)\n")
-        if cmdDetails.nonEmpty then
-          sb.append(s"    Note right of CQ: $cmdDetails\n")
+        if cmdDetails.nonEmpty then sb.append(s"    Note right of CQ: $cmdDetails\n")
         if cmd.status == CommandStatus.Completed || cmd.status == CommandStatus.Failed then
           sb.append(s"    CQ->>W: claim\n")
           sb.append(s"    W->>CQ: $statusIcon ${cmd.status}\n")
         cmdIdx += 1
+      end while
     }
 
     // Show remaining commands
     while cmdIdx < sortedCommands.length do
-      val cmd      = sortedCommands(cmdIdx)
-      val fullName = commandName(cmd.command)
+      val cmd                   = sortedCommands(cmdIdx)
+      val fullName              = commandName(cmd.command)
       val (cmdType, cmdDetails) = formatCommandForMermaid(fullName)
-      val statusIcon = cmd.status match
+      val statusIcon            = cmd.status match
         case CommandStatus.Completed => "✅"
         case CommandStatus.Failed    => "❌"
         case CommandStatus.Skipped   => "⏭️"
-        case _                        => "⏳"
+        case _                       => "⏳"
 
       sb.append(s"    FSM->>CQ: enqueue($cmdType)\n")
-      if cmdDetails.nonEmpty then
-        sb.append(s"    Note right of CQ: $cmdDetails\n")
+      if cmdDetails.nonEmpty then sb.append(s"    Note right of CQ: $cmdDetails\n")
       if cmd.status == CommandStatus.Completed || cmd.status == CommandStatus.Failed then
         sb.append(s"    CQ->>W: claim\n")
         sb.append(s"    W->>CQ: $statusIcon ${cmd.status}\n")
       cmdIdx += 1
+    end while
 
     // Current state marker
     sb.append(s"    Note over FSM: Current: ${stateEnum.nameOf(trace.currentState)}\n")
 
     sb.toString
+  end sequenceDiagramWithCommands
 
   /** Generate a flowchart showing FSM structure with command lanes.
     *
@@ -408,21 +417,24 @@ object MermaidVisualizer:
     sb.append("        direction LR\n")
 
     // Collect all states
-    val allStates = fsm.transitionMeta.flatMap { meta =>
-      List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
-    }.distinct.sorted
+    val allStates = fsm.transitionMeta
+      .flatMap { meta =>
+        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+      }
+      .distinct
+      .sorted
 
     // Define state nodes with emojis for special states
     allStates.foreach { stateOrdinal =>
       val stateName = fsm.stateEnum.nameFor(stateOrdinal)
-      val label = stateName.toLowerCase match
-        case n if n.contains("cancel") || n.contains("fail") => s"❌ $stateName"
-        case n if n.contains("complete") || n.contains("deliver") || n.contains("done") => s"✅ $stateName"
+      val label     = stateName.toLowerCase match
+        case n if n.contains("cancel") || n.contains("fail")                              => s"❌ $stateName"
+        case n if n.contains("complete") || n.contains("deliver") || n.contains("done")   => s"✅ $stateName"
         case n if n.contains("process") || n.contains("pending") || n.contains("request") => s"⏳ $stateName"
-        case n if n.contains("ship") => s"📦 $stateName"
-        case n if n.contains("paid") || n.contains("payment") => s"💰 $stateName"
-        case n if n.contains("creat") => s"🆕 $stateName"
-        case _ => stateName
+        case n if n.contains("ship")                                                      => s"📦 $stateName"
+        case n if n.contains("paid") || n.contains("payment")                             => s"💰 $stateName"
+        case n if n.contains("creat")                                                     => s"🆕 $stateName"
+        case _                                                                            => stateName
       sb.append(s"        $stateName((\"$label\"))\n")
     }
 
@@ -447,11 +459,11 @@ object MermaidVisualizer:
       sb.append("        direction LR\n")
       allCommandTypes.foreach { cmdType =>
         val safeName = cmdType.replaceAll("[^a-zA-Z0-9]", "_")
-        val icon = cmdType.toLowerCase match
+        val icon     = cmdType.toLowerCase match
           case n if n.contains("payment") => "💳"
-          case n if n.contains("ship") => "🚚"
-          case n if n.contains("notif") => "📧"
-          case _ => "📋"
+          case n if n.contains("ship")    => "🚚"
+          case n if n.contains("notif")   => "📧"
+          case _                          => "📋"
         sb.append(s"        $safeName[\"$icon $cmdType\"]\n")
       }
       sb.append("    end\n\n")
@@ -464,6 +476,7 @@ object MermaidVisualizer:
           sb.append(s"    $stateName -.->|on entry| $safeName\n")
         }
       }
+    end if
 
     // Add styling
     sb.append("\n")
@@ -504,5 +517,6 @@ object MermaidVisualizer:
     }
 
     sb.toString
+  end flowchartWithCommands
 
 end MermaidVisualizer

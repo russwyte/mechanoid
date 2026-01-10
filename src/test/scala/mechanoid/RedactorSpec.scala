@@ -75,9 +75,9 @@ object RedactorSpec extends ZIOSpecDefault:
         val obj    = CustomType("hello")
         val result = obj.redacted
         assertTrue(
-          result == "CustomType(***5***)",
+          result == "CustomType(***5***)"
         )
-      },
+      }
     ),
     suite("built-in types")(
       test("String is fully redacted") {
@@ -101,7 +101,7 @@ object RedactorSpec extends ZIOSpecDefault:
           !result.contains("secret"),
           !result.contains("name"),
         )
-      },
+      }
     ),
     suite("pretty printing")(
       test("redactedPretty formats with newlines") {
