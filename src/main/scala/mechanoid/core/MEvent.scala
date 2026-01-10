@@ -45,12 +45,20 @@ object Timed:
       case TimeoutEvent => Timeout.Ordinal
       case UserEvent(e) => base.ordinal(e)
 
+    val caseNames: Array[String] = base.caseNames :+ "Timeout"
+
+    override def nameFor(ordinal: Int): String =
+      if ordinal == Timeout.Ordinal then "Timeout"
+      else base.nameFor(ordinal)
+
   /** Extension method providing ordinal access for timed events. */
   extension [E <: MEvent](e: Timed[E])(using base: SealedEnum[E])
     private[mechanoid] inline def fsmOrdinal: Int = e match
       case TimeoutEvent  => Timeout.Ordinal
       case UserEvent(ev) => base.ordinal(ev)
 
+  /** Extension methods that don't require SealedEnum. */
+  extension [E <: MEvent](e: Timed[E])
     /** Extract the underlying event if it's a user event. */
     def userEvent: Option[E] = e match
       case UserEvent(ev) => Some(ev)
@@ -60,7 +68,6 @@ object Timed:
     def isTimeout: Boolean = e match
       case TimeoutEvent => true
       case _            => false
-  end extension
 end Timed
 
 /** Event that carries a payload.

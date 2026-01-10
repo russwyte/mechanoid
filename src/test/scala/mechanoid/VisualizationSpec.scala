@@ -1,0 +1,198 @@
+package mechanoid
+
+import zio.*
+import zio.test.*
+import mechanoid.core.*
+import mechanoid.dsl.*
+import mechanoid.visualization.*
+import java.time.Instant
+
+object VisualizationSpec extends ZIOSpecDefault:
+
+  // Simple test FSM
+  enum TestState extends MState:
+    case Idle, Running, Completed, Failed
+
+  enum TestEvent extends MEvent:
+    case Start
+    case Finish
+    case Error(reason: String) extends TestEvent
+
+  val testFSM: FSMDefinition[TestState, TestEvent, Any, Nothing] =
+    import TestState.*, TestEvent.*
+    UFSM[TestState, TestEvent]
+      .when(Idle).on(Start).goto(Running)
+      .when(Running).on(Finish).goto(Completed)
+      .when(Running).on(Error("")).goto(Failed)
+
+  def spec = suite("Visualization")(
+    suite("SealedEnum name extraction")(
+      test("extracts state names correctly") {
+        val se = summon[SealedEnum[TestState]]
+        assertTrue(
+          se.caseNames.toList == List("Idle", "Running", "Completed", "Failed"),
+          se.nameOf(TestState.Idle) == "Idle",
+          se.nameOf(TestState.Running) == "Running",
+        )
+      },
+      test("extracts event names correctly") {
+        val ee = summon[SealedEnum[TestEvent]]
+        assertTrue(
+          ee.caseNames.toList == List("Start", "Finish", "Error"),
+          ee.nameOf(TestEvent.Start) == "Start",
+          ee.nameOf(TestEvent.Error("test")) == "Error",
+        )
+      },
+    ),
+    suite("TransitionMeta tracking")(
+      test("FSM captures transition metadata") {
+        assertTrue(
+          testFSM.transitionMeta.nonEmpty,
+          testFSM.transitionMeta.size == 3,
+        )
+      },
+      test("metadata includes correct source states") {
+        val sources = testFSM.transitionMeta.map(_.fromStateOrdinal).toSet
+        val idleOrd = testFSM.stateEnum.ordinal(TestState.Idle)
+        val runningOrd = testFSM.stateEnum.ordinal(TestState.Running)
+        assertTrue(sources == Set(idleOrd, runningOrd))
+      },
+      test("metadata includes correct target states") {
+        val targets = testFSM.transitionMeta.flatMap(_.targetStateOrdinal).toSet
+        val runningOrd = testFSM.stateEnum.ordinal(TestState.Running)
+        val completedOrd = testFSM.stateEnum.ordinal(TestState.Completed)
+        val failedOrd = testFSM.stateEnum.ordinal(TestState.Failed)
+        assertTrue(targets == Set(runningOrd, completedOrd, failedOrd))
+      },
+    ),
+    suite("MermaidVisualizer")(
+      test("generates valid state diagram") {
+        val diagram = MermaidVisualizer.stateDiagram(testFSM)
+        assertTrue(
+          diagram.contains("stateDiagram-v2"),
+          diagram.contains("Idle --> Running: Start"),
+          diagram.contains("Running --> Completed: Finish"),
+          diagram.contains("Running --> Failed: Error"),
+        )
+      },
+      test("state diagram includes initial state arrow") {
+        val diagram = MermaidVisualizer.stateDiagram(testFSM, Some(TestState.Idle))
+        assertTrue(diagram.contains("[*] --> Idle"))
+      },
+      test("generates valid flowchart") {
+        val flowchart = MermaidVisualizer.flowchart(testFSM)
+        assertTrue(
+          flowchart.contains("flowchart LR"),
+          flowchart.contains("Idle((Idle))"),
+          flowchart.contains("Running((Running))"),
+          flowchart.contains("Idle -->|Start| Running"),
+        )
+      },
+      test("generates sequence diagram from trace") {
+        val trace = ExecutionTrace(
+          instanceId = "test-1",
+          initialState = TestState.Idle,
+          currentState = TestState.Running,
+          steps = List(
+            TraceStep(1, TestState.Idle, TestState.Running, TestEvent.Start, Instant.now, false)
+          ),
+        )
+        val seq = MermaidVisualizer.sequenceDiagram(
+          trace,
+          summon[SealedEnum[TestState]],
+          summon[SealedEnum[TestEvent]],
+        )
+        assertTrue(
+          seq.contains("sequenceDiagram"),
+          seq.contains("participant FSM as test-1"),
+          seq.contains("Note over FSM: Idle"),
+          seq.contains("FSM->>FSM: Start"),
+          seq.contains("Note over FSM: Running"),
+        )
+      },
+    ),
+    suite("GraphVizVisualizer")(
+      test("generates valid digraph") {
+        val dot = GraphVizVisualizer.digraph(testFSM)
+        assertTrue(
+          dot.contains("digraph FSM {"),
+          dot.contains("rankdir=LR"),
+          dot.contains("Idle -> Running [label=\"Start\"]"),
+          dot.contains("Running -> Completed [label=\"Finish\"]"),
+          dot.contains("Running -> Failed [label=\"Error\"]"),
+        )
+      },
+      test("digraph includes initial state marker") {
+        val dot = GraphVizVisualizer.digraph(testFSM, initialState = Some(TestState.Idle))
+        assertTrue(
+          dot.contains("__start__ [shape=point"),
+          dot.contains("__start__ -> Idle"),
+        )
+      },
+      test("generates timeline from trace") {
+        val trace = ExecutionTrace(
+          instanceId = "test-1",
+          initialState = TestState.Idle,
+          currentState = TestState.Completed,
+          steps = List(
+            TraceStep(1, TestState.Idle, TestState.Running, TestEvent.Start, Instant.now, false),
+            TraceStep(2, TestState.Running, TestState.Completed, TestEvent.Finish, Instant.now, false),
+          ),
+        )
+        val timeline = GraphVizVisualizer.timeline(
+          trace,
+          summon[SealedEnum[TestState]],
+          summon[SealedEnum[TestEvent]],
+        )
+        assertTrue(
+          timeline.contains("digraph Timeline"),
+          timeline.contains("s0 [label=\"Idle\""),
+          timeline.contains("s1 [label=\"Running\""),
+          timeline.contains("s2 [label=\"Completed\""),
+          timeline.contains("s0 -> s1 [label=\"Start\"]"),
+          timeline.contains("s1 -> s2 [label=\"Finish\"]"),
+        )
+      },
+    ),
+    suite("Extension methods")(
+      test("FSMDefinition has toMermaidStateDiagram extension") {
+        val diagram = testFSM.toMermaidStateDiagram()
+        assertTrue(diagram.contains("stateDiagram-v2"))
+      },
+      test("FSMDefinition has toGraphViz extension") {
+        val dot = testFSM.toGraphViz()
+        assertTrue(dot.contains("digraph FSM"))
+      },
+      test("ExecutionTrace has toMermaidSequenceDiagram extension") {
+        given SealedEnum[TestState] = summon
+        given SealedEnum[TestEvent] = summon
+        val trace = ExecutionTrace(
+          instanceId = "test-1",
+          initialState = TestState.Idle,
+          currentState = TestState.Running,
+          steps = List(
+            TraceStep(1, TestState.Idle, TestState.Running, TestEvent.Start, Instant.now, false)
+          ),
+        )
+        val seq = trace.toMermaidSequenceDiagram
+        assertTrue(seq.contains("sequenceDiagram"))
+      },
+    ),
+    suite("ExecutionTrace")(
+      test("fromStateChanges creates trace correctly") {
+        val changes = List(
+          StateChange(TestState.Idle, TestState.Running, TestEvent.Start, Instant.now),
+          StateChange(TestState.Running, TestState.Completed, TestEvent.Finish, Instant.now),
+        )
+        val trace = ExecutionTrace.fromStateChanges("test-1", TestState.Idle, TestState.Completed, changes)
+        assertTrue(
+          trace.instanceId == "test-1",
+          trace.initialState == TestState.Idle,
+          trace.currentState == TestState.Completed,
+          trace.stepCount == 2,
+          trace.visitedStates == Set(TestState.Idle, TestState.Running, TestState.Completed),
+        )
+      },
+    ),
+  )
+end VisualizationSpec

@@ -3,6 +3,7 @@ package mechanoid.dsl
 import zio.*
 import mechanoid.core.*
 import mechanoid.runtime.FSMRuntime
+import mechanoid.visualization.TransitionMeta
 import scala.concurrent.duration.Duration
 import scala.annotation.publicInBinary
 
@@ -25,10 +26,17 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
     private[mechanoid] val transitions: Map[(Int, Int), Transition[S, Timed[E], S, R, Err]],
     private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, R, Err]],
     private[mechanoid] val timeouts: Map[Int, Duration],
+    private[mechanoid] val transitionMeta: List[TransitionMeta] = List.empty,
 )(using
     private[mechanoid] val stateEnum: SealedEnum[S],
     private[mechanoid] val eventEnum: SealedEnum[Timed[E]],
 ):
+
+  /** Get state names for visualization. */
+  def stateNames: Array[String] = stateEnum.caseNames
+
+  /** Get event names for visualization (includes Timeout). */
+  def eventNames: Array[String] = eventEnum.caseNames
 
   /** Start defining transitions from a specific state.
     *
@@ -51,7 +59,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
     * sent. The state's shape is used for matching.
     */
   def withTimeout(state: S, duration: Duration): FSMDefinition[S, E, R, Err] =
-    new FSMDefinition(transitions, lifecycles, timeouts + (state.fsmOrdinal -> duration))
+    new FSMDefinition(transitions, lifecycles, timeouts + (state.fsmOrdinal -> duration), transitionMeta)
 
   /** Add a transition to the definition. */
   private[dsl] def addTransition(
@@ -63,6 +71,21 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
       transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
       lifecycles,
       timeouts,
+      transitionMeta,
+    )
+
+  /** Add a transition with visualization metadata. */
+  private[dsl] def addTransitionWithMeta(
+      fromOrdinal: Int,
+      event: Timed[E],
+      transition: Transition[S, Timed[E], S, R, Err],
+      meta: TransitionMeta,
+  ): FSMDefinition[S, E, R, Err] =
+    new FSMDefinition(
+      transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
+      lifecycles,
+      timeouts,
+      transitionMeta :+ meta,
     )
 
   /** Update lifecycle for a state. */
@@ -71,7 +94,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, R, Err] @publicInBinary priv
       f: StateLifecycle[S, R, Err] => StateLifecycle[S, R, Err],
   ): FSMDefinition[S, E, R, Err] =
     val current = lifecycles.getOrElse(stateOrd, StateLifecycle.empty)
-    new FSMDefinition(transitions, lifecycles + (stateOrd -> f(current)), timeouts)
+    new FSMDefinition(transitions, lifecycles + (stateOrd -> f(current)), timeouts, transitionMeta)
 
   /** Build and start the FSM runtime with the given initial state. */
   def build(initial: S): ZIO[R & Scope, Nothing, FSMRuntime[S, E, R, Err]] =

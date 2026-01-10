@@ -47,7 +47,7 @@ object OrderFSM:
     val amount = BigDecimal(0)
     val str    = ""
 
-  /** Create an order FSM definition with customizable entry actions.
+  /** Create an order FSM definition with entry actions.
     *
     * @param onPaymentProcessing
     *   Action to run when entering PaymentProcessing state
@@ -55,11 +55,15 @@ object OrderFSM:
     *   Action to run when entering Paid state
     * @param onShipped
     *   Action to run when entering Shipped state
+    *
+    * Note: This method is inline to preserve the expression trees of the action parameters, allowing the
+    * ExpressionName macro to extract the actual function names (e.g., "enqueuePaymentCommand") rather than
+    * just the parameter names.
     */
-  def definition(
-      onPaymentProcessing: ZIO[Any, Throwable, Unit] = ZIO.unit,
-      onPaid: ZIO[Any, Throwable, Unit] = ZIO.unit,
-      onShipped: ZIO[Any, Throwable, Unit] = ZIO.unit,
+  inline def definition(
+      inline onPaymentProcessing: ZIO[Any, Throwable, Unit],
+      inline onPaid: ZIO[Any, Throwable, Unit],
+      inline onShipped: ZIO[Any, Throwable, Unit],
   ): FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
     import OrderState.*, OrderEvent.*, T.*
     TaskFSM[OrderState, OrderEvent]

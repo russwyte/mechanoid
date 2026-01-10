@@ -32,10 +32,14 @@ object PetStoreSpec extends ZIOSpecDefault:
   def fsmSuite = suite("Order FSM")(
     test("basic state transitions") {
       for
-        eventStore <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
-        orderId    = "order-1"
-        definition = OrderFSM.definition()
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        eventStore <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        orderId    = 1
+        definition = OrderFSM.definition(
+          onPaymentProcessing = ZIO.unit,
+          onPaid = ZIO.unit,
+          onShipped = ZIO.unit,
+        )
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
 
         finalState <- ZIO.scoped {
           for
@@ -50,17 +54,17 @@ object PetStoreSpec extends ZIOSpecDefault:
     },
     test("full order lifecycle") {
       for
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         transitionsRef <- Ref.make(List.empty[String])
 
-        orderId    = "lifecycle-order"
+        orderId    = 2
         definition = OrderFSM.definition(
           onPaymentProcessing = transitionsRef.update(_ :+ "PaymentProcessing"),
           onPaid = transitionsRef.update(_ :+ "Paid"),
           onShipped = transitionsRef.update(_ :+ "Shipped"),
         )
 
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
 
         finalState <- ZIO.scoped {
           for
@@ -83,10 +87,14 @@ object PetStoreSpec extends ZIOSpecDefault:
     },
     test("payment failure cancels order") {
       for
-        eventStore <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
-        orderId    = "cancel-order"
-        definition = OrderFSM.definition()
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        eventStore <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        orderId    = 3
+        definition = OrderFSM.definition(
+          onPaymentProcessing = ZIO.unit,
+          onPaid = ZIO.unit,
+          onShipped = ZIO.unit,
+        )
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
 
         finalState <- ZIO.scoped {
           for
@@ -101,10 +109,14 @@ object PetStoreSpec extends ZIOSpecDefault:
     },
     test("event store captures rich event data") {
       for
-        eventStore <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
-        orderId    = "rich-events"
-        definition = OrderFSM.definition()
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        eventStore <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        orderId    = 4
+        definition = OrderFSM.definition(
+          onPaymentProcessing = ZIO.unit,
+          onPaid = ZIO.unit,
+          onShipped = ZIO.unit,
+        )
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
 
         _ <- ZIO.scoped {
           for
@@ -165,17 +177,17 @@ object PetStoreSpec extends ZIOSpecDefault:
   // ============================================
 
   /** Test command store for tracking results */
-  class TestCommandStore extends CommandStore[String, PetStoreCommand]:
-    private val commands         = mutable.Map.empty[Long, PendingCommand[String, PetStoreCommand]]
+  class TestCommandStore extends CommandStore[Int, PetStoreCommand]:
+    private val commands         = mutable.Map.empty[Long, PendingCommand[Int, PetStoreCommand]]
     private val byIdempotencyKey = mutable.Map.empty[String, Long]
     private val claims           = mutable.Map.empty[Long, (String, Instant)]
     private var nextId           = 1L
 
     override def enqueue(
-        instanceId: String,
+        instanceId: Int,
         command: PetStoreCommand,
         idempotencyKey: String,
-    ): UIO[PendingCommand[String, PetStoreCommand]] =
+    ): UIO[PendingCommand[Int, PetStoreCommand]] =
       Clock.instant.map { now =>
         synchronized {
           byIdempotencyKey.get(idempotencyKey) match
@@ -207,7 +219,7 @@ object PetStoreSpec extends ZIOSpecDefault:
         limit: Int,
         claimDuration: Duration,
         now: Instant,
-    ): UIO[List[PendingCommand[String, PetStoreCommand]]] =
+    ): UIO[List[PendingCommand[Int, PetStoreCommand]]] =
       ZIO.succeed {
         synchronized {
           val expiresAt = now.plusMillis(claimDuration.toMillis)
@@ -270,10 +282,10 @@ object PetStoreSpec extends ZIOSpecDefault:
         }
       }
 
-    override def getByIdempotencyKey(key: String): UIO[Option[PendingCommand[String, PetStoreCommand]]] =
+    override def getByIdempotencyKey(key: String): UIO[Option[PendingCommand[Int, PetStoreCommand]]] =
       ZIO.succeed(synchronized { byIdempotencyKey.get(key).flatMap(commands.get) })
 
-    override def getByInstanceId(instanceId: String): UIO[List[PendingCommand[String, PetStoreCommand]]] =
+    override def getByInstanceId(instanceId: Int): UIO[List[PendingCommand[Int, PetStoreCommand]]] =
       ZIO.succeed(synchronized { commands.values.filter(_.instanceId == instanceId).toList.sortBy(_.enqueuedAt) })
 
     override def countByStatus: UIO[Map[CommandStatus, Long]] =
@@ -294,7 +306,7 @@ object PetStoreSpec extends ZIOSpecDefault:
       }
 
     // Test helpers
-    def all: List[PendingCommand[String, PetStoreCommand]] = synchronized { commands.values.toList.sortBy(_.id) }
+    def all: List[PendingCommand[Int, PetStoreCommand]] = synchronized { commands.values.toList.sortBy(_.id) }
     def completedCount: Int = synchronized { commands.values.count(_.status == CommandStatus.Completed) }
     def failedCount: Int    = synchronized { commands.values.count(_.status == CommandStatus.Failed) }
   end TestCommandStore
@@ -302,14 +314,14 @@ object PetStoreSpec extends ZIOSpecDefault:
   /** Simple command processor for testing */
   class TestCommandProcessor(
       store: TestCommandStore,
-      eventStore: InMemoryEventStore[String, OrderState, OrderEvent],
+      eventStore: InMemoryEventStore[Int, OrderState, OrderEvent],
       paymentProcessor: PaymentProcessor,
       shipper: Shipper,
       notificationService: NotificationService,
-      orderDataRef: Ref[Map[String, OrderData]],
-      definitionsRef: Ref[Map[String, FSMDefinition[OrderState, OrderEvent, Any, Throwable]]],
+      orderDataRef: Ref[Map[Int, OrderData]],
+      definitionsRef: Ref[Map[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]]],
   ):
-    def processCommand(cmd: PendingCommand[String, PetStoreCommand]): UIO[Unit] =
+    def processCommand(cmd: PendingCommand[Int, PetStoreCommand]): UIO[Unit] =
       val orderId = cmd.instanceId
       cmd.command match
         case PetStoreCommand.ProcessPayment(_, _, customerName, _, amount, method) =>
@@ -329,7 +341,7 @@ object PetStoreSpec extends ZIOSpecDefault:
       end match
     end processCommand
 
-    private def processPayment(cmdId: Long, orderId: String, amount: BigDecimal, method: String): UIO[Unit] =
+    private def processPayment(cmdId: Long, orderId: Int, amount: BigDecimal, method: String): UIO[Unit] =
       paymentProcessor.processPayment("customer", amount, method).either.flatMap {
         case Right(result) =>
           store.complete(cmdId) *>
@@ -345,7 +357,7 @@ object PetStoreSpec extends ZIOSpecDefault:
 
     private def processShipping(
         cmdId: Long,
-        orderId: String,
+        orderId: Int,
         petName: String,
         customerName: String,
         address: String,
@@ -380,7 +392,7 @@ object PetStoreSpec extends ZIOSpecDefault:
 
     private def processShippingCallback(
         cmdId: Long,
-        orderId: String,
+        orderId: Int,
         tracking: String,
         carrier: String,
         eta: String,
@@ -391,13 +403,13 @@ object PetStoreSpec extends ZIOSpecDefault:
           sendFSMEvent(orderId, OrderEvent.ShipmentDispatched(tracking, carrier, eta)).ignore
       else store.fail(cmdId, "Shipping failed", None).unit
 
-    private def sendFSMEvent(orderId: String, event: OrderEvent): ZIO[Any, Throwable | MechanoidError, Unit] =
+    private def sendFSMEvent(orderId: Int, event: OrderEvent): ZIO[Any, Throwable | MechanoidError, Unit] =
       ZIO.scoped {
         for
           dataOpt <- orderDataRef.get.map(_.get(orderId))
           defOpt  <- definitionsRef.get.map(_.get(orderId))
           _       <- ZIO.when(dataOpt.isDefined && defOpt.isDefined) {
-            val storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+            val storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
             val definition = defOpt.get
             PersistentFSMRuntime(orderId, definition, OrderState.Created)
               .provideSomeLayer[Scope](storeLayer)
@@ -421,10 +433,10 @@ object PetStoreSpec extends ZIOSpecDefault:
         _ <- TestRandom.setSeed(12345L)
 
         // Create stores
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
-        orderDataRef   <- Ref.make(Map.empty[String, OrderData])
-        definitionsRef <- Ref.make(Map.empty[String, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
+        orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
 
         // Create services with 100% success for deterministic test
         paymentProcessor = PaymentProcessor.make(
@@ -449,12 +461,12 @@ object PetStoreSpec extends ZIOSpecDefault:
         // Create an order
         pet       = Pet.catalog.head      // Whiskers the Cat
         customer  = Customer.samples.head // Alice Smith
-        orderId   = "ORD-TEST-001"
+        orderId   = 100
         orderData = OrderData(orderId, pet, customer, "corr-001", "msg-001")
         _ <- orderDataRef.update(_ + (orderId -> orderData))
 
         // Create FSM and initiate the order
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
         definition = OrderFSM.definition(
           onPaymentProcessing = commandStore
             .enqueue(
@@ -537,10 +549,10 @@ object PetStoreSpec extends ZIOSpecDefault:
       for
         _ <- TestRandom.setSeed(67890L)
 
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
-        orderDataRef   <- Ref.make(Map.empty[String, OrderData])
-        definitionsRef <- Ref.make(Map.empty[String, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
+        orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
 
         paymentProcessor = PaymentProcessor.make(
           PaymentProcessor.Config(successRate = 1.0, minDelayMs = 1, maxDelayMs = 2)
@@ -559,10 +571,10 @@ object PetStoreSpec extends ZIOSpecDefault:
           orderDataRef,
           definitionsRef,
         )
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
 
         // Create 3 orders
-        orderIds = List("ORD-001", "ORD-002", "ORD-003")
+        orderIds = List(1, 2, 3)
         _ <- ZIO.foreach(orderIds.zipWithIndex) { case (orderId, idx) =>
           val pet       = Pet.catalog(idx % Pet.catalog.length)
           val customer  = Customer.samples(idx % Customer.samples.length)
@@ -583,6 +595,7 @@ object PetStoreSpec extends ZIOSpecDefault:
                 s"ship-$orderId",
               )
               .unit,
+            onShipped = ZIO.unit,
           )
 
           orderDataRef.update(_ + (orderId -> orderData)) *>
@@ -623,10 +636,10 @@ object PetStoreSpec extends ZIOSpecDefault:
       for
         _ <- TestRandom.setSeed(11111L)
 
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
-        orderDataRef   <- Ref.make(Map.empty[String, OrderData])
-        definitionsRef <- Ref.make(Map.empty[String, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
+        orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Any, Throwable]])
 
         // Payment processor that always fails (0% success)
         paymentProcessor = PaymentProcessor.make(
@@ -646,9 +659,9 @@ object PetStoreSpec extends ZIOSpecDefault:
           orderDataRef,
           definitionsRef,
         )
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
 
-        orderId   = "ORD-FAIL-001"
+        orderId   = 999
         pet       = Pet.catalog.head
         customer  = Customer.samples.head
         orderData = OrderData(orderId, pet, customer, "corr-fail", "msg-fail")
@@ -661,7 +674,9 @@ object PetStoreSpec extends ZIOSpecDefault:
               PetStoreCommand.ProcessPayment(orderId, customer.id, customer.name, pet.name, pet.price, "visa"),
               s"pay-$orderId",
             )
-            .unit
+            .unit,
+          onPaid = ZIO.unit,
+          onShipped = ZIO.unit,
         )
 
         _ <- definitionsRef.update(_ + (orderId -> definition))

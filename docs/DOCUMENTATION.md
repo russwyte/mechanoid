@@ -46,6 +46,12 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [CommandWorker](#commandworker)
   - [Retry Policies](#retry-policies)
   - [Integration with FSM](#integration-with-fsm)
+- [Visualization](#visualization)
+  - [Overview](#visualization-overview)
+  - [MermaidVisualizer](#mermaidvisualizer)
+  - [GraphVizVisualizer](#graphvizvisualizer)
+  - [CommandVisualizer](#commandvisualizer)
+  - [Generating Visualizations](#generating-visualizations)
 - [Type-Level Safety](#type-level-safety)
   - [ValidTransition](#validtransition)
   - [TransitionSpec](#transitionspec)
@@ -887,6 +893,279 @@ for
   _ <- ZIO.logInfo(s"Commands - Failed: ${counts.getOrElse(CommandStatus.Failed, 0)}")
 yield ()
 ```
+
+---
+
+## Visualization
+
+Mechanoid provides built-in visualization tools to generate diagrams of your FSM structure and execution traces. These visualizations are invaluable for:
+
+- **Documentation**: Auto-generate up-to-date FSM diagrams
+- **Debugging**: Visualize execution traces to understand state transitions
+- **Communication**: Share FSM designs with stakeholders using familiar diagram formats
+
+### Visualization Overview
+
+Three visualizers are available:
+
+| Visualizer | Output Format | Best For |
+|------------|---------------|----------|
+| `MermaidVisualizer` | Mermaid markdown | GitHub/GitLab READMEs, documentation sites |
+| `GraphVizVisualizer` | DOT format | High-quality rendered images, complex diagrams |
+| `CommandVisualizer` | Mermaid + Markdown | Command queue monitoring and reports |
+
+All visualizers work with any FSM definition, whether or not it uses commands.
+
+### MermaidVisualizer
+
+Generate [Mermaid](https://mermaid.js.org/) diagrams that render directly in GitHub, GitLab, and many documentation tools.
+
+#### State Diagram
+
+Shows the FSM structure with all states and transitions:
+
+```scala
+import mechanoid.visualization.MermaidVisualizer
+
+// Basic state diagram
+val diagram = MermaidVisualizer.stateDiagram(
+  fsm = orderDefinition,
+  initialState = Some(OrderState.Created)
+)
+
+// Output:
+// stateDiagram-v2
+//     [*] --> Created
+//     Created --> PaymentProcessing: InitiatePayment
+//     PaymentProcessing --> Paid: PaymentSucceeded
+//     ...
+```
+
+#### Sequence Diagram
+
+Shows an execution trace as a sequence of state transitions:
+
+```scala
+// After running an FSM, get its trace
+val trace: ExecutionTrace[OrderState, OrderEvent] = fsm.getTrace
+
+val sequenceDiagram = MermaidVisualizer.sequenceDiagram(
+  trace = trace,
+  stateEnum = OrderState.sealedEnum,
+  eventEnum = OrderEvent.sealedEnum
+)
+```
+
+#### Flowchart
+
+Shows the FSM as a flowchart with highlighted execution path:
+
+```scala
+val flowchart = MermaidVisualizer.flowchart(
+  fsm = orderDefinition,
+  trace = Some(executionTrace)  // Optional: highlights visited states
+)
+```
+
+#### With Command Integration
+
+For FSMs that use the command queue, enhanced visualizations show which commands are triggered:
+
+```scala
+// Map state ordinals to command type names
+val stateCommands = Map(
+  OrderState.PaymentProcessing.ordinal -> List("ProcessPayment"),
+  OrderState.Paid.ordinal -> List("RequestShipping", "SendNotification"),
+  OrderState.Shipped.ordinal -> List("SendNotification")
+)
+
+// State diagram with command annotations
+val diagramWithCommands = MermaidVisualizer.stateDiagramWithCommands(
+  fsm = orderDefinition,
+  stateCommands = stateCommands,
+  initialState = Some(OrderState.Created)
+)
+
+// Flowchart with command lanes
+val flowchartWithCommands = MermaidVisualizer.flowchartWithCommands(
+  fsm = orderDefinition,
+  stateCommands = stateCommands,
+  trace = Some(executionTrace)
+)
+
+// Sequence diagram interleaving FSM and command execution
+val sequenceWithCommands = MermaidVisualizer.sequenceDiagramWithCommands(
+  trace = executionTrace,
+  stateEnum = OrderState.sealedEnum,
+  eventEnum = OrderEvent.sealedEnum,
+  commands = pendingCommands,
+  commandName = cmd => cmd.toString
+)
+```
+
+### GraphVizVisualizer
+
+Generate [GraphViz DOT](https://graphviz.org/) format for high-quality rendered diagrams.
+
+```scala
+import mechanoid.visualization.GraphVizVisualizer
+
+// Basic digraph
+val dot = GraphVizVisualizer.digraph(
+  fsm = orderDefinition,
+  initialState = Some(OrderState.Created)
+)
+
+// Output:
+// digraph FSM {
+//     rankdir=LR;
+//     node [shape=ellipse];
+//     Created -> PaymentProcessing [label="InitiatePayment"];
+//     ...
+// }
+
+// With execution trace highlighting
+val dotWithTrace = GraphVizVisualizer.digraphWithTrace(
+  fsm = orderDefinition,
+  trace = executionTrace
+)
+```
+
+Render the DOT output using GraphViz tools:
+
+```bash
+# Generate PNG
+dot -Tpng fsm.dot -o fsm.png
+
+# Generate SVG
+dot -Tsvg fsm.dot -o fsm.svg
+```
+
+### CommandVisualizer
+
+Generate reports and diagrams for command queue processing.
+
+#### Summary Table
+
+```scala
+import mechanoid.visualization.CommandVisualizer
+
+val counts = commandStore.countByStatus
+
+val summaryTable = CommandVisualizer.summaryTable(counts)
+// | Status | Count |
+// |--------|-------|
+// | ⏳ Pending | 0 |
+// | ✅ Completed | 28 |
+// | ❌ Failed | 1 |
+```
+
+#### Command List by Instance
+
+```scala
+val commandList = CommandVisualizer.commandList(
+  commands = allCommands,
+  commandName = cmd => cmd.toString
+)
+```
+
+#### Flowchart
+
+Shows command types flowing to their final statuses:
+
+```scala
+val flowchart = CommandVisualizer.flowchart(
+  commands = allCommands,
+  commandType = cmd => cmd.getClass.getSimpleName
+)
+```
+
+#### Complete Report
+
+Combines summary, flowchart, and detailed list:
+
+```scala
+val report = CommandVisualizer.report(
+  commands = allCommands,
+  counts = statusCounts,
+  commandName = cmd => cmd.toString,
+  commandType = cmd => cmd.getClass.getSimpleName,
+  title = "Order Processing Commands"
+)
+```
+
+### Generating Visualizations
+
+Here's a complete example that generates all visualization types:
+
+```scala
+import mechanoid.visualization.*
+import java.nio.file.{Files, Paths}
+
+def generateVisualizations[S <: MState, E <: MEvent, R, Err](
+    fsm: FSMDefinition[S, E, R, Err],
+    initialState: S,
+    outputDir: String
+): ZIO[Any, Throwable, Unit] =
+  for
+    _ <- ZIO.attempt(Files.createDirectories(Paths.get(outputDir)))
+
+    // Generate FSM structure diagram
+    structureMd = s"""# FSM Structure
+                     |
+                     |## State Diagram
+                     |
+                     |```mermaid
+                     |${MermaidVisualizer.stateDiagram(fsm, Some(initialState))}
+                     |```
+                     |
+                     |## Flowchart
+                     |
+                     |```mermaid
+                     |${MermaidVisualizer.flowchart(fsm)}
+                     |```
+                     |
+                     |## GraphViz
+                     |
+                     |```dot
+                     |${GraphVizVisualizer.digraph(fsm, Some(initialState))}
+                     |```
+                     |""".stripMargin
+
+    _ <- ZIO.attempt(
+      Files.writeString(Paths.get(s"$outputDir/fsm-structure.md"), structureMd)
+    )
+  yield ()
+
+// Generate trace visualization after FSM execution
+def generateTraceVisualization[S <: MState, E <: MEvent](
+    trace: ExecutionTrace[S, E],
+    stateEnum: SealedEnum[S],
+    eventEnum: SealedEnum[E],
+    outputPath: String
+): ZIO[Any, Throwable, Unit] =
+  val traceMd = s"""# Execution Trace: ${trace.instanceId}
+                   |
+                   |**Final State:** ${stateEnum.nameOf(trace.currentState)}
+                   |
+                   |## Sequence Diagram
+                   |
+                   |```mermaid
+                   |${MermaidVisualizer.sequenceDiagram(trace, stateEnum, eventEnum)}
+                   |```
+                   |""".stripMargin
+
+  ZIO.attempt(Files.writeString(Paths.get(outputPath), traceMd))
+```
+
+### Example Outputs
+
+See the [visualizations directory](visualizations/) for complete examples:
+
+- [Order FSM Structure](visualizations/order-fsm-structure.md) - FSM definition with state diagram, flowchart, and GraphViz
+- [Order 1 Trace](visualizations/order-1-trace.md) - Successful order execution trace
+- [Order 5 Trace](visualizations/order-5-trace.md) - Failed order (payment declined) trace
+- [Command Queue Report](visualizations/command-queue.md) - Command processing summary and details
 
 ---
 

@@ -2,13 +2,14 @@ package mechanoid.examples
 
 import zio.*
 import zio.Console.printLine
-import mechanoid.core.*
-import mechanoid.dsl.*
+import mechanoid.*
 import mechanoid.persistence.*
 import mechanoid.persistence.command.*
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import java.nio.file.{Files, Paths}
 import scala.annotation.unused
+import mechanoid.visualization.*
 // Import all types from the petstore package
 import mechanoid.examples.petstore.*
 
@@ -105,7 +106,7 @@ object PetStoreApp extends ZIOAppDefault:
     def system(msg: String): UIO[Unit]
     def error(msg: String): UIO[Unit]
     def fsm(msg: String): UIO[Unit]
-    def event(orderId: String, event: OrderEvent): UIO[Unit]
+    def event(orderId: Int, event: OrderEvent): UIO[Unit]
   end ConsoleLogger
 
   case class ConsoleLoggerLive() extends ConsoleLogger:
@@ -129,8 +130,8 @@ object PetStoreApp extends ZIOAppDefault:
     def error(msg: String): UIO[Unit]        = log("[ERROR]", BgRed + Bold, msg)
     def fsm(msg: String): UIO[Unit]          = log("[FSM]", Bold + Yellow, msg)
 
-    def event(orderId: String, evt: OrderEvent): UIO[Unit] =
-      log("[EVENT]", Bold + Cyan, s"${highlight(orderId)} <- ${EventDisplay.format(evt)}")
+    def event(orderId: Int, evt: OrderEvent): UIO[Unit] =
+      log("[EVENT]", Bold + Cyan, s"${highlight(s"Order-$orderId")} <- ${EventDisplay.format(evt)}")
   end ConsoleLoggerLive
 
   object ConsoleLogger:
@@ -141,7 +142,8 @@ object PetStoreApp extends ZIOAppDefault:
   // ============================================
 
   case class PaymentProcessorWithLogging(logger: ConsoleLogger) extends PaymentProcessor:
-    private val config        = PaymentProcessor.Config()
+    // Lower success rate (70%) to ensure demo shows some failures
+    private val config        = PaymentProcessor.Config(successRate = 0.70)
     private val paymentErrors = List(
       PaymentError.CardDeclined("Generic decline"),
       PaymentError.InsufficientFunds,
@@ -273,7 +275,7 @@ object PetStoreApp extends ZIOAppDefault:
   // ============================================
 
   case class CommandRecord(
-      cmd: PendingCommand[String, PetStoreCommand],
+      cmd: PendingCommand[Int, PetStoreCommand],
       claimedBy: Option[String],
       claimedUntil: Option[Instant],
   )
@@ -282,13 +284,13 @@ object PetStoreApp extends ZIOAppDefault:
       commands: Ref[Map[Long, CommandRecord]],
       idCounter: Ref[Long],
       idempotencyIndex: Ref[Map[String, Long]],
-  ) extends CommandStore[String, PetStoreCommand]:
+  ) extends CommandStore[Int, PetStoreCommand]:
 
     override def enqueue(
-        instanceId: String,
+        instanceId: Int,
         command: PetStoreCommand,
         idempotencyKey: String,
-    ): UIO[PendingCommand[String, PetStoreCommand]] =
+    ): UIO[PendingCommand[Int, PetStoreCommand]] =
       for
         existingId <- idempotencyIndex.get.map(_.get(idempotencyKey))
         result     <- existingId match
@@ -320,7 +322,7 @@ object PetStoreApp extends ZIOAppDefault:
         limit: Int,
         claimDuration: Duration,
         now: Instant,
-    ): UIO[List[PendingCommand[String, PetStoreCommand]]] =
+    ): UIO[List[PendingCommand[Int, PetStoreCommand]]] =
       commands.modify { cmds =>
         val claimUntil = now.plusMillis(claimDuration.toMillis)
         val pending    = cmds.values
@@ -398,7 +400,7 @@ object PetStoreApp extends ZIOAppDefault:
         (expired.length, updated)
       }
 
-    override def getByIdempotencyKey(idempotencyKey: String): UIO[Option[PendingCommand[String, PetStoreCommand]]] =
+    override def getByIdempotencyKey(idempotencyKey: String): UIO[Option[PendingCommand[Int, PetStoreCommand]]] =
       for
         maybeId <- idempotencyIndex.get.map(_.get(idempotencyKey))
         result  <- maybeId match
@@ -406,13 +408,13 @@ object PetStoreApp extends ZIOAppDefault:
           case None     => ZIO.succeed(None)
       yield result
 
-    override def getByInstanceId(instanceId: String): UIO[List[PendingCommand[String, PetStoreCommand]]] =
+    override def getByInstanceId(instanceId: Int): UIO[List[PendingCommand[Int, PetStoreCommand]]] =
       commands.get.map(_.values.filter(_.cmd.instanceId == instanceId).map(_.cmd).toList)
 
     override def countByStatus: UIO[Map[CommandStatus, Long]] =
       commands.get.map(_.values.map(_.cmd).groupBy(_.status).view.mapValues(_.size.toLong).toMap)
 
-    def getAllCommands: UIO[List[PendingCommand[String, PetStoreCommand]]] =
+    def getAllCommands: UIO[List[PendingCommand[Int, PetStoreCommand]]] =
       commands.get.map(_.values.map(_.cmd).toList.sortBy(_.id))
   end InMemoryCommandStore
 
@@ -430,29 +432,36 @@ object PetStoreApp extends ZIOAppDefault:
 
   /** Manages Order FSM instances and coordinates with command processing. */
   class OrderFSMManager(
-      eventStore: InMemoryEventStore[String, OrderState, OrderEvent],
+      eventStore: InMemoryEventStore[Int, OrderState, OrderEvent],
       commandStore: InMemoryCommandStore,
       logger: ConsoleLogger,
+      orderIdCounter: Ref[Int],
   ):
     import OrderState.*
     import OrderEvent.*
 
     private val orderDataRef = Unsafe.unsafe { implicit unsafe =>
-      Ref.unsafe.make(Map.empty[String, OrderData])
+      Ref.unsafe.make(Map.empty[Int, OrderData])
     }
 
-    private def createDefinition(orderId: String): FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
+    private def createDefinition(orderId: Int): FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
       OrderFSM.definition(
         onPaymentProcessing = enqueuePaymentCommand(orderId),
         onPaid = enqueueShippingCommands(orderId),
         onShipped = enqueueShippedNotification(orderId),
       )
 
-    private def enqueuePaymentCommand(orderId: String): ZIO[Any, Throwable, Unit] =
+    /** Get an FSM definition suitable for visualization.
+      * Uses a dummy orderId since the definition is only used for generating diagrams.
+      */
+    def getDefinitionForVisualization: FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
+      createDefinition(0)
+
+    private def enqueuePaymentCommand(orderId: Int): ZIO[Any, Throwable, Unit] =
       for
         dataOpt <- orderDataRef.get.map(_.get(orderId))
         data    <- ZIO.fromOption(dataOpt).orElseFail(new RuntimeException(s"Order data not found: $orderId"))
-        _       <- logger.fsm(s"${highlight(orderId)}: ${info("Created")} -> ${warning("PaymentProcessing")}")
+        _       <- logger.fsm(s"${highlight(s"Order-$orderId")}: ${info("Created")} -> ${warning("PaymentProcessing")}")
         _       <- commandStore.enqueue(
           orderId,
           PetStoreCommand.ProcessPayment(
@@ -467,11 +476,11 @@ object PetStoreApp extends ZIOAppDefault:
         )
       yield ()
 
-    private def enqueueShippingCommands(orderId: String): ZIO[Any, Throwable, Unit] =
+    private def enqueueShippingCommands(orderId: Int): ZIO[Any, Throwable, Unit] =
       for
         dataOpt <- orderDataRef.get.map(_.get(orderId))
         data    <- ZIO.fromOption(dataOpt).orElseFail(new RuntimeException(s"Order data not found: $orderId"))
-        _       <- logger.fsm(s"${highlight(orderId)}: ${warning("PaymentProcessing")} -> ${Colors.success("Paid")}")
+        _       <- logger.fsm(s"${highlight(s"Order-$orderId")}: ${warning("PaymentProcessing")} -> ${Colors.success("Paid")}")
         _       <- commandStore.enqueue(
           orderId,
           PetStoreCommand.RequestShipping(
@@ -497,11 +506,11 @@ object PetStoreApp extends ZIOAppDefault:
         )
       yield ()
 
-    private def enqueueShippedNotification(orderId: String): ZIO[Any, Throwable, Unit] =
+    private def enqueueShippedNotification(orderId: Int): ZIO[Any, Throwable, Unit] =
       for
         dataOpt <- orderDataRef.get.map(_.get(orderId))
         data    <- ZIO.fromOption(dataOpt).orElseFail(new RuntimeException(s"Order data not found: $orderId"))
-        _       <- logger.fsm(s"${highlight(orderId)}: ${info("ShippingRequested")} -> ${Colors.success("Shipped")}")
+        _       <- logger.fsm(s"${highlight(s"Order-$orderId")}: ${info("ShippingRequested")} -> ${Colors.success("Shipped")}")
         _       <- commandStore.enqueue(
           orderId,
           PetStoreCommand.SendNotification(
@@ -516,17 +525,17 @@ object PetStoreApp extends ZIOAppDefault:
         )
       yield ()
 
-    def createOrder(pet: Pet, customer: Customer): ZIO[Scope, Throwable | MechanoidError, String] =
+    def createOrder(pet: Pet, customer: Customer): ZIO[Scope, Throwable | MechanoidError, Int] =
       for
-        orderId       <- Random.nextUUID.map(u => s"ORD-${u.toString.take(8).toUpperCase}")
+        orderId       <- orderIdCounter.updateAndGet(_ + 1)
         correlationId <- Random.nextUUID.map(_.toString)
         messageId     <- Random.nextUUID.map(_.toString)
         data = OrderData(orderId, pet, customer, correlationId, messageId)
         _ <- orderDataRef.update(_ + (orderId -> data))
-        _ <- logger.system(s"${Bold}Creating new order: ${highlight(orderId)}$Reset")
+        _ <- logger.system(s"${Bold}Creating new order: ${highlight(s"Order-$orderId")}$Reset")
         _ <- logger.system(s"  Customer: ${info(customer.name)}")
         _ <- logger.system(s"  Pet: ${highlight(pet.name)} (${pet.species}) - ${Colors.success(s"$$${pet.price}")}")
-        storeLayer = ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore)
+        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
         definition = createDefinition(orderId)
         fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
         // Send rich event with actual payment details
@@ -535,27 +544,27 @@ object PetStoreApp extends ZIOAppDefault:
         _ <- fsm.send(initiateEvent)
       yield orderId
 
-    def sendEvent(orderId: String, event: OrderEvent): ZIO[Scope, Throwable | MechanoidError, Unit] =
+    def sendEvent(orderId: Int, event: OrderEvent): ZIO[Scope, Throwable | MechanoidError, Unit] =
       for
         _          <- logger.event(orderId, event)
-        storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore))
+        storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore))
         definition = createDefinition(orderId)
         fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
         _   <- fsm.send(event)
       yield ()
 
-    def getState(orderId: String): ZIO[Scope, MechanoidError, OrderState] =
+    def getState(orderId: Int): ZIO[Scope, MechanoidError, OrderState] =
       for
-        storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[String, OrderState, OrderEvent]](eventStore))
+        storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore))
         definition = createDefinition(orderId)
         fsm   <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
         state <- fsm.currentState
       yield state
 
-    def getOrderData(orderId: String): UIO[Option[OrderData]] =
+    def getOrderData(orderId: Int): UIO[Option[OrderData]] =
       orderDataRef.get.map(_.get(orderId))
 
-    def getAllOrderStates: ZIO[Any, MechanoidError, Map[String, OrderState]] =
+    def getAllOrderStates: ZIO[Any, MechanoidError, Map[Int, OrderState]] =
       for
         orderIds <- orderDataRef.get.map(_.keys.toList)
         states   <- ZIO.foreach(orderIds) { orderId =>
@@ -584,7 +593,7 @@ object PetStoreApp extends ZIOAppDefault:
       s"worker-${java.util.UUID.randomUUID().toString.take(8)}"
     }
 
-    def processCommand(cmd: PendingCommand[String, PetStoreCommand]): UIO[Unit] =
+    def processCommand(cmd: PendingCommand[Int, PetStoreCommand]): UIO[Unit] =
       val orderId = cmd.instanceId
       cmd.command match
         case PetStoreCommand.ProcessPayment(_, _, customerName, _, amount, method) =>
@@ -606,7 +615,7 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processPayment(
         cmdId: Long,
-        orderId: String,
+        orderId: Int,
         customerName: String,
         amount: BigDecimal,
         method: String,
@@ -627,7 +636,7 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processShipping(
         cmdId: Long,
-        orderId: String,
+        orderId: Int,
         petName: String,
         customerName: String,
         address: String,
@@ -651,7 +660,7 @@ object PetStoreApp extends ZIOAppDefault:
         }
 
     private def scheduleShippingCallback(
-        orderId: String,
+        orderId: Int,
         correlationId: String,
         shipment: ShipmentAccepted,
     ): ZIO[Any, Nothing, Unit] =
@@ -671,7 +680,7 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processNotification(
         cmdId: Long,
-        orderId: String,
+        orderId: Int,
         email: String,
         notifType: String,
         messageId: String,
@@ -691,7 +700,7 @@ object PetStoreApp extends ZIOAppDefault:
             store.complete(cmdId).unit
         }
 
-    private def scheduleNotificationCallback(orderId: String, messageId: String): ZIO[Any, Nothing, Unit] =
+    private def scheduleNotificationCallback(orderId: Int, messageId: String): ZIO[Any, Nothing, Unit] =
       for
         delay <- Random.nextIntBounded(500).map(_ + 250)
         _     <- ZIO.sleep(Duration.fromMillis(delay.toLong))
@@ -705,7 +714,7 @@ object PetStoreApp extends ZIOAppDefault:
 
     private def processShippingCallback(
         cmdId: Long,
-        orderId: String,
+        orderId: Int,
         @unused correlationId: String,
         tracking: String,
         carrier: String,
@@ -782,10 +791,61 @@ object PetStoreApp extends ZIOAppDefault:
           case OrderState.Shipped           => info(state.toString)
           case OrderState.Delivered         => Colors.success(s"Done ${state.toString}")
           case OrderState.Cancelled         => Colors.error(s"X ${state.toString}")
-        printLine(s"  ${highlight(orderId)}: $stateColor").orDie
+        printLine(s"  ${highlight(s"Order-$orderId")}: $stateColor").orDie
       }
       _ <- printLine(s"${Bold}=======================================================================$Reset").orDie
     yield ()
+
+  // ============================================
+  // Execution Trace Builder
+  // ============================================
+
+  private def buildExecutionTrace(
+      orderId: Int,
+      events: List[StoredEvent[Int, Timed[OrderEvent]]],
+      finalState: OrderState,
+  ): ExecutionTrace[OrderState, OrderEvent] =
+    import OrderState.*
+
+    // Reconstruct state transitions from events
+    val steps: List[TraceStep[OrderState, OrderEvent]] = events.zipWithIndex.flatMap { case (stored, idx) =>
+      stored.event match
+        case Timed.UserEvent(e) =>
+          val fromState = if idx == 0 then Created else getStateAfterEvent(events.take(idx))
+          val toState = getStateAfterEvent(events.take(idx + 1))
+          Some(TraceStep[OrderState, OrderEvent](
+            sequenceNumber = idx + 1,
+            from = fromState,
+            to = toState,
+            event = e,
+            timestamp = stored.timestamp,
+            isTimeout = false,
+          ))
+        case Timed.TimeoutEvent => None
+    }
+
+    ExecutionTrace[OrderState, OrderEvent](
+      instanceId = s"Order-$orderId",
+      initialState = Created,
+      currentState = finalState,
+      steps = steps,
+    )
+
+  private def getStateAfterEvent(events: List[StoredEvent[Int, Timed[OrderEvent]]]): OrderState =
+    import OrderState.*, OrderEvent.*
+    events.foldLeft[OrderState](Created) { (state, stored) =>
+      stored.event match
+        case Timed.UserEvent(e) =>
+          (state, e) match
+            case (Created, InitiatePayment(_, _))          => PaymentProcessing
+            case (PaymentProcessing, PaymentSucceeded(_))  => Paid
+            case (PaymentProcessing, PaymentFailed(_))     => Cancelled
+            case (Paid, RequestShipping(_))                => ShippingRequested
+            case (ShippingRequested, ShipmentDispatched(_, _, _)) => Shipped
+            case (Shipped, DeliveryConfirmed(_))           => Delivered
+            case _                                         => state
+        case _ => state
+    }
 
   // ============================================
   // Main Application
@@ -813,11 +873,12 @@ object PetStoreApp extends ZIOAppDefault:
       notificationService <- ZIO.service[NotificationService]
 
       // Create stores
-      commandStore <- InMemoryCommandStore.make
-      eventStore   <- ZIO.succeed(new InMemoryEventStore[String, OrderState, OrderEvent])
+      commandStore   <- InMemoryCommandStore.make
+      eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+      orderIdCounter <- Ref.make(0)
 
       // Create FSM manager
-      fsmManager <- ZIO.succeed(new OrderFSMManager(eventStore, commandStore, logger))
+      fsmManager <- ZIO.succeed(new OrderFSMManager(eventStore, commandStore, logger, orderIdCounter))
 
       // Create command processor with injected services
       processor <- ZIO.succeed(
@@ -850,6 +911,125 @@ object PetStoreApp extends ZIOAppDefault:
       _ <- displayStatus(commandStore, fsmManager)
 
       _ <- workerFiber.interrupt
+
+      // Write visualization files
+      _ <- printLine("").orDie
+      _ <- logger.system("Writing visualization files...")
+      vizDir = Paths.get("docs", "visualizations")
+      _ <- ZIO.attempt(Files.createDirectories(vizDir)).orDie
+
+      // Write FSM structure diagram - uses actual action functions for accurate visualization
+      fsmDef = fsmManager.getDefinitionForVisualization
+      // Map states to command types they trigger
+      stateCommands = Map(
+        OrderState.PaymentProcessing.ordinal -> List("ProcessPayment"),
+        OrderState.Paid.ordinal              -> List("RequestShipping", "SendNotification"),
+        OrderState.Shipped.ordinal           -> List("SendNotification"),
+      )
+      structureMermaid   = MermaidVisualizer.stateDiagramWithCommands(fsmDef, stateCommands, Some(OrderState.Created))
+      structureFlowchart = MermaidVisualizer.flowchartWithCommands(fsmDef, stateCommands)
+      structureGraphViz  = GraphVizVisualizer.digraph(fsmDef, initialState = Some(OrderState.Created))
+      _ <- ZIO.attempt {
+        Files.writeString(
+          vizDir.resolve("order-fsm-structure.md"),
+          s"""# Order FSM Structure
+             |
+             |## State Diagram with Commands (Mermaid)
+             |
+             |```mermaid
+             |$structureMermaid```
+             |
+             |## FSM + Commands Flowchart
+             |
+             |```mermaid
+             |$structureFlowchart```
+             |
+             |## GraphViz
+             |
+             |```dot
+             |$structureGraphViz```
+             |""".stripMargin
+        )
+      }.orDie
+
+      // Write execution traces for each order (with command details)
+      orderStates <- fsmManager.getAllOrderStates
+      allCommands <- commandStore.getAllCommands
+      commandNameFn = (cmd: PetStoreCommand) => cmd.redacted
+      _ <- ZIO.foreachDiscard(orderStates.toList.sortBy(_._1)) { case (orderId, finalState) =>
+        val events        = eventStore.getEvents(orderId)
+        val trace         = buildExecutionTrace(orderId, events, finalState)
+        val orderCommands = allCommands.filter(_.instanceId == orderId)
+
+        // Basic sequence diagram (FSM only)
+        val traceMermaid = MermaidVisualizer.sequenceDiagram(
+          trace,
+          summon[SealedEnum[OrderState]],
+          summon[SealedEnum[OrderEvent]]
+        )
+
+        // Enhanced sequence diagram with commands
+        val traceWithCommands = MermaidVisualizer.sequenceDiagramWithCommands(
+          trace,
+          summon[SealedEnum[OrderState]],
+          summon[SealedEnum[OrderEvent]],
+          orderCommands,
+          commandNameFn,
+        )
+
+        // Flowchart with path highlighting and command connections
+        val flowchart = MermaidVisualizer.flowchartWithCommands(fsmDef, stateCommands, Some(trace))
+
+        // Command summary for this order
+        val cmdSummary = orderCommands.groupBy(_.status).map { case (status, cmds) =>
+          s"- ${status}: ${cmds.size}"
+        }.mkString("\n")
+
+        ZIO.attempt {
+          Files.writeString(
+            vizDir.resolve(s"order-$orderId-trace.md"),
+            s"""# Order $orderId Execution Trace
+               |
+               |**Final State:** $finalState
+               |
+               |## Command Summary
+               |
+               |$cmdSummary
+               |
+               |## FSM + Commands Sequence Diagram
+               |
+               |```mermaid
+               |$traceWithCommands```
+               |
+               |## FSM-Only Sequence Diagram
+               |
+               |```mermaid
+               |$traceMermaid```
+               |
+               |## Flowchart with Commands
+               |
+               |```mermaid
+               |$flowchart```
+               |""".stripMargin
+          )
+        }.orDie
+      }
+
+      // Write command queue visualization (reuses allCommands from above)
+      cmdCounts <- commandStore.countByStatus
+      commandReport = CommandVisualizer.report(
+        commands = allCommands,
+        counts = cmdCounts,
+        commandName = _.redacted,
+        commandType = (cmd: PetStoreCommand) => cmd.getClass.getSimpleName.stripSuffix("$"),
+        title = "Pet Store Command Processing Report",
+      )
+      _ <- ZIO.attempt {
+        Files.writeString(vizDir.resolve("command-queue.md"), commandReport)
+      }.orDie
+
+      _ <- logger.system(s"Visualization files written to ${info("docs/visualizations/")}")
+
       _ <- printLine("").orDie
       _ <- printLine(s"${Bold}${Green}Demo complete! All orders processed.$Reset").orDie
     yield ()
