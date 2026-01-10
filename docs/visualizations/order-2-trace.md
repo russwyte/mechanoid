@@ -1,14 +1,15 @@
 # Order 2 Execution Trace
 
-**Final State:** Cancelled
+**Final State:** Shipped
 
 ## Command Summary
 
-- Failed: 1
+- Completed: 7
 
 ## FSM + Commands Sequence Diagram
 
 ```mermaid
+%%{init: {'themeCSS': '.noteText { text-align: left !important; }'}}%%
 sequenceDiagram
     participant FSM as Order-2
     participant CQ as CommandQueue
@@ -20,10 +21,38 @@ sequenceDiagram
     FSM->>CQ: enqueue(ProcessPayment)
     Note right of CQ: orderId=2<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>amount=25.0<br/>paymentMethod={redacted}
     CQ->>W: claim
-    W->>CQ: ❌ Failed
-    FSM->>FSM: PaymentFailed
-    Note over FSM: Cancelled
-    Note over FSM: Current: Cancelled
+    W->>CQ: ✅ Completed
+    FSM->>FSM: PaymentSucceeded
+    Note over FSM: Paid
+    FSM->>CQ: enqueue(RequestShipping)
+    Note right of CQ: orderId=2<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=5e5cc7f8-bc9f-4c84-9cae-729155aabf11
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
+    FSM->>CQ: enqueue(SendNotification)
+    Note right of CQ: orderId=2<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=213cf24d-6653-40e5-9e3b-0a5c99353e40
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
+    FSM->>FSM: RequestShipping
+    Note over FSM: ShippingRequested
+    FSM->>FSM: ShipmentDispatched
+    Note over FSM: Shipped
+    FSM->>CQ: enqueue(NotificationCallback)
+    Note right of CQ: messageId=213cf24d-6653-40e5-9e3b-0a5c99353e40<br/>delivered=true<br/>error=None
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
+    FSM->>CQ: enqueue(ShippingCallback)
+    Note right of CQ: correlationId=5e5cc7f8-bc9f-4c84-9cae-729155aabf11<br/>trackingNumber=TRACK-870952<br/>carrier=AnimalCare Logistics<br/>estimatedDelivery=4 business days<br/>success=true<br/>error=None
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
+    FSM->>CQ: enqueue(SendNotification)
+    Note right of CQ: orderId=2<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=shipped<br/>messageId=213cf24d-6653-40e5-9e3b-0a5c99353e40-shipped
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
+    FSM->>CQ: enqueue(NotificationCallback)
+    Note right of CQ: messageId=213cf24d-6653-40e5-9e3b-0a5c99353e40-shipped<br/>delivered=true<br/>error=None
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
+    Note over FSM: Current: Shipped
 ```
 
 ## FSM-Only Sequence Diagram
@@ -34,9 +63,13 @@ sequenceDiagram
     Note over FSM: Created
     FSM->>FSM: InitiatePayment
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentFailed
-    Note over FSM: Cancelled
-    Note over FSM: Current: Cancelled
+    FSM->>FSM: PaymentSucceeded
+    Note over FSM: Paid
+    FSM->>FSM: RequestShipping
+    Note over FSM: ShippingRequested
+    FSM->>FSM: ShipmentDispatched
+    Note over FSM: Shipped
+    Note over FSM: Current: Shipped
 ```
 
 ## Flowchart with Commands
@@ -79,7 +112,9 @@ flowchart TB
     style SendNotification fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
 
     style Created fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
+    style ShippingRequested fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style PaymentProcessing fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Cancelled fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Cancelled fill:#90EE90,stroke:#228B22,stroke-width:4px
+    style Shipped fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
+    style Paid fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
+    style Shipped fill:#90EE90,stroke:#228B22,stroke-width:4px
 ```

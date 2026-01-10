@@ -323,6 +323,8 @@ object MermaidVisualizer:
       commandName: Cmd => String,
   ): String =
     val sb = StringBuilder()
+    // Add CSS to left-align note text
+    sb.append("%%{init: {'themeCSS': '.noteText { text-align: left !important; }'}}%%\n")
     sb.append("sequenceDiagram\n")
     sb.append(s"    participant FSM as ${trace.instanceId}\n")
     sb.append("    participant CQ as CommandQueue\n")
