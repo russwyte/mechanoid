@@ -51,7 +51,7 @@ object CommandVisualizer:
 
     orderedStatuses.foreach { status =>
       val count = counts.getOrElse(status, 0L)
-      val icon = status match
+      val icon  = status match
         case CommandStatus.Pending    => "⏳"
         case CommandStatus.Processing => "⚙️"
         case CommandStatus.Completed  => "✅"
@@ -61,6 +61,7 @@ object CommandVisualizer:
     }
 
     sb.toString
+  end summaryTable
 
   /** Generate a detailed command list grouped by instance.
     *
@@ -100,6 +101,7 @@ object CommandVisualizer:
     }
 
     sb.toString
+  end commandList
 
   /** Generate a Mermaid flowchart showing command processing results.
     *
@@ -121,13 +123,13 @@ object CommandVisualizer:
     // Create nodes for each command type with emoji icons
     types.zipWithIndex.foreach { case (cmdType, idx) =>
       val shortName = cmdType.split('.').last
-      val icon = shortName.toLowerCase match
-        case n if n.contains("payment")      => "💳"
-        case n if n.contains("ship")         => "🚚"
-        case n if n.contains("notif")        => "📧"
-        case n if n.contains("callback")     => "🔄"
-        case n if n.contains("request")      => "📋"
-        case _                                => "⚡"
+      val icon      = shortName.toLowerCase match
+        case n if n.contains("payment")  => "💳"
+        case n if n.contains("ship")     => "🚚"
+        case n if n.contains("notif")    => "📧"
+        case n if n.contains("callback") => "🔄"
+        case n if n.contains("request")  => "📋"
+        case _                           => "⚡"
       sb.append(s"    cmd$idx[\"$icon $shortName\"]\n")
     }
 
@@ -159,6 +161,7 @@ object CommandVisualizer:
           sb.append(s"    style cmd$idx fill:#98FB98,stroke:#228B22,stroke-width:2px\n")
         case _ =>
           sb.append(s"    style cmd$idx fill:#F0E68C,stroke:#BDB76B,stroke-width:2px\n")
+      end match
     }
     sb.append("\n")
 
@@ -178,6 +181,7 @@ object CommandVisualizer:
     }
 
     sb.toString
+  end flowchart
 
   /** Generate a Mermaid sequence diagram showing command execution flow.
     *
@@ -223,9 +227,12 @@ object CommandVisualizer:
             sb.append(s"    W->>Q: skip ⏭️\n")
           case _ => // pending/processing - still in flight
             sb.append(s"    Note over W: processing...\n")
+        end match
+      end if
     }
 
     sb.toString
+  end sequenceDiagram
 
   /** Generate a Mermaid Gantt chart showing command execution timeline.
     *
@@ -251,17 +258,18 @@ object CommandVisualizer:
         val name      = commandName(cmd.command).take(20)
         val startTime = formatTime(cmd.enqueuedAt)
         val endTime   = cmd.lastAttemptAt.map(formatTime).getOrElse(startTime)
-        val status = cmd.status match
+        val status    = cmd.status match
           case CommandStatus.Completed => "done"
           case CommandStatus.Failed    => "crit"
           case CommandStatus.Skipped   => "done"
-          case _                        => "active"
+          case _                       => "active"
 
         sb.append(s"    $name :$status, $startTime, $endTime\n")
       }
     }
 
     sb.toString
+  end ganttChart
 
   /** Generate a complete markdown report of command processing.
     *
@@ -294,6 +302,7 @@ object CommandVisualizer:
     sb.append(commandList(commands, commandName, config))
 
     sb.toString
+  end report
 
   private def statusToIcon(status: CommandStatus): String = status match
     case CommandStatus.Pending    => "⏳"

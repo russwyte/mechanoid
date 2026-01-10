@@ -71,6 +71,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       guard.isDefined,
     )
     definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end goto
 
   /** Stay in the current state (no transition). */
   def stay: FSMDefinition[S, E, R, Err] =
@@ -86,6 +87,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       guard.isDefined,
     )
     definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end stay
 
   /** Stop the FSM. */
   def stop: FSMDefinition[S, E, R, Err] =
@@ -102,6 +104,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       Some("stop"),
     )
     definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end stop
 
   /** Stop the FSM with a reason. */
   def stop(reason: String): FSMDefinition[S, E, R, Err] =
@@ -118,11 +121,12 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       Some(s"stop: $reason"),
     )
     definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end stop
 
   /** Execute an effectful action that determines the transition result.
     *
-    * The action can perform side effects and return any TransitionResult.
-    * Note: Target state is not known at compile time for dynamic transitions.
+    * The action can perform side effects and return any TransitionResult. Note: Target state is not known at compile
+    * time for dynamic transitions.
     */
   def execute[R1 <: R, Err1 >: Err](action: ZIO[R1, Err1, TransitionResult[S]]): FSMDefinition[S, E, R1, Err1] =
     val transition = Transition[S, Timed[E], S, R1, Err1](
@@ -137,7 +141,10 @@ final class TransitionBuilder[S <: MState, E <: MEvent, R, Err](
       guard.isDefined,
       Some("dynamic"),
     )
-    definition.asInstanceOf[FSMDefinition[S, E, R1, Err1]].addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+    definition
+      .asInstanceOf[FSMDefinition[S, E, R1, Err1]]
+      .addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end execute
 
   /** Execute an effectful action and then transition to a target state. */
   def executing[R1 <: R, Err1 >: Err](action: ZIO[R1, Err1, Unit]): ExecutingBuilder[S, E, R1, Err1] =
@@ -175,6 +182,7 @@ final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
       guard.isDefined,
     )
     definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end goto
 
   /** After executing the action, stay in the current state. */
   def stay: FSMDefinition[S, E, R, Err] =
@@ -190,4 +198,5 @@ final class ExecutingBuilder[S <: MState, E <: MEvent, R, Err](
       guard.isDefined,
     )
     definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+  end stay
 end ExecutingBuilder

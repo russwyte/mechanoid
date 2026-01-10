@@ -31,14 +31,14 @@ object ExpressionName:
       else symbol.fullName
 
     def extractSimpleName(term: Term): String = term match
-      case Apply(inner, _)      => extractSimpleName(inner)
-      case Select(_, name)      => name
-      case Ident(name)          => name
-      case TypeApply(inner, _)  => extractSimpleName(inner)
-      case Block(_, expr)       => extractSimpleName(expr)
-      case Typed(expr, _)       => extractSimpleName(expr)
-      case Inlined(_, _, expr)  => extractSimpleName(expr)
-      case _                    =>
+      case Apply(inner, _)     => extractSimpleName(inner)
+      case Select(_, name)     => name
+      case Ident(name)         => name
+      case TypeApply(inner, _) => extractSimpleName(inner)
+      case Block(_, expr)      => extractSimpleName(expr)
+      case Typed(expr, _)      => extractSimpleName(expr)
+      case Inlined(_, _, expr) => extractSimpleName(expr)
+      case _                   =>
         val full = term.show(using Printer.TreeShortCode)
         if full.length > 60 then full.take(60) + "..." else full
 
@@ -74,4 +74,5 @@ object ExpressionName:
         if full.length > 60 then full.take(60) + "..." else full
 
     Expr(extractName(expr.asTerm))
+  end extractNameImpl
 end ExpressionName

@@ -451,8 +451,8 @@ object PetStoreApp extends ZIOAppDefault:
         onShipped = enqueueShippedNotification(orderId),
       )
 
-    /** Get an FSM definition suitable for visualization.
-      * Uses a dummy orderId since the definition is only used for generating diagrams.
+    /** Get an FSM definition suitable for visualization. Uses a dummy orderId since the definition is only used for
+      * generating diagrams.
       */
     def getDefinitionForVisualization: FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
       createDefinition(0)
@@ -480,8 +480,10 @@ object PetStoreApp extends ZIOAppDefault:
       for
         dataOpt <- orderDataRef.get.map(_.get(orderId))
         data    <- ZIO.fromOption(dataOpt).orElseFail(new RuntimeException(s"Order data not found: $orderId"))
-        _       <- logger.fsm(s"${highlight(s"Order-$orderId")}: ${warning("PaymentProcessing")} -> ${Colors.success("Paid")}")
-        _       <- commandStore.enqueue(
+        _       <- logger.fsm(
+          s"${highlight(s"Order-$orderId")}: ${warning("PaymentProcessing")} -> ${Colors.success("Paid")}"
+        )
+        _ <- commandStore.enqueue(
           orderId,
           PetStoreCommand.RequestShipping(
             orderId,
@@ -510,8 +512,10 @@ object PetStoreApp extends ZIOAppDefault:
       for
         dataOpt <- orderDataRef.get.map(_.get(orderId))
         data    <- ZIO.fromOption(dataOpt).orElseFail(new RuntimeException(s"Order data not found: $orderId"))
-        _       <- logger.fsm(s"${highlight(s"Order-$orderId")}: ${info("ShippingRequested")} -> ${Colors.success("Shipped")}")
-        _       <- commandStore.enqueue(
+        _       <- logger.fsm(
+          s"${highlight(s"Order-$orderId")}: ${info("ShippingRequested")} -> ${Colors.success("Shipped")}"
+        )
+        _ <- commandStore.enqueue(
           orderId,
           PetStoreCommand.SendNotification(
             orderId,
@@ -812,15 +816,17 @@ object PetStoreApp extends ZIOAppDefault:
       stored.event match
         case Timed.UserEvent(e) =>
           val fromState = if idx == 0 then Created else getStateAfterEvent(events.take(idx))
-          val toState = getStateAfterEvent(events.take(idx + 1))
-          Some(TraceStep[OrderState, OrderEvent](
-            sequenceNumber = idx + 1,
-            from = fromState,
-            to = toState,
-            event = e,
-            timestamp = stored.timestamp,
-            isTimeout = false,
-          ))
+          val toState   = getStateAfterEvent(events.take(idx + 1))
+          Some(
+            TraceStep[OrderState, OrderEvent](
+              sequenceNumber = idx + 1,
+              from = fromState,
+              to = toState,
+              event = e,
+              timestamp = stored.timestamp,
+              isTimeout = false,
+            )
+          )
         case Timed.TimeoutEvent => None
     }
 
@@ -830,6 +836,7 @@ object PetStoreApp extends ZIOAppDefault:
       currentState = finalState,
       steps = steps,
     )
+  end buildExecutionTrace
 
   private def getStateAfterEvent(events: List[StoredEvent[Int, Timed[OrderEvent]]]): OrderState =
     import OrderState.*, OrderEvent.*
@@ -837,15 +844,16 @@ object PetStoreApp extends ZIOAppDefault:
       stored.event match
         case Timed.UserEvent(e) =>
           (state, e) match
-            case (Created, InitiatePayment(_, _))          => PaymentProcessing
-            case (PaymentProcessing, PaymentSucceeded(_))  => Paid
-            case (PaymentProcessing, PaymentFailed(_))     => Cancelled
-            case (Paid, RequestShipping(_))                => ShippingRequested
+            case (Created, InitiatePayment(_, _))                 => PaymentProcessing
+            case (PaymentProcessing, PaymentSucceeded(_))         => Paid
+            case (PaymentProcessing, PaymentFailed(_))            => Cancelled
+            case (Paid, RequestShipping(_))                       => ShippingRequested
             case (ShippingRequested, ShipmentDispatched(_, _, _)) => Shipped
-            case (Shipped, DeliveryConfirmed(_))           => Delivered
-            case _                                         => state
+            case (Shipped, DeliveryConfirmed(_))                  => Delivered
+            case _                                                => state
         case _ => state
     }
+  end getStateAfterEvent
 
   // ============================================
   // Main Application
@@ -948,7 +956,7 @@ object PetStoreApp extends ZIOAppDefault:
              |
              |```dot
              |$structureGraphViz```
-             |""".stripMargin
+             |""".stripMargin,
         )
       }.orDie
 
@@ -965,7 +973,7 @@ object PetStoreApp extends ZIOAppDefault:
         val traceMermaid = MermaidVisualizer.sequenceDiagram(
           trace,
           summon[SealedEnum[OrderState]],
-          summon[SealedEnum[OrderEvent]]
+          summon[SealedEnum[OrderEvent]],
         )
 
         // Enhanced sequence diagram with commands
@@ -981,9 +989,12 @@ object PetStoreApp extends ZIOAppDefault:
         val flowchart = MermaidVisualizer.flowchartWithCommands(fsmDef, stateCommands, Some(trace))
 
         // Command summary for this order
-        val cmdSummary = orderCommands.groupBy(_.status).map { case (status, cmds) =>
-          s"- ${status}: ${cmds.size}"
-        }.mkString("\n")
+        val cmdSummary = orderCommands
+          .groupBy(_.status)
+          .map { case (status, cmds) =>
+            s"- ${status}: ${cmds.size}"
+          }
+          .mkString("\n")
 
         ZIO.attempt {
           Files.writeString(
@@ -1010,7 +1021,7 @@ object PetStoreApp extends ZIOAppDefault:
                |
                |```mermaid
                |$flowchart```
-               |""".stripMargin
+               |""".stripMargin,
           )
         }.orDie
       }

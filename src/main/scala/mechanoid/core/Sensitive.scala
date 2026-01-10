@@ -4,8 +4,8 @@ import scala.annotation.StaticAnnotation
 
 /** Marks fields containing sensitive data (PII) that should be redacted in visualizations.
   *
-  * When applied to a constructor parameter, that field's value will be shown as `{redacted}` instead of the actual value
-  * when using `Redactor.redact()`.
+  * When applied to a constructor parameter, that field's value will be shown as `{redacted}` instead of the actual
+  * value when using `Redactor.redact()`.
   *
   * Usage:
   * {{{
