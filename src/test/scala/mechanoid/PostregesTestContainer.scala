@@ -58,13 +58,16 @@ object PostgresTestContainer:
       ds.setPassword(container.postgres.getPassword())
       ds
 
+    def makeConnectionProvider(container: PostgresTestContainer): ConnectionProvider =
+      ConnectionProvider.FromDataSource(makeDataSource(container))
+
     val datasource: URLayer[PostgresTestContainer, DataSource] =
-      ZLayer.scoped[PostgresTestContainer] {
-        ZIO.service[PostgresTestContainer].map(makeDataSource)
-      }
-    val provider: ZLayer[PostgresTestContainer, Nothing, ConnectionProvider] =
-      datasource >>> ConnectionProvider.FromDataSource.layer
-    val default: ZLayer[Any, Nothing, ConnectionProvider] =
+      ZLayer.derive[DataSourceProvider].map(env => ZEnvironment(env.get.dataSource))
+
+    val provider =
+      ZLayer.fromFunction(makeConnectionProvider)
+
+    val default =
       PostgresTestContainer.default >>> provider
   end DataSourceProvider
 end PostgresTestContainer

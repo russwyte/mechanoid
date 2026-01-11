@@ -5,6 +5,7 @@ import zio.Console.printLine
 import mechanoid.*
 import mechanoid.core.Timed
 import mechanoid.persistence.*
+import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.command.*
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -433,7 +434,7 @@ object PetStoreApp extends ZIOAppDefault:
 
   /** Manages Order FSM instances and coordinates with command processing. */
   class OrderFSMManager(
-      eventStore: InMemoryEventStore[Int, OrderState, OrderEvent],
+      eventStore: SimpleEventStore[Int, OrderState, OrderEvent],
       commandStore: InMemoryCommandStore,
       logger: ConsoleLogger,
       orderIdCounter: Ref[Int],
@@ -445,7 +446,7 @@ object PetStoreApp extends ZIOAppDefault:
       Ref.unsafe.make(Map.empty[Int, OrderData])
     }
 
-    private def createDefinition(orderId: Int): FSMDefinition[OrderState, OrderEvent] =
+    private def createDefinition(orderId: Int): FSMDefinition[OrderState, OrderEvent, Nothing] =
       OrderFSM.definition(
         onPaymentProcessing = enqueuePaymentCommand(orderId),
         onPaid = enqueueShippingCommands(orderId),
@@ -455,7 +456,7 @@ object PetStoreApp extends ZIOAppDefault:
     /** Get an FSM definition suitable for visualization. Uses a dummy orderId since the definition is only used for
       * generating diagrams.
       */
-    def getDefinitionForVisualization: FSMDefinition[OrderState, OrderEvent] =
+    def getDefinitionForVisualization: FSMDefinition[OrderState, OrderEvent, Nothing] =
       createDefinition(0)
 
     private def enqueuePaymentCommand(orderId: Int): ZIO[Any, Throwable, Unit] =
@@ -542,7 +543,7 @@ object PetStoreApp extends ZIOAppDefault:
         _ <- logger.system(s"  Pet: ${highlight(pet.name)} (${pet.species}) - ${Colors.success(s"$$${pet.price}")}")
         storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
         definition = createDefinition(orderId)
-        fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+        fsm <- FSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
         // Send rich event with actual payment details
         initiateEvent = InitiatePayment(pet.price, "Visa ****4242")
         _ <- logger.event(orderId, initiateEvent)
@@ -554,7 +555,7 @@ object PetStoreApp extends ZIOAppDefault:
         _          <- logger.event(orderId, event)
         storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore))
         definition = createDefinition(orderId)
-        fsm <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+        fsm <- FSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
         _   <- fsm.send(event)
       yield ()
 
@@ -562,7 +563,7 @@ object PetStoreApp extends ZIOAppDefault:
       for
         storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore))
         definition = createDefinition(orderId)
-        fsm   <- PersistentFSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
+        fsm   <- FSMRuntime(orderId, definition, Created).provideSomeLayer[Scope](storeLayer)
         state <- fsm.currentState
       yield state
 
@@ -883,7 +884,7 @@ object PetStoreApp extends ZIOAppDefault:
 
       // Create stores
       commandStore   <- InMemoryCommandStore.make
-      eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+      eventStore     <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
       orderIdCounter <- Ref.make(0)
 
       // Create FSM manager

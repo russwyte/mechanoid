@@ -58,9 +58,9 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 | Component | Description |
 |-----------|-------------|
 | `fsm[S, E]` | Entry point for defining state machines |
-| `FSMDefinition[S, E]` | Builder type for FSM definitions |
-| `FSMRuntime` | In-memory FSM execution |
-| `PersistentFSMRuntime` | Event-sourced FSM with persistence |
+| `fsm.withCommands[S, E, Cmd]` | Entry point for FSMs with commands |
+| `FSMDefinition[S, E, Cmd]` | Builder type for FSM definitions |
+| `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
 | `TimeoutSweeper` | Background service for durable timeouts |
 | `FSMInstanceLock` | Distributed locking for exactly-once transitions |
 | `LeaderElection` | Lease-based coordination for single-active mode |
@@ -69,11 +69,11 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 ## Example with Persistence
 
 ```scala
-import mechanoid.persistence.*
+import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime(orderId, orderDefinition, Pending)
+    fsm <- FSMRuntime(orderId, orderDefinition, Pending)
     _   <- fsm.send(Pay)      // Persisted to EventStore
     _   <- fsm.saveSnapshot   // Optional: snapshot for faster recovery
   yield ()
@@ -83,6 +83,7 @@ val program = ZIO.scoped {
 ## Example with Durable Timeouts
 
 ```scala
+import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 
 // FSM with timeout that survives node failures
@@ -92,7 +93,7 @@ val definition = fsm[State, Event]
 
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withDurableTimeouts(id, definition, Pending)
+    fsm <- FSMRuntime.withDurableTimeouts(id, definition, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout persisted - another node's sweeper will fire it if this node dies
   yield ()
@@ -111,12 +112,13 @@ val sweeper = TimeoutSweeper.make(
 ## Example with Distributed Locking
 
 ```scala
+import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.lock.*
 
 // Exactly-once transitions across multiple nodes
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withLocking(orderId, definition, Pending)
+    fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
     _   <- fsm.send(Pay)  // Lock acquired automatically
   yield ()
 }.provide(eventStoreLayer, lockLayer)
@@ -124,7 +126,7 @@ val program = ZIO.scoped {
 // Combine with durable timeouts for maximum robustness
 val robustProgram = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withLockingAndTimeouts(
+    fsm <- FSMRuntime.withLockingAndTimeouts(
       orderId, definition, Pending, LockConfig.default
     )
     _   <- fsm.send(StartPayment)

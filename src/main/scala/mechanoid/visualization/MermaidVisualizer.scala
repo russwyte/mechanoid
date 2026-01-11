@@ -18,8 +18,8 @@ object MermaidVisualizer:
     *     Processing --> Completed: FinishEvent
     * ```
     */
-  def stateDiagram[S <: MState, E <: MEvent](
-      fsm: FSMDefinition[S, E],
+  def stateDiagram[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       initialState: Option[S] = None,
   ): String =
     val sb = StringBuilder()
@@ -128,8 +128,8 @@ object MermaidVisualizer:
     *     style Completed fill:#90EE90
     * ```
     */
-  def flowchart[S <: MState, E <: MEvent](
-      fsm: FSMDefinition[S, E],
+  def flowchart[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =
     val sb = StringBuilder()
@@ -233,7 +233,7 @@ object MermaidVisualizer:
     * Shows which commands are triggered when entering each state.
     */
   def stateDiagramWithCommands[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E],
+      fsm: FSMDefinition[S, E, Cmd],
       stateCommands: Map[Int, List[String]], // stateOrdinal -> command type names
       initialState: Option[S] = None,
   ): String =
@@ -390,8 +390,8 @@ object MermaidVisualizer:
     *
     * Shows states in one lane and commands in another, with connections.
     */
-  def flowchartWithCommands[S <: MState, E <: MEvent](
-      fsm: FSMDefinition[S, E],
+  def flowchartWithCommands[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       stateCommands: Map[Int, List[String]], // stateOrdinal -> command type names
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =

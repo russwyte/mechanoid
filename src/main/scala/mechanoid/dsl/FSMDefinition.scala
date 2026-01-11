@@ -20,10 +20,12 @@ import scala.annotation.publicInBinary
   *   The state type (must extend MState)
   * @tparam E
   *   The event type (must extend MEvent)
+  * @tparam Cmd
+  *   The command type for side effects (use Nothing for FSMs without commands)
   */
-final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mechanoid] (
+final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private[mechanoid] (
     private[mechanoid] val transitions: Map[(Int, Int), Transition[S, Timed[E], S]],
-    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S]],
+    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, Cmd]],
     private[mechanoid] val timeouts: Map[Int, Duration],
     private[mechanoid] val transitionMeta: List[TransitionMeta] = List.empty,
 )(using
@@ -42,14 +44,14 @@ final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mech
     * The state's shape (which case it is) is used for matching, not its exact value. For example, `.when(Failed(""))`
     * will match any `Failed(_)` state.
     */
-  def when(state: S): WhenBuilder[S, E] =
+  def when(state: S): WhenBuilder[S, E, Cmd] =
     new WhenBuilder(this, state.fsmOrdinal)
 
   /** Define entry/exit actions for a state.
     *
     * The state's shape is used for matching, so actions defined for `Failed("")` will run for any `Failed(_)`.
     */
-  def onState(state: S): StateBuilder[S, E] =
+  def onState(state: S): StateBuilder[S, E, Cmd] =
     new StateBuilder(this, state.fsmOrdinal)
 
   /** Set a timeout for a state.
@@ -57,7 +59,7 @@ final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mech
     * When the FSM is in this state and no event is received within the duration, a Timeout event will be automatically
     * sent. The state's shape is used for matching.
     */
-  def withTimeout(state: S, duration: Duration): FSMDefinition[S, E] =
+  def withTimeout(state: S, duration: Duration): FSMDefinition[S, E, Cmd] =
     new FSMDefinition(
       transitions,
       lifecycles,
@@ -70,7 +72,7 @@ final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mech
       fromOrdinal: Int,
       event: Timed[E],
       transition: Transition[S, Timed[E], S],
-  ): FSMDefinition[S, E] =
+  ): FSMDefinition[S, E, Cmd] =
     new FSMDefinition(
       transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
       lifecycles,
@@ -84,7 +86,7 @@ final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mech
       event: Timed[E],
       transition: Transition[S, Timed[E], S],
       meta: TransitionMeta,
-  ): FSMDefinition[S, E] =
+  ): FSMDefinition[S, E, Cmd] =
     new FSMDefinition(
       transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
       lifecycles,
@@ -95,9 +97,9 @@ final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mech
   /** Update lifecycle for a state. */
   private[dsl] def updateLifecycle(
       stateOrd: Int,
-      f: StateLifecycle[S] => StateLifecycle[S],
-  ): FSMDefinition[S, E] =
-    val current = lifecycles.getOrElse(stateOrd, StateLifecycle.empty)
+      f: StateLifecycle[S, Cmd] => StateLifecycle[S, Cmd],
+  ): FSMDefinition[S, E, Cmd] =
+    val current = lifecycles.getOrElse(stateOrd, StateLifecycle.empty[S, Cmd])
     new FSMDefinition(
       transitions,
       lifecycles + (stateOrd -> f(current)),
@@ -106,13 +108,17 @@ final class FSMDefinition[S <: MState, E <: MEvent] @publicInBinary private[mech
     )
   end updateLifecycle
 
-  /** Build and start the FSM runtime with the given initial state. */
-  def build(initial: S): ZIO[Scope, Nothing, FSMRuntime[S, E]] =
+  /** Build and start the FSM runtime with the given initial state.
+    *
+    * Creates an in-memory FSM runtime suitable for testing or single-process use. For distributed/persistent FSMs, use
+    * `FSMRuntime.apply` or `FSMRuntime.withLocking` directly.
+    */
+  def build(initial: S): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E, Cmd]] =
     FSMRuntime.make(this, initial)
 end FSMDefinition
 
 object FSMDefinition:
-  /** Create a new FSM definition.
+  /** Create a new FSM definition without commands.
     *
     * Uses compile-time derivation to extract state and event ordinals, enabling rich types (case classes with data) to
     * work correctly.
@@ -125,6 +131,21 @@ object FSMDefinition:
     * @tparam E
     *   The event type (must be sealed)
     */
-  def apply[S <: MState: SealedEnum, E <: MEvent: SealedEnum]: FSMDefinition[S, E] =
+  def apply[S <: MState: SealedEnum, E <: MEvent: SealedEnum]: FSMDefinition[S, E, Nothing] =
+    new FSMDefinition(Map.empty, Map.empty, Map.empty)
+
+  /** Create a new FSM definition with commands.
+    *
+    * Commands enable the transactional outbox pattern for reliable side effect execution. Use
+    * `.onState(s).enqueue(...)` to declaratively specify which commands to enqueue when entering a state.
+    *
+    * @tparam S
+    *   The state type (must be sealed)
+    * @tparam E
+    *   The event type (must be sealed)
+    * @tparam Cmd
+    *   The command type for side effects
+    */
+  def withCommands[S <: MState: SealedEnum, E <: MEvent: SealedEnum, Cmd]: FSMDefinition[S, E, Cmd] =
     new FSMDefinition(Map.empty, Map.empty, Map.empty)
 end FSMDefinition

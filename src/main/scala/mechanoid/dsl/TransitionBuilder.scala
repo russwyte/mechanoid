@@ -13,16 +13,18 @@ import mechanoid.visualization.{TransitionMeta, TransitionKind}
   *   The state type
   * @tparam E
   *   The event type
+  * @tparam Cmd
+  *   The command type
   */
-final class TransitionBuilder[S <: MState, E <: MEvent](
-    private val definition: FSMDefinition[S, E],
+final class TransitionBuilder[S <: MState, E <: MEvent, Cmd](
+    private val definition: FSMDefinition[S, E, Cmd],
     private val fromStateOrdinal: Int,
     private val event: Timed[E],
 ):
   private val eventOrdinal: Int = definition.eventEnum.ordinal(event)
 
   /** Transition to the specified target state. */
-  def goto(targetState: S): FSMDefinition[S, E] =
+  def goto(targetState: S): FSMDefinition[S, E, Cmd] =
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Goto(targetState))
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
@@ -35,7 +37,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent](
   end goto
 
   /** Stay in the current state (no transition). */
-  def stay: FSMDefinition[S, E] =
+  def stay: FSMDefinition[S, E, Cmd] =
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Stay)
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
@@ -48,7 +50,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent](
   end stay
 
   /** Stop the FSM. */
-  def stop: FSMDefinition[S, E] =
+  def stop: FSMDefinition[S, E, Cmd] =
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Stop(None))
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
@@ -61,7 +63,7 @@ final class TransitionBuilder[S <: MState, E <: MEvent](
   end stop
 
   /** Stop the FSM with a reason. */
-  def stop(reason: String): FSMDefinition[S, E] =
+  def stop(reason: String): FSMDefinition[S, E, Cmd] =
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Stop(Some(reason)))
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(

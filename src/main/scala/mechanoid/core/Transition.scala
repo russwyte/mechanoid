@@ -38,25 +38,30 @@ object Transition:
   *
   * @tparam S
   *   The state type
+  * @tparam Cmd
+  *   The command type for this FSM
   * @param onEntry
   *   Action to execute when entering this state
   * @param onExit
   *   Action to execute when exiting this state
+  * @param commandFactory
+  *   Factory to produce commands when entering this state (for transactional outbox pattern)
   * @param onEntryDescription
   *   Human-readable description of entry action (for visualization)
   * @param onExitDescription
   *   Human-readable description of exit action (for visualization)
   */
-final case class StateLifecycle[-S <: MState](
+final case class StateLifecycle[-S <: MState, +Cmd](
     onEntry: Option[ZIO[Any, MechanoidError, Unit]] = None,
     onExit: Option[ZIO[Any, MechanoidError, Unit]] = None,
+    commandFactory: Option[S => List[Cmd]] = None,
     onEntryDescription: Option[String] = None,
     onExitDescription: Option[String] = None,
 )
 
 object StateLifecycle:
-  def empty[S <: MState]: StateLifecycle[S] =
-    StateLifecycle(None, None, None, None)
+  def empty[S <: MState, Cmd]: StateLifecycle[S, Cmd] =
+    StateLifecycle(None, None, None, None, None)
 
 /** Timeout configuration for a state.
   *

@@ -17,7 +17,7 @@ object VisualizationSpec extends ZIOSpecDefault:
     case Finish
     case Error(reason: String) extends TestEvent
 
-  val testFSM: FSMDefinition[TestState, TestEvent] =
+  val testFSM: FSMDefinition[TestState, TestEvent, Nothing] =
     import TestState.*, TestEvent.*
     fsm[TestState, TestEvent]
       .when(Idle)

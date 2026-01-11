@@ -32,7 +32,7 @@ object PetStoreSpec extends ZIOSpecDefault:
   def fsmSuite = suite("Order FSM")(
     test("basic state transitions") {
       for
-        eventStore <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         orderId    = 1
         definition = OrderFSM.definition(
           onPaymentProcessing = ZIO.unit,
@@ -54,7 +54,7 @@ object PetStoreSpec extends ZIOSpecDefault:
     },
     test("full order lifecycle") {
       for
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         transitionsRef <- Ref.make(List.empty[String])
 
         orderId    = 2
@@ -87,7 +87,7 @@ object PetStoreSpec extends ZIOSpecDefault:
     },
     test("payment failure cancels order") {
       for
-        eventStore <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         orderId    = 3
         definition = OrderFSM.definition(
           onPaymentProcessing = ZIO.unit,
@@ -109,7 +109,7 @@ object PetStoreSpec extends ZIOSpecDefault:
     },
     test("event store captures rich event data") {
       for
-        eventStore <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         orderId    = 4
         definition = OrderFSM.definition(
           onPaymentProcessing = ZIO.unit,
@@ -314,12 +314,12 @@ object PetStoreSpec extends ZIOSpecDefault:
   /** Simple command processor for testing */
   class TestCommandProcessor(
       store: TestCommandStore,
-      eventStore: InMemoryEventStore[Int, OrderState, OrderEvent],
+      eventStore: SimpleEventStore[Int, OrderState, OrderEvent],
       paymentProcessor: PaymentProcessor,
       shipper: Shipper,
       notificationService: NotificationService,
       orderDataRef: Ref[Map[Int, OrderData]],
-      definitionsRef: Ref[Map[Int, FSMDefinition[OrderState, OrderEvent]]],
+      definitionsRef: Ref[Map[Int, FSMDefinition[OrderState, OrderEvent, Nothing]]],
   ):
     def processCommand(cmd: PendingCommand[Int, PetStoreCommand]): UIO[Unit] =
       val orderId = cmd.instanceId
@@ -433,10 +433,10 @@ object PetStoreSpec extends ZIOSpecDefault:
         _ <- TestRandom.setSeed(12345L)
 
         // Create stores
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
         orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
-        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent]])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Nothing]])
 
         // Create services with 100% success for deterministic test
         paymentProcessor = PaymentProcessor.make(
@@ -549,10 +549,10 @@ object PetStoreSpec extends ZIOSpecDefault:
       for
         _ <- TestRandom.setSeed(67890L)
 
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
         orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
-        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent]])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Nothing]])
 
         paymentProcessor = PaymentProcessor.make(
           PaymentProcessor.Config(successRate = 1.0, minDelayMs = 1, maxDelayMs = 2)
@@ -636,10 +636,10 @@ object PetStoreSpec extends ZIOSpecDefault:
       for
         _ <- TestRandom.setSeed(11111L)
 
-        eventStore     <- ZIO.succeed(new InMemoryEventStore[Int, OrderState, OrderEvent])
+        eventStore     <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
         commandStore   <- ZIO.succeed(new TestCommandStore)
         orderDataRef   <- Ref.make(Map.empty[Int, OrderData])
-        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent]])
+        definitionsRef <- Ref.make(Map.empty[Int, FSMDefinition[OrderState, OrderEvent, Nothing]])
 
         // Payment processor that always fails (0% success)
         paymentProcessor = PaymentProcessor.make(

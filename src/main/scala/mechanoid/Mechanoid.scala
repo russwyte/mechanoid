@@ -41,7 +41,6 @@ export typelevel.TransitionSpecBuilder
 export persistence.StoredEvent
 export persistence.FSMSnapshot
 export persistence.EventStore
-export persistence.PersistentFSMRuntime
 export core.PersistenceError
 export core.SequenceConflictError
 export core.EventReplayError
@@ -62,7 +61,18 @@ export core.Redactor
 export core.Redactor.redacted
 export core.Redactor.redactedPretty
 
-/** Create a new FSM definition.
+// Re-export command types
+export core.PendingCommand
+export core.CommandStatus
+export core.CommandResult
+
+// Re-export in-memory stores
+export stores.InMemoryEventStore
+export stores.InMemoryCommandStore
+export stores.InMemoryTimeoutStore
+export stores.InMemoryFSMInstanceLock
+
+/** Create a new FSM definition without commands.
   *
   * This is the primary entry point for defining FSMs with a fluent DSL:
   *
@@ -74,5 +84,20 @@ export core.Redactor.redactedPretty
   *   .when(Running).on(Stop).goto(Idle)
   * }}}
   */
-def fsm[S <: MState: SealedEnum, E <: MEvent: SealedEnum]: FSMDefinition[S, E] =
+def fsm[S <: MState: SealedEnum, E <: MEvent: SealedEnum]: FSMDefinition[S, E, Nothing] =
   FSMDefinition[S, E]
+
+/** Create a new FSM definition with commands.
+  *
+  * Commands enable the transactional outbox pattern for reliable side effect execution:
+  *
+  * {{{
+  * import mechanoid.*
+  *
+  * val myFSM = fsm[MyState, MyEvent, MyCommand]
+  *   .when(Idle).on(Start).goto(Running)
+  *   .onState(Running).enqueue(_ => NotifySystem).done
+  * }}}
+  */
+def fsmWithCommands[S <: MState: SealedEnum, E <: MEvent: SealedEnum, Cmd]: FSMDefinition[S, E, Cmd] =
+  FSMDefinition.withCommands[S, E, Cmd]

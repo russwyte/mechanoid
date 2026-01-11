@@ -62,7 +62,7 @@ object OrderFSM:
       inline onPaymentProcessing: ZIO[Any, Throwable, Unit],
       inline onPaid: ZIO[Any, Throwable, Unit],
       inline onShipped: ZIO[Any, Throwable, Unit],
-  ): FSMDefinition[OrderState, OrderEvent] =
+  ): FSMDefinition[OrderState, OrderEvent, Nothing] =
     import OrderState.*, OrderEvent.*, T.*
     fsm[OrderState, OrderEvent]
       // Created -> PaymentProcessing on InitiatePayment

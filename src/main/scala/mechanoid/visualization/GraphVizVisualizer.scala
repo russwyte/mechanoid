@@ -32,8 +32,8 @@ object GraphVizVisualizer:
     * }
     * ```
     */
-  def digraph[S <: MState, E <: MEvent](
-      fsm: FSMDefinition[S, E],
+  def digraph[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       name: String = "FSM",
       initialState: Option[S] = None,
       config: Config = Config.default,
@@ -111,8 +111,8 @@ object GraphVizVisualizer:
 
   /** Generate a digraph with execution trace highlighting.
     */
-  def digraphWithTrace[S <: MState, E <: MEvent](
-      fsm: FSMDefinition[S, E],
+  def digraphWithTrace[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       trace: ExecutionTrace[S, E],
       name: String = "FSM",
       config: Config = Config.default,

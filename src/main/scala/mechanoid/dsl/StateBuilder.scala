@@ -4,15 +4,17 @@ import zio.*
 import mechanoid.core.*
 import mechanoid.macros.ExpressionName
 
-/** Builder for configuring state lifecycle actions (entry/exit).
+/** Builder for configuring state lifecycle actions (entry/exit) and commands.
   *
   * @tparam S
   *   The state type
   * @tparam E
   *   The event type
+  * @tparam Cmd
+  *   The command type
   */
-final class StateBuilder[S <: MState, E <: MEvent](
-    private val definition: FSMDefinition[S, E],
+final class StateBuilder[S <: MState, E <: MEvent, Cmd](
+    private val definition: FSMDefinition[S, E, Cmd],
     private val stateOrdinal: Int,
 ):
 
@@ -23,7 +25,7 @@ final class StateBuilder[S <: MState, E <: MEvent](
     *
     * User errors are wrapped in `ActionFailedError`.
     */
-  inline def onEntry[Err1](inline action: ZIO[Any, Err1, Unit]): StateBuilder[S, E] =
+  inline def onEntry[Err1](inline action: ZIO[Any, Err1, Unit]): StateBuilder[S, E, Cmd] =
     val description = ExpressionName.of(action)
     onEntryWithDescription(action, description)
 
@@ -36,7 +38,7 @@ final class StateBuilder[S <: MState, E <: MEvent](
   def onEntryWithDescription[Err1](
       action: ZIO[Any, Err1, Unit],
       description: String,
-  ): StateBuilder[S, E] =
+  ): StateBuilder[S, E, Cmd] =
     val wrappedAction = action.mapError(wrapError)
     val newDef        = definition.updateLifecycle(
       stateOrdinal,
@@ -52,7 +54,7 @@ final class StateBuilder[S <: MState, E <: MEvent](
     *
     * User errors are wrapped in `ActionFailedError`.
     */
-  inline def onExit[Err1](inline action: ZIO[Any, Err1, Unit]): StateBuilder[S, E] =
+  inline def onExit[Err1](inline action: ZIO[Any, Err1, Unit]): StateBuilder[S, E, Cmd] =
     val description = ExpressionName.of(action)
     onExitWithDescription(action, description)
 
@@ -65,7 +67,7 @@ final class StateBuilder[S <: MState, E <: MEvent](
   def onExitWithDescription[Err1](
       action: ZIO[Any, Err1, Unit],
       description: String,
-  ): StateBuilder[S, E] =
+  ): StateBuilder[S, E, Cmd] =
     val wrappedAction = action.mapError(wrapError)
     val newDef        = definition.updateLifecycle(
       stateOrdinal,
@@ -74,8 +76,48 @@ final class StateBuilder[S <: MState, E <: MEvent](
     new StateBuilder(newDef, stateOrdinal)
   end onExitWithDescription
 
+  /** Enqueue a single command when entering this state.
+    *
+    * Commands are enqueued for later execution via the transactional outbox pattern. The idempotency key is
+    * auto-generated as `instanceId-seqNr`.
+    *
+    * @param factory
+    *   A function that produces a command from the current state
+    */
+  def enqueue(factory: S => Cmd): StateBuilder[S, E, Cmd] =
+    val newDef = definition.updateLifecycle(
+      stateOrdinal,
+      lc =>
+        val newFactory: S => List[Cmd] = lc.commandFactory match
+          case Some(existing) => s => existing(s) :+ factory(s)
+          case None           => s => List(factory(s))
+        lc.copy(commandFactory = Some(newFactory)),
+    )
+    new StateBuilder(newDef, stateOrdinal)
+  end enqueue
+
+  /** Enqueue multiple commands when entering this state.
+    *
+    * Commands are enqueued for later execution via the transactional outbox pattern. Each command gets an
+    * auto-generated idempotency key based on `instanceId-seqNr-index`.
+    *
+    * @param factory
+    *   A function that produces a list of commands from the current state
+    */
+  def enqueueAll(factory: S => List[Cmd]): StateBuilder[S, E, Cmd] =
+    val newDef = definition.updateLifecycle(
+      stateOrdinal,
+      lc =>
+        val newFactory: S => List[Cmd] = lc.commandFactory match
+          case Some(existing) => s => existing(s) ++ factory(s)
+          case None           => factory
+        lc.copy(commandFactory = Some(newFactory)),
+    )
+    new StateBuilder(newDef, stateOrdinal)
+  end enqueueAll
+
   /** Complete the state configuration and return to the FSM definition. */
-  def done: FSMDefinition[S, E] = definition
+  def done: FSMDefinition[S, E, Cmd] = definition
 
   /** Wrap an error as MechanoidError - pass through if already one, otherwise wrap in ActionFailedError. */
   private def wrapError[E](e: E): MechanoidError = e match
