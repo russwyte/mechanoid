@@ -1,6 +1,6 @@
 package mechanoid.core
 
-import scala.annotation.implicitNotFound
+import scala.annotation.{implicitNotFound, nowarn}
 import mechanoid.macros.SealedEnumMacros
 import mechanoid.macros.SealedEnumMacros.CaseInfo
 
@@ -68,6 +68,7 @@ private[mechanoid] object SealedEnum:
     * This is used internally by MState.deriveWithHasher and MEvent.deriveWithHasher. Users don't interact with this
     * directly.
     */
+  @nowarn("msg=New anonymous class definition will be duplicated")
   inline def deriveWithHasher[T](inline hasher: CaseHasher): SealedEnum[T] =
     new SealedEnum[T]:
       val caseInfos: Array[CaseInfo] = SealedEnumMacros.extractCaseInfo[T](hasher)

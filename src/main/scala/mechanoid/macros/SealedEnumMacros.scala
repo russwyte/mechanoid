@@ -160,17 +160,22 @@ object SealedEnumMacros:
         $hashArrayExpr(ordinal)
       }
     else
-      // For sealed traits (not enums), use isInstanceOf checks
-      // This works for both case classes and case objects
+      // For sealed traits (not enums), distinguish case objects vs case classes
       val baseCase: Expr[Int] = '{ throw new MatchError($value) }
 
       cases.foldRight(baseCase) { (caseSymbol, accExpr) =>
-        val hash     = Expr(hashFn(caseSymbol.fullName))
-        val caseType = caseSymbol.typeRef
+        val hash = Expr(hashFn(caseSymbol.fullName))
 
-        caseType.asType match
-          case '[t] =>
-            '{ if $value.isInstanceOf[t] then $hash else $accExpr }
+        if caseSymbol.flags.is(Flags.Module) then
+          // Case object - use reference equality (eq)
+          val singleton = Ref(caseSymbol).asExprOf[AnyRef]
+          '{ if ($value.asInstanceOf[AnyRef] eq $singleton) then $hash else $accExpr }
+        else
+          // Case class - use isInstanceOf
+          val caseType = caseSymbol.typeRef
+          caseType.asType match
+            case '[t] =>
+              '{ if $value.isInstanceOf[t] then $hash else $accExpr }
       }
     end if
   end caseHashOfImpl
@@ -233,19 +238,24 @@ object SealedEnumMacros:
         $hashArrayExpr(ordinal)
       }
     else
-      // For sealed traits (not enums), use isInstanceOf checks
-      // This works for both case classes and case objects
+      // For sealed traits (not enums), distinguish case objects vs case classes
       '{ (value: T) =>
         ${
           val baseCase: Expr[Int] = '{ throw new MatchError(value) }
 
           cases.foldRight(baseCase) { (caseSymbol, accExpr) =>
-            val hash     = Expr(hashFn(caseSymbol.fullName))
-            val caseType = caseSymbol.typeRef
+            val hash = Expr(hashFn(caseSymbol.fullName))
 
-            caseType.asType match
-              case '[t] =>
-                '{ if value.isInstanceOf[t] then $hash else $accExpr }
+            if caseSymbol.flags.is(Flags.Module) then
+              // Case object - use reference equality (eq)
+              val singleton = Ref(caseSymbol).asExprOf[AnyRef]
+              '{ if (value.asInstanceOf[AnyRef] eq $singleton) then $hash else $accExpr }
+            else
+              // Case class - use isInstanceOf
+              val caseType = caseSymbol.typeRef
+              caseType.asType match
+                case '[t] =>
+                  '{ if value.isInstanceOf[t] then $hash else $accExpr }
           }
         }
       }
