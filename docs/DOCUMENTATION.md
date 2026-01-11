@@ -108,17 +108,40 @@ enum TrafficLight extends MState:
   case Red, Yellow, Green
 ```
 
-**Special state traits:**
-
-- `TerminalState` - Marker for states that cannot transition further
-- `StateData[D]` - For states carrying associated data
+States can also carry data (rich states):
 
 ```scala
-enum ConnectionState extends MState:
-  case Disconnected extends ConnectionState with TerminalState
-  case Connected(sessionId: String) extends ConnectionState with StateData[String]:
-    def data = sessionId
+enum OrderState extends MState:
+  case Pending
+  case Paid(transactionId: String)
+  case Failed(reason: String)
 ```
+
+When defining transitions, the state's "shape" (which case it is) is used for matching, not the exact value. This means `.when(Failed(""))` will match ANY `Failed(_)` state.
+
+#### Hierarchical States
+
+For complex domains, you can organize related states using nested sealed traits:
+
+```scala
+sealed trait OrderState extends MState
+
+case object Created extends OrderState
+
+// Group all processing-related states
+sealed trait Processing extends OrderState
+case object ValidatingPayment extends Processing
+case object ChargingCard extends Processing
+
+case object Completed extends OrderState
+```
+
+Benefits:
+- **Code organization** - Related states are grouped together
+- **Type safety** - Can pattern match on parent traits (e.g., `case _: Processing =>`)
+- **IDE navigation** - Jump to parent trait to see all related states
+
+**Important:** Transitions use leaf states only. Parent traits (`Processing`) are for organization - you cannot use them in `.when()`. The macro automatically discovers all leaf cases recursively.
 
 ### Events
 
@@ -133,12 +156,12 @@ enum TrafficEvent extends MEvent:
 
 Timeout events are handled internally by the runtime. When a state's timeout expires, a timeout transition is automatically triggered if one is defined. You don't need to define or handle timeout events explicitly - just use `.onTimeout` in your FSM definition.
 
-**Event data:**
+**Events with data:**
 
 ```scala
 enum PaymentEvent extends MEvent:
-  case Pay(amount: BigDecimal) extends PaymentEvent with EventData[BigDecimal]:
-    def data = amount
+  case Pay(amount: BigDecimal)
+  case Refund(orderId: String, amount: BigDecimal)
 ```
 
 ### Transitions

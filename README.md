@@ -5,7 +5,8 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 ## Features
 
 - **Declarative DSL** - Fluent builder API for defining state machines
-- **Type-safe** - States and events are Scala 3 enums with compile-time validation
+- **Type-safe** - States and events are Scala 3 enums or sealed traits with compile-time validation
+- **Hierarchical states** - Organize complex state spaces with nested sealed traits
 - **Effectful** - All transitions are ZIO effects with full environment and error support
 - **Event sourcing** - Optional persistence with snapshots and optimistic locking
 - **Durable timeouts** - Timeouts that survive node failures via database persistence
