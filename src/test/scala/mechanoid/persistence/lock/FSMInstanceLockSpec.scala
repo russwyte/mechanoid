@@ -226,5 +226,5 @@ object FSMInstanceLockSpec extends ZIOSpecDefault:
         end for
       } @@ TestAspect.withLiveClock
     ),
-  ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(30))
+  ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(30)) @@ TestAspect.withLiveClock
 end FSMInstanceLockSpec

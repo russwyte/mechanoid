@@ -158,5 +158,5 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
         )
       },
     ),
-  )
+  ) @@ TestAspect.sequential
 end SealedEnumMacroSpec

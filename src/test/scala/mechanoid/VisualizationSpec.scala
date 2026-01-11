@@ -209,5 +209,5 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
       }
     ),
-  )
+  ) @@ TestAspect.sequential
 end VisualizationSpec

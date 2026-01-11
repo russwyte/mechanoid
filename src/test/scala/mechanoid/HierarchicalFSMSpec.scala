@@ -173,5 +173,5 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
         assertTrue(allStates.length == 8)
       },
     ),
-  )
+  ) @@ TestAspect.sequential
 end HierarchicalFSMSpec

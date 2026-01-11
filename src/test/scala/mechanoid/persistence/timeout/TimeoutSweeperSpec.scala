@@ -323,5 +323,5 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
         )
       },
     ),
-  ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(60))
+  ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(60)) @@ TestAspect.withLiveClock
 end TimeoutSweeperSpec
