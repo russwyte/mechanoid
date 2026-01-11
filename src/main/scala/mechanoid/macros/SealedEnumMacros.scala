@@ -169,13 +169,14 @@ object SealedEnumMacros:
         if caseSymbol.flags.is(Flags.Module) then
           // Case object - use reference equality (eq)
           val singleton = Ref(caseSymbol).asExprOf[AnyRef]
-          '{ if ($value.asInstanceOf[AnyRef] eq $singleton) then $hash else $accExpr }
+          '{ if $value.asInstanceOf[AnyRef] eq $singleton then $hash else $accExpr }
         else
           // Case class - use isInstanceOf
           val caseType = caseSymbol.typeRef
           caseType.asType match
             case '[t] =>
               '{ if $value.isInstanceOf[t] then $hash else $accExpr }
+        end if
       }
     end if
   end caseHashOfImpl
@@ -249,13 +250,14 @@ object SealedEnumMacros:
             if caseSymbol.flags.is(Flags.Module) then
               // Case object - use reference equality (eq)
               val singleton = Ref(caseSymbol).asExprOf[AnyRef]
-              '{ if (value.asInstanceOf[AnyRef] eq $singleton) then $hash else $accExpr }
+              '{ if value.asInstanceOf[AnyRef] eq $singleton then $hash else $accExpr }
             else
               // Case class - use isInstanceOf
               val caseType = caseSymbol.typeRef
               caseType.asType match
                 case '[t] =>
                   '{ if value.isInstanceOf[t] then $hash else $accExpr }
+            end if
           }
         }
       }
