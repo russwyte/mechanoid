@@ -3,6 +3,8 @@ import xerial.sbt.Sonatype.sonatypeCentralHost
 val scala3Version = "3.7.4"
 val zioVersion    = "2.1.24"
 
+ThisBuild / dependencyOverrides += "org.scalameta" % "semanticdb-scalac_2.12.21" % "4.14.4"
+
 usePgpKeyHex("2F64727A87F1BCF42FD307DD8582C4F16659A7D6")
 
 lazy val root = project

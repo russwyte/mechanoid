@@ -12,12 +12,11 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [FSM State Container](#fsm-state-container)
 - [Defining FSMs](#defining-fsms)
   - [Basic Definition](#basic-definition)
-  - [Guards](#guards)
-  - [Actions](#actions)
   - [Entry and Exit Actions](#entry-and-exit-actions)
   - [Timeouts](#timeouts)
 - [Running FSMs](#running-fsms)
-  - [In-Memory Runtime](#in-memory-runtime)
+  - [Simple Runtime](#simple-runtime)
+  - [Persistent Runtime](#persistent-runtime)
   - [Sending Events](#sending-events)
 - [Persistence](#persistence)
   - [Event Sourcing Model](#event-sourcing-model)
@@ -80,7 +79,7 @@ enum OrderEvent extends MEvent:
   case Pay, Ship, Deliver
 
 // Build FSM definition
-val orderFSM = UFSM[OrderState, OrderEvent]
+val orderFSM = fsm[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
   .when(Shipped).on(Deliver).goto(Delivered)
@@ -109,17 +108,40 @@ enum TrafficLight extends MState:
   case Red, Yellow, Green
 ```
 
-**Special state traits:**
-
-- `TerminalState` - Marker for states that cannot transition further
-- `StateData[D]` - For states carrying associated data
+States can also carry data (rich states):
 
 ```scala
-enum ConnectionState extends MState:
-  case Disconnected extends ConnectionState with TerminalState
-  case Connected(sessionId: String) extends ConnectionState with StateData[String]:
-    def data = sessionId
+enum OrderState extends MState:
+  case Pending
+  case Paid(transactionId: String)
+  case Failed(reason: String)
 ```
+
+When defining transitions, the state's "shape" (which case it is) is used for matching, not the exact value. This means `.when(Failed(""))` will match ANY `Failed(_)` state.
+
+#### Hierarchical States
+
+For complex domains, you can organize related states using nested sealed traits:
+
+```scala
+sealed trait OrderState extends MState
+
+case object Created extends OrderState
+
+// Group all processing-related states
+sealed trait Processing extends OrderState
+case object ValidatingPayment extends Processing
+case object ChargingCard extends Processing
+
+case object Completed extends OrderState
+```
+
+Benefits:
+- **Code organization** - Related states are grouped together
+- **Type safety** - Can pattern match on parent traits (e.g., `case _: Processing =>`)
+- **IDE navigation** - Jump to parent trait to see all related states
+
+**Important:** Transitions use leaf states only. Parent traits (`Processing`) are for organization - you cannot use them in `.when()`. The macro automatically discovers all leaf cases recursively.
 
 ### Events
 
@@ -134,12 +156,12 @@ enum TrafficEvent extends MEvent:
 
 Timeout events are handled internally by the runtime. When a state's timeout expires, a timeout transition is automatically triggered if one is defined. You don't need to define or handle timeout events explicitly - just use `.onTimeout` in your FSM definition.
 
-**Event data:**
+**Events with data:**
 
 ```scala
 enum PaymentEvent extends MEvent:
-  case Pay(amount: BigDecimal) extends PaymentEvent with EventData[BigDecimal]:
-    def data = amount
+  case Pay(amount: BigDecimal)
+  case Refund(orderId: String, amount: BigDecimal)
 ```
 
 ### Transitions
@@ -187,85 +209,30 @@ fsm.state.map { s =>
 
 ### Basic Definition
 
-Use `FSMDefinition` to build your FSM:
+Use `fsm[S, E]` to build your FSM:
 
 ```scala
-val definition = UFSM[MyState, MyEvent]
+import mechanoid.*
+
+val definition = fsm[MyState, MyEvent]
   .when(State1).on(Event1).goto(State2)
   .when(State1).on(Event2).stay
   .when(State2).on(Event3).goto(State3)
 ```
 
-For FSMs that require environment or custom error types, use one of these type aliases:
+All FSM definitions share the same type: `FSMDefinition[S, E, Cmd]`. The third type parameter `Cmd` represents commands that can be enqueued for side effect execution:
 
-```scala
-// With Throwable errors (like ZIO's Task)
-val definition = TaskFSM[MyState, MyEvent]
+- `fsm[S, E]` - FSM without commands (Cmd = Nothing)
+- `fsm.withCommands[S, E, Cmd]` - FSM with commands of type Cmd
 
-// With custom errors (like ZIO's IO)
-val definition = IOFSM[MyState, MyEvent, MyError]
-
-// With environment, no errors (like ZIO's URIO)
-val definition = URFSM[MyState, MyEvent, MyEnv]
-
-// With environment and Throwable errors (like ZIO's RIO)
-val definition = RFSM[MyState, MyEvent, MyEnv]
-
-// Full control - specify all type parameters
-val definition = FSMDefinition[MyState, MyEvent, MyEnv, MyError]
-```
-
-### Guards
-
-Guards are predicates that must be true for a transition to occur:
-
-```scala
-// Simple boolean guard
-.when(Pending).on(Pay).when(amount > 0).goto(Paid)
-
-// Lazy evaluation
-.when(Pending).on(Pay).whenEval(checkInventory()).goto(Paid)
-
-// ZIO-based guard (can access environment, fail with errors)
-.when(Pending)
-  .on(Pay)
-  .when(
-    ZIO.serviceWithZIO[PaymentService](_.isValid(payment))
-  )
-  .goto(Paid)
-```
-
-If a guard returns `false`, the transition is rejected with `GuardRejectedError`.
-
-### Actions
-
-Execute effects during transitions:
-
-```scala
-// Execute action that determines the outcome
-.when(Processing)
-  .on(Complete)
-  .execute {
-    for
-      result <- processOrder
-    yield
-      if result.success then TransitionResult.Goto(Completed)
-      else TransitionResult.Goto(Failed)
-  }
-
-// Execute action then transition
-.when(Pending)
-  .on(Pay)
-  .executing(notifyPaymentReceived)
-  .goto(Paid)
-```
+The library uses unified error types—all errors are represented as `MechanoidError`.
 
 ### Entry and Exit Actions
 
 Define actions that run when entering or leaving a state:
 
 ```scala
-val definition = UFSM[State, Event]
+val definition = fsm[State, Event]
   .when(Active).on(Deactivate).goto(Inactive)
   .onState(Active)
     .onEntry(ZIO.logInfo("Entered Active state"))
@@ -280,7 +247,7 @@ Schedule automatic timeout events:
 ```scala
 import scala.concurrent.duration.*
 
-val definition = UFSM[State, Event]
+val definition = fsm[State, Event]
   .when(WaitingForPayment).onTimeout.goto(Cancelled)
   .withTimeout(WaitingForPayment, 30.minutes)
 ```
@@ -291,20 +258,44 @@ When the FSM enters `WaitingForPayment`, a timer starts. If no other event arriv
 
 ## Running FSMs
 
-### In-Memory Runtime
+Mechanoid provides a unified `FSMRuntime[Id, S, E, Cmd]` interface for all FSM execution scenarios. The runtime has four type parameters:
 
-Build and run an FSM:
+- `Id` - The instance identifier type (`Unit` for simple FSMs, or a custom type like `String` or `UUID` for persistent FSMs)
+- `S` - The state type (must extend `MState`)
+- `E` - The event type (must extend `MEvent`)
+- `Cmd` - The command type (`Nothing` for FSMs without commands)
+
+### Simple Runtime
+
+For simple, single-instance FSMs without persistence, use `definition.build(initialState)`:
 
 ```scala
 val program = ZIO.scoped {
   for
-    fsm <- definition.build(initialState)
+    fsm <- definition.build(initialState)  // Returns FSMRuntime[Unit, S, E, Cmd]
     // Use the FSM...
   yield result
 }
 ```
 
-The FSM is automatically stopped when the scope closes.
+This creates an in-memory FSM with `Unit` as the instance ID. The FSM is automatically stopped when the scope closes.
+
+### Persistent Runtime
+
+For persistent, identified FSMs, use `FSMRuntime.apply`:
+
+```scala
+import mechanoid.runtime.FSMRuntime
+
+val program = ZIO.scoped {
+  for
+    fsm <- FSMRuntime(orderId, definition, initialState)  // Returns FSMRuntime[String, S, E, Cmd]
+    // Use the FSM...
+  yield result
+}.provide(eventStoreLayer)
+```
+
+The persistent runtime requires an `EventStore` in the environment and uses the provided ID to identify the FSM instance.
 
 ### Sending Events
 
@@ -319,7 +310,6 @@ yield result match
 
 Possible errors:
 - `InvalidTransitionError` - No transition defined for state/event
-- `GuardRejectedError` - Guard condition failed
 
 ---
 
@@ -334,14 +324,17 @@ Mechanoid supports event sourcing for durable FSMs:
 3. Snapshots reduce recovery time
 
 ```scala
+import mechanoid.runtime.FSMRuntime
+
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime(orderId, definition, Pending)
+    fsm <- FSMRuntime(orderId, definition, Pending)
     _   <- fsm.send(Pay)    // Event persisted
     _   <- fsm.send(Ship)   // Event persisted
   yield ()
 }.provide(eventStoreLayer)
 ```
+
 
 ### EventStore Interface
 
@@ -390,7 +383,7 @@ _ <- ZIO.when(state == Completed)(fsm.saveSnapshot)
 
 ### Recovery
 
-On startup, `PersistentFSMRuntime`:
+On startup, `FSMRuntime` (when provided with an EventStore):
 
 1. Loads the latest snapshot (if any)
 2. Replays only events *after* the snapshot's sequence number
@@ -431,12 +424,14 @@ trait TimeoutStore[Id]:
   def release(instanceId: Id): ZIO[Any, Throwable, Boolean]
 ```
 
-Use `withDurableTimeouts` to enable:
+Use `FSMRuntime.withDurableTimeouts` to enable:
 
 ```scala
+import mechanoid.runtime.FSMRuntime
+
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withDurableTimeouts(orderId, definition, Pending)
+    fsm <- FSMRuntime.withDurableTimeouts(orderId, definition, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout is now persisted - survives node restart
   yield ()
@@ -541,12 +536,14 @@ trait FSMInstanceLock[Id]:
   def get(instanceId: Id, now: Instant): ZIO[Any, Throwable, Option[LockToken[Id]]]
 ```
 
-Use `withLocking` to enable automatic lock acquisition around event processing:
+Use `FSMRuntime.withLocking` to enable automatic lock acquisition around event processing:
 
 ```scala
+import mechanoid.runtime.FSMRuntime
+
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withLocking(orderId, definition, Pending)
+    fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
     _   <- fsm.send(Pay)  // Lock acquired automatically before processing
   yield ()
 }.provide(eventStoreLayer, lockLayer)
@@ -615,9 +612,11 @@ RETURNING *;
 For maximum robustness, combine locking with durable timeouts:
 
 ```scala
+import mechanoid.runtime.FSMRuntime
+
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withLockingAndTimeouts(
+    fsm <- FSMRuntime.withLockingAndTimeouts(
       orderId,
       definition,
       Pending,
@@ -641,21 +640,21 @@ This provides:
 
 ### The Side Effect Problem
 
-When using persistence, FSM state can be recovered by replaying events. However, **side effects** present a challenge:
+When using persistence, FSM state can be recovered by replaying events. However, **side effects** present a challenge.
+
+Mechanoid's FSM transitions are statically resolvable—all target states are known at compile time. Side effects should be handled through:
 
 | Action Type | Runs During Replay | Safe for Side Effects |
 |------------|-------------------|----------------------|
-| `.executing(action)` | Yes | No - will re-run |
 | `.onState(s).onEntry(action)` | No | Yes |
 | `.onState(s).onExit(action)` | No | Yes |
-
-If your transition executes an expensive or non-idempotent operation (like charging a credit card), it could run again during recovery.
+| **Command Queue** | No (commands persisted) | Yes |
 
 **Solutions:**
 
-1. **Entry actions**: Put side effects in entry actions (they don't run during replay)
+1. **Entry/Exit actions**: Put side effects in lifecycle actions (they don't run during replay)
 2. **Idempotent operations**: Design side effects to be safely repeatable
-3. **Command Queue**: Persist commands for separate execution (this section)
+3. **Command Queue**: Persist commands for separate execution (recommended for complex workflows)
 
 ### Transactional Outbox Pattern
 
@@ -821,7 +820,7 @@ RetryPolicy.exponentialBackoff(
 Enqueue commands in **entry actions** (they don't run during replay):
 
 ```scala
-val definition = UFSM[OrderState, OrderEvent]
+val definition = fsm[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
   // Enqueue command when entering Paid state
@@ -1155,8 +1154,8 @@ See the [visualizations directory](visualizations/) for complete examples:
 Enforce valid transitions at compile time:
 
 ```scala
-def processPayment[S <: MState, E <: MEvent](fsm: FSMRuntime[S, E, Any, Nothing], event: E)
-                                            (using ValidTransition[S, E]): ZIO[Any, MechanoidError, TransitionResult[S]] =
+def processPayment[Id, S <: MState, E <: MEvent, Cmd](fsm: FSMRuntime[Id, S, E, Cmd], event: E)
+                                                      (using ValidTransition[S, E]): ZIO[Any, MechanoidError, TransitionResult[S]] =
   fsm.send(event)
 ```
 
@@ -1193,9 +1192,9 @@ val spec = TransitionSpecBuilder.start
 | Error | Cause |
 |-------|-------|
 | `InvalidTransitionError(state, event)` | No transition defined for state/event combination |
-| `GuardRejectedError(state, event)` | Guard condition returned false |
 | `FSMStoppedError(reason)` | FSM has been stopped |
-| `ProcessingTimeoutError(state, event, duration)` | Timeout during event processing |
+| `ProcessingTimeoutError(state, duration)` | Timeout during event processing |
+| `ActionFailedError(cause)` | User-defined error from lifecycle action |
 | `PersistenceError(cause)` | Persistence operation failed |
 | `SequenceConflictError(expected, actual, instanceId)` | Concurrent modification detected |
 | `EventReplayError(state, event, sequenceNr)` | Stored event doesn't match FSM definition |
@@ -1207,7 +1206,7 @@ val spec = TransitionSpecBuilder.start
 
 ```scala
 import mechanoid.*
-import mechanoid.persistence.*
+import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 import zio.*
 import java.time.Instant
@@ -1220,7 +1219,7 @@ enum OrderEvent extends MEvent:
   case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel
 
 // FSM Definition
-val orderDefinition = UFSM[OrderState, OrderEvent]
+val orderDefinition = fsm[OrderState, OrderEvent]
   // Happy path
   .when(Pending).on(RequestPayment).goto(AwaitingPayment)
   .when(AwaitingPayment).on(ConfirmPayment).goto(Paid)
@@ -1244,7 +1243,7 @@ val orderDefinition = UFSM[OrderState, OrderEvent]
 val program = ZIO.scoped {
   for
     // Create FSM with durable timeouts
-    fsm <- PersistentFSMRuntime.withDurableTimeouts(
+    fsm <- FSMRuntime.withDurableTimeouts(
       "order-123",
       orderDefinition,
       OrderState.Pending

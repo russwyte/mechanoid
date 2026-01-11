@@ -9,11 +9,14 @@ import mechanoid.persistence.*
 import java.time.Instant
 import scala.annotation.unused
 
-/** Codec for serializing/deserializing events and states to JSON.
+/** PostgreSQL implementation of EventStore using Saferis.
   *
-  * The simplest way to create one is using the companion object's `fromJson` method with zio-json codecs:
+  * This implementation uses optimistic locking via sequence number checks to ensure exactly-once event persistence in
+  * distributed environments.
   *
+  * ==Usage==
   * {{{
+  * // Define your types with JsonCodec
   * enum MyState extends MState derives JsonCodec:
   *   case Idle, Running, Done
   *
@@ -21,75 +24,60 @@ import scala.annotation.unused
   *   case Started(id: String)
   *   case Completed
   *
-  * val codec = EventCodec.fromJson[MyState, MyEvent]
+  * // Create the store layer - JsonCodec instances resolved from derives
+  * val storeLayer = PostgresEventStore.layer[MyState, MyEvent]
+  *
+  * // Use with FSMRuntime
+  * FSMRuntime(id, definition, initialState).provide(storeLayer, transactorLayer)
   * }}}
-  */
-trait EventCodec[S <: MState, E <: MEvent]:
-  def encodeEvent(event: Timed[E]): String
-  def decodeEvent(json: String): Either[Throwable, Timed[E]]
-  def encodeState(state: S): String
-  def decodeState(json: String): Either[Throwable, S]
-
-object EventCodec:
-  /** Creates an EventCodec from zio-json codecs.
-    *
-    * Events are stored with a wrapper to handle the Timeout singleton:
-    *   - Regular events: `{"event": <encoded event>}`
-    *   - Timeout: `{"timeout": true}`
-    */
-  def fromJson[S <: MState, E <: MEvent](using
-      stateCodec: JsonCodec[S],
-      eventCodec: JsonCodec[E],
-  ): EventCodec[S, E] = new EventCodec[S, E]:
-    // Wrapper for events to distinguish Timeout from regular events
-    private case class EventWrapper(event: Option[E], timeout: Option[Boolean])
-    private object EventWrapper:
-      given JsonEncoder[EventWrapper] = JsonEncoder.derived
-      given JsonDecoder[EventWrapper] = JsonDecoder.derived
-
-    def encodeEvent(event: Timed[E]): String = event match
-      case Timed.TimeoutEvent =>
-        EventWrapper(None, Some(true)).toJson
-      case ue: Timed.UserEvent[?] =>
-        EventWrapper(Some(ue.event.asInstanceOf[E]), None).toJson
-
-    def decodeEvent(json: String): Either[Throwable, Timed[E]] =
-      json.fromJson[EventWrapper] match
-        case Right(EventWrapper(_, Some(true))) => Right(Timed.TimeoutEvent)
-        case Right(EventWrapper(Some(e), _))    => Right(Timed.UserEvent(e))
-        case Right(_)                           => Left(new RuntimeException(s"Invalid event wrapper: $json"))
-        case Left(err)                          => Left(new RuntimeException(err))
-
-    def encodeState(state: S): String = state.toJson
-
-    def decodeState(json: String): Either[Throwable, S] =
-      json.fromJson[S].left.map(err => new RuntimeException(err))
-end EventCodec
-
-/** PostgreSQL implementation of EventStore using Saferis.
   *
-  * This implementation uses optimistic locking via sequence number checks to ensure exactly-once event persistence in
-  * distributed environments.
-  *
-  * @param transactor
-  *   The Saferis transactor for database operations
-  * @param codec
-  *   Codec for serializing/deserializing events and states
+  * @tparam S
+  *   State type with a JsonCodec instance
+  * @tparam E
+  *   Event type with a JsonCodec instance
   */
-class PostgresEventStore[S <: MState, E <: MEvent](
-    transactor: Transactor,
-    codec: EventCodec[S, E],
+class PostgresEventStore[S <: MState: JsonCodec, E <: MEvent: JsonCodec](
+    transactor: Transactor
 ) extends EventStore[String, S, E]:
 
   @unused private val events    = Table[EventRow]
   @unused private val snapshots = Table[SnapshotRow]
+
+  // Internal wrapper for events to distinguish Timeout from regular events in JSON storage
+  // - Regular events: {"event": <encoded event>}
+  // - Timeout: {"timeout": true}
+  private case class EventWrapper(event: Option[E], timeout: Option[Boolean])
+  private object EventWrapper:
+    given JsonEncoder[EventWrapper] = JsonEncoder.derived
+    given JsonDecoder[EventWrapper] = JsonDecoder.derived
+
+  private def encodeEvent(event: Timed[E]): String = event match
+    case Timed.TimeoutEvent =>
+      EventWrapper(None, Some(true)).toJson
+    case ue: Timed.UserEvent[?] =>
+      EventWrapper(Some(ue.event.asInstanceOf[E]), None).toJson
+
+  private def decodeEvent(json: String): Either[Throwable, Timed[E]] =
+    json.fromJson[EventWrapper] match
+      case Right(EventWrapper(_, Some(true))) => Right(Timed.TimeoutEvent)
+      case Right(EventWrapper(Some(e), _))    => Right(Timed.UserEvent(e))
+      case Right(_)                           => Left(new RuntimeException(s"Invalid event wrapper: $json"))
+      case Left(err)                          => Left(new RuntimeException(err))
+
+  private def encodeState(state: S): String = state.toJson
+
+  private def decodeState(json: String): Either[Throwable, S] =
+    json.fromJson[S].left.map(err => new RuntimeException(err))
 
   override def append(
       instanceId: String,
       event: Timed[E],
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
-    val eventJson = codec.encodeEvent(event)
+    val eventJson = encodeEvent(event)
+    // New sequence number is expectedSeqNr + 1
+    // expectedSeqNr is the expected CURRENT highest sequence number
+    val newSeqNr = expectedSeqNr + 1
 
     transactor
       .transact {
@@ -104,16 +92,16 @@ class PostgresEventStore[S <: MState, E <: MEvent](
 
           currentSeq = currentSeqOpt.getOrElse(0L)
 
-          _ <- ZIO.when(currentSeq >= expectedSeqNr) {
+          _ <- ZIO.when(currentSeq != expectedSeqNr) {
             ZIO.fail(SequenceConflictError(instanceId, expectedSeqNr, currentSeq))
           }
 
-          // Insert new event
+          // Insert new event with next sequence number
           _ <- sql"""
           INSERT INTO fsm_events (instance_id, sequence_nr, event_data, created_at)
-          VALUES ($instanceId, $expectedSeqNr, $eventJson::jsonb, $now)
+          VALUES ($instanceId, $newSeqNr, $eventJson::jsonb, $now)
         """.dml
-        yield expectedSeqNr
+        yield newSeqNr
       }
       .catchSome {
         // Handle unique constraint violation from concurrent inserts
@@ -177,7 +165,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
         case None      => ZIO.none
         case Some(row) =>
           ZIO
-            .fromEither(codec.decodeState(row.stateData))
+            .fromEither(decodeState(row.stateData))
             .mapError(e => new RuntimeException(s"Failed to decode state: ${e.getMessage}", e))
             .map { state =>
               Some(
@@ -193,7 +181,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
       .mapError(PersistenceError(_))
 
   override def saveSnapshot(snapshot: FSMSnapshot[String, S]): ZIO[Any, MechanoidError, Unit] =
-    val stateJson = codec.encodeState(snapshot.state)
+    val stateJson = encodeState(snapshot.state)
 
     transactor
       .run {
@@ -236,7 +224,7 @@ class PostgresEventStore[S <: MState, E <: MEvent](
 
   private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, Timed[E]]] =
     ZIO
-      .fromEither(codec.decodeEvent(row.eventData))
+      .fromEither(decodeEvent(row.eventData))
       .mapError(e => new RuntimeException(s"Failed to decode event: ${e.getMessage}", e))
       .map { event =>
         StoredEvent(
@@ -249,7 +237,22 @@ class PostgresEventStore[S <: MState, E <: MEvent](
 end PostgresEventStore
 
 object PostgresEventStore:
-  def layer[S <: MState: Tag, E <: MEvent: Tag](
-      codec: EventCodec[S, E]
-  ): ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
-    ZLayer.fromFunction((xa: Transactor) => new PostgresEventStore[S, E](xa, codec))
+  /** Create a ZLayer for PostgresEventStore.
+    *
+    * JsonCodec instances for S and E are resolved via context bounds. Just ensure your state and event types have
+    * `derives JsonCodec`:
+    *
+    * {{{
+    * enum MyState extends MState derives JsonCodec:
+    *   case Idle, Running
+    *
+    * enum MyEvent extends MEvent derives JsonCodec:
+    *   case Start, Stop
+    *
+    * val storeLayer = PostgresEventStore.layer[MyState, MyEvent]
+    * }}}
+    */
+  def layer[S <: MState: Tag: JsonCodec, E <: MEvent: Tag: JsonCodec]
+      : ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
+    ZLayer.fromFunction((xa: Transactor) => new PostgresEventStore[S, E](xa))
+end PostgresEventStore

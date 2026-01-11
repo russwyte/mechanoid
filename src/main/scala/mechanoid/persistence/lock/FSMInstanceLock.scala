@@ -28,12 +28,12 @@ import mechanoid.core.MechanoidError
   *
   * ==Usage==
   *
-  * The lock is typically used automatically by `PersistentFSMRuntime.withLocking`:
+  * The lock is typically used automatically by `FSMRuntime.withLocking`:
   *
   * {{{
   * val program = ZIO.scoped {
   *   for
-  *     fsm <- PersistentFSMRuntime.withLocking(orderId, definition, Pending)
+  *     fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
   *     _   <- fsm.send(Pay)  // Lock acquired automatically
   *   yield ()
   * }.provide(eventStoreLayer, lockLayer)

@@ -7,7 +7,7 @@ import mechanoid.dsl.FSMDefinition
 package object visualization:
 
   /** Extension methods for visualizing FSM definitions. */
-  extension [S <: MState, E <: MEvent, R, Err](fsm: FSMDefinition[S, E, R, Err])
+  extension [S <: MState, E <: MEvent, Cmd](fsm: FSMDefinition[S, E, Cmd])
 
     /** Generate a Mermaid state diagram. */
     def toMermaidStateDiagram(initialState: Option[S] = None): String =

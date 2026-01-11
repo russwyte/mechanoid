@@ -1,6 +1,7 @@
 package mechanoid.core
 
 import scala.quoted.*
+import scala.annotation.unused
 
 /** Typeclass for redacting sensitive information from values.
   *
@@ -26,7 +27,7 @@ trait Redactor[T]:
   def redact(value: T): String
 
   /** Returns a pretty-printed redacted string with indentation (multi-line for products). */
-  def redactPretty(value: T, indent: Int = 2): String =
+  def redactPretty(value: T, @unused indent: Int = 2): String =
     // Default implementation - subclasses can override for better formatting
     redact(value)
 

@@ -18,8 +18,8 @@ object MermaidVisualizer:
     *     Processing --> Completed: FinishEvent
     * ```
     */
-  def stateDiagram[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def stateDiagram[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       initialState: Option[S] = None,
   ): String =
     val sb = StringBuilder()
@@ -31,41 +31,35 @@ object MermaidVisualizer:
     }
 
     // Group transitions by source state for cleaner output
-    val transitionsBySource = fsm.transitionMeta.groupBy(_.fromStateOrdinal)
+    val transitionsBySource = fsm.transitionMeta.groupBy(_.fromStateCaseHash)
 
     // Add transitions
-    transitionsBySource.toList.sortBy(_._1).foreach { case (fromOrdinal, transitions) =>
-      val fromName = fsm.stateEnum.nameFor(fromOrdinal)
+    transitionsBySource.toList.sortBy(_._1).foreach { case (fromCaseHash, transitions) =>
+      val fromName = fsm.stateEnum.nameFor(fromCaseHash)
       transitions.foreach { meta =>
-        val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label     = meta.description match
-          case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
-          case Some("dynamic")                       => s"$eventName [dynamic]"
-          case _                                     => eventName
+        val eventName = fsm.eventEnum.nameFor(meta.eventCaseHash)
 
-        val guardLabel = if meta.hasGuard then s"$label [guard]" else label
-
-        meta.targetStateOrdinal match
-          case Some(targetOrdinal) =>
-            val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-            sb.append(s"    $fromName --> $targetName: $guardLabel\n")
-          case None if meta.description.exists(_.startsWith("stop")) =>
-            sb.append(s"    $fromName --> [*]: $guardLabel\n")
-          case None =>
-            // Stay transition - self-loop
-            sb.append(s"    $fromName --> $fromName: $guardLabel\n")
+        meta.kind match
+          case TransitionKind.Goto =>
+            val targetName = fsm.stateEnum.nameFor(meta.targetStateCaseHash.get)
+            sb.append(s"    $fromName --> $targetName: $eventName\n")
+          case TransitionKind.Stay =>
+            sb.append(s"    $fromName --> $fromName: $eventName\n")
+          case TransitionKind.Stop(reason) =>
+            val label = reason.fold(s"$eventName [stop]")(r => s"$eventName [stop: $r]")
+            sb.append(s"    $fromName --> [*]: $label\n")
       }
     }
 
     // Add state notes for timeouts and lifecycles
-    fsm.timeouts.foreach { case (stateOrdinal, duration) =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+    fsm.timeouts.foreach { case (stateCaseHash, duration) =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
       sb.append(s"    note right of $stateName: timeout: ${formatDuration(duration)}\n")
     }
 
     // Add notes for states with entry/exit actions
-    fsm.lifecycles.foreach { case (stateOrdinal, lifecycle) =>
-      val stateName   = fsm.stateEnum.nameFor(stateOrdinal)
+    fsm.lifecycles.foreach { case (stateCaseHash, lifecycle) =>
+      val stateName   = fsm.stateEnum.nameFor(stateCaseHash)
       val annotations = List(
         lifecycle.onEntry.map(_ => simplifyFunctionName(lifecycle.onEntryDescription.getOrElse("entry action"))),
         lifecycle.onExit.map(_ => simplifyFunctionName(lifecycle.onExitDescription.getOrElse("exit action"))),
@@ -134,8 +128,8 @@ object MermaidVisualizer:
     *     style Completed fill:#90EE90
     * ```
     */
-  def flowchart[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
+  def flowchart[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =
     val sb = StringBuilder()
@@ -144,39 +138,36 @@ object MermaidVisualizer:
     // Collect all states
     val allStates = fsm.transitionMeta
       .flatMap { meta =>
-        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+        List(meta.fromStateCaseHash) ++ meta.targetStateCaseHash.toList
       }
       .distinct
       .sorted
 
     // Define state nodes
-    allStates.foreach { stateOrdinal =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+    allStates.foreach { stateCaseHash =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
       sb.append(s"    $stateName(($stateName))\n")
     }
 
     // Add terminal node if any stop transitions
-    val hasStopTransitions = fsm.transitionMeta.exists(_.description.exists(_.startsWith("stop")))
+    val hasStopTransitions = fsm.transitionMeta.exists(_.kind.isInstanceOf[TransitionKind.Stop])
     if hasStopTransitions then sb.append("    END([End])\n")
 
     sb.append("\n")
 
     // Add transitions
     fsm.transitionMeta.foreach { meta =>
-      val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
-      val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-      val label     =
-        if meta.hasGuard then s"$eventName [guard]"
-        else eventName
+      val fromName  = fsm.stateEnum.nameFor(meta.fromStateCaseHash)
+      val eventName = fsm.eventEnum.nameFor(meta.eventCaseHash)
 
-      meta.targetStateOrdinal match
-        case Some(targetOrdinal) =>
-          val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-          sb.append(s"    $fromName -->|$label| $targetName\n")
-        case None if meta.description.exists(_.startsWith("stop")) =>
-          sb.append(s"    $fromName -->|$label| END\n")
-        case None =>
-          sb.append(s"    $fromName -->|$label| $fromName\n")
+      meta.kind match
+        case TransitionKind.Goto =>
+          val targetName = fsm.stateEnum.nameFor(meta.targetStateCaseHash.get)
+          sb.append(s"    $fromName -->|$eventName| $targetName\n")
+        case TransitionKind.Stay =>
+          sb.append(s"    $fromName -->|$eventName| $fromName\n")
+        case TransitionKind.Stop(_) =>
+          sb.append(s"    $fromName -->|$eventName| END\n")
     }
 
     // Highlight current state and visited path if trace provided
@@ -231,9 +222,9 @@ object MermaidVisualizer:
   // Enhanced Visualizations with Command Info
   // ============================================
 
-  /** Command mapping for visualization - maps state ordinals to commands triggered on entry. */
+  /** Command mapping for visualization - maps state caseHashes to commands triggered on entry. */
   case class StateCommandMapping[Cmd](
-      stateOrdinal: Int,
+      stateCaseHash: Int,
       commands: List[Cmd],
   )
 
@@ -241,9 +232,9 @@ object MermaidVisualizer:
     *
     * Shows which commands are triggered when entering each state.
     */
-  def stateDiagramWithCommands[S <: MState, E <: MEvent, R, Err, Cmd](
-      fsm: FSMDefinition[S, E, R, Err],
-      stateCommands: Map[Int, List[String]], // stateOrdinal -> command type names
+  def stateDiagramWithCommands[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
+      stateCommands: Map[Int, List[String]], // stateCaseHash -> command type names
       initialState: Option[S] = None,
   ): String =
     val sb = StringBuilder()
@@ -255,43 +246,38 @@ object MermaidVisualizer:
     }
 
     // Group transitions by source state for cleaner output
-    val transitionsBySource = fsm.transitionMeta.groupBy(_.fromStateOrdinal)
+    val transitionsBySource = fsm.transitionMeta.groupBy(_.fromStateCaseHash)
 
     // Add transitions
-    transitionsBySource.toList.sortBy(_._1).foreach { case (fromOrdinal, transitions) =>
-      val fromName = fsm.stateEnum.nameFor(fromOrdinal)
+    transitionsBySource.toList.sortBy(_._1).foreach { case (fromCaseHash, transitions) =>
+      val fromName = fsm.stateEnum.nameFor(fromCaseHash)
       transitions.foreach { meta =>
-        val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
-        val label     = meta.description match
-          case Some(desc) if desc.startsWith("stop") => s"$eventName [stop]"
-          case Some("dynamic")                       => s"$eventName [dynamic]"
-          case _                                     => eventName
+        val eventName = fsm.eventEnum.nameFor(meta.eventCaseHash)
 
-        val guardLabel = if meta.hasGuard then s"$label [guard]" else label
-
-        meta.targetStateOrdinal match
-          case Some(targetOrdinal) =>
-            val targetName = fsm.stateEnum.nameFor(targetOrdinal)
-            sb.append(s"    $fromName --> $targetName: $guardLabel\n")
-          case None if meta.description.exists(_.startsWith("stop")) =>
-            sb.append(s"    $fromName --> [*]: $guardLabel\n")
-          case None =>
-            sb.append(s"    $fromName --> $fromName: $guardLabel\n")
+        meta.kind match
+          case TransitionKind.Goto =>
+            val targetName = fsm.stateEnum.nameFor(meta.targetStateCaseHash.get)
+            sb.append(s"    $fromName --> $targetName: $eventName\n")
+          case TransitionKind.Stay =>
+            sb.append(s"    $fromName --> $fromName: $eventName\n")
+          case TransitionKind.Stop(reason) =>
+            val label = reason.fold(s"$eventName [stop]")(r => s"$eventName [stop: $r]")
+            sb.append(s"    $fromName --> [*]: $label\n")
       }
     }
 
     // Add state notes for timeouts
-    fsm.timeouts.foreach { case (stateOrdinal, duration) =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+    fsm.timeouts.foreach { case (stateCaseHash, duration) =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
       sb.append(s"    note right of $stateName: timeout: ${formatDuration(duration)}\n")
     }
 
     // Add notes for states with entry actions AND commands
     // Note: Mermaid state diagrams are sensitive to special chars in notes
-    fsm.lifecycles.foreach { case (stateOrdinal, lifecycle) =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+    fsm.lifecycles.foreach { case (stateCaseHash, lifecycle) =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
       val entryDesc = lifecycle.onEntry.flatMap(_ => lifecycle.onEntryDescription).map(simplifyFunctionName)
-      val commands  = stateCommands.getOrElse(stateOrdinal, Nil)
+      val commands  = stateCommands.getOrElse(stateCaseHash, Nil)
 
       val annotations = List(
         entryDesc,
@@ -404,9 +390,9 @@ object MermaidVisualizer:
     *
     * Shows states in one lane and commands in another, with connections.
     */
-  def flowchartWithCommands[S <: MState, E <: MEvent, R, Err](
-      fsm: FSMDefinition[S, E, R, Err],
-      stateCommands: Map[Int, List[String]], // stateOrdinal -> command type names
+  def flowchartWithCommands[S <: MState, E <: MEvent, Cmd](
+      fsm: FSMDefinition[S, E, Cmd],
+      stateCommands: Map[Int, List[String]], // stateCaseHash -> command type names
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =
     val sb = StringBuilder()
@@ -419,14 +405,14 @@ object MermaidVisualizer:
     // Collect all states
     val allStates = fsm.transitionMeta
       .flatMap { meta =>
-        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+        List(meta.fromStateCaseHash) ++ meta.targetStateCaseHash.toList
       }
       .distinct
       .sorted
 
     // Define state nodes with emojis for special states
-    allStates.foreach { stateOrdinal =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+    allStates.foreach { stateCaseHash =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
       val label     = stateName.toLowerCase match
         case n if n.contains("cancel") || n.contains("fail")                              => s"❌ $stateName"
         case n if n.contains("complete") || n.contains("deliver") || n.contains("done")   => s"✅ $stateName"
@@ -440,12 +426,12 @@ object MermaidVisualizer:
 
     // Add transitions
     fsm.transitionMeta.foreach { meta =>
-      val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
-      val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
+      val fromName  = fsm.stateEnum.nameFor(meta.fromStateCaseHash)
+      val eventName = fsm.eventEnum.nameFor(meta.eventCaseHash)
 
-      meta.targetStateOrdinal match
-        case Some(targetOrdinal) =>
-          val targetName = fsm.stateEnum.nameFor(targetOrdinal)
+      meta.targetStateCaseHash match
+        case Some(targetCaseHash) =>
+          val targetName = fsm.stateEnum.nameFor(targetCaseHash)
           sb.append(s"        $fromName -->|$eventName| $targetName\n")
         case None =>
           sb.append(s"        $fromName -->|$eventName| $fromName\n")
@@ -469,8 +455,8 @@ object MermaidVisualizer:
       sb.append("    end\n\n")
 
       // Connect states to their commands
-      stateCommands.foreach { case (stateOrdinal, cmdTypes) =>
-        val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+      stateCommands.foreach { case (stateCaseHash, cmdTypes) =>
+        val stateName = fsm.stateEnum.nameFor(stateCaseHash)
         cmdTypes.foreach { cmdType =>
           val safeName = cmdType.replaceAll("[^a-zA-Z0-9]", "_")
           sb.append(s"    $stateName -.->|on entry| $safeName\n")
@@ -481,8 +467,8 @@ object MermaidVisualizer:
     // Add styling
     sb.append("\n")
     // Style for terminal/error states
-    allStates.foreach { stateOrdinal =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
+    allStates.foreach { stateCaseHash =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
       stateName.toLowerCase match
         case n if n.contains("cancel") || n.contains("fail") =>
           sb.append(s"    style $stateName fill:#FFB6C1,stroke:#DC143C,stroke-width:2px\n")

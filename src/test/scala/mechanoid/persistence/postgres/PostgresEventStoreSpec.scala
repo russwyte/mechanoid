@@ -23,40 +23,40 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
     case Finished
     case Error(message: String)
 
-  // Create codec using the factory method - much simpler!
-  val testCodec = EventCodec.fromJson[TestState, TestEvent]
-
   val xaLayer    = PostgresTestContainer.DataSourceProvider.default >>> Transactor.default
-  val storeLayer = xaLayer >>> PostgresEventStore.layer[TestState, TestEvent](testCodec)
+  val storeLayer = xaLayer >>> PostgresEventStore.layer[TestState, TestEvent]
 
   def spec = suite("PostgresEventStore")(
     test("append persists an event with correct sequence number") {
       for
         store <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        seqNr <- store.append("event-test-1", TestEvent.Started("123").timed, 1)
+        // Pass expected current seq (0 for first event), get back new seq (1)
+        seqNr <- store.append("event-test-1", TestEvent.Started("123").timed, 0)
       yield assertTrue(seqNr == 1L)
     },
     test("append increments sequence numbers") {
       for
         store <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        seq1  <- store.append("event-test-2", TestEvent.Started("abc").timed, 1)
-        seq2  <- store.append("event-test-2", TestEvent.Processed("ok").timed, 2)
-        seq3  <- store.append("event-test-2", TestEvent.Finished.timed, 3)
+        // Each append passes expected current and gets back new seq
+        seq1 <- store.append("event-test-2", TestEvent.Started("abc").timed, 0)
+        seq2 <- store.append("event-test-2", TestEvent.Processed("ok").timed, 1)
+        seq3 <- store.append("event-test-2", TestEvent.Finished.timed, 2)
       yield assertTrue(seq1 == 1L, seq2 == 2L, seq3 == 3L)
     },
     test("append fails on sequence conflict") {
       for
-        store  <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        _      <- store.append("event-test-3", TestEvent.Started("x").timed, 1)
-        result <- store.append("event-test-3", TestEvent.Processed("y").timed, 1).either
+        store <- ZIO.service[EventStore[String, TestState, TestEvent]]
+        _     <- store.append("event-test-3", TestEvent.Started("x").timed, 0)
+        // Try to append expecting seq 0, but it's now 1
+        result <- store.append("event-test-3", TestEvent.Processed("y").timed, 0).either
       yield result match
-        case Left(e: SequenceConflictError) => assertTrue(e.expectedSeqNr == 1L, e.actualSeqNr == 1L)
+        case Left(e: SequenceConflictError) => assertTrue(e.expectedSeqNr == 0L, e.actualSeqNr == 1L)
         case _                              => assertTrue(false)
     },
     test("append handles Timeout events") {
       for
         store  <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        seqNr  <- store.append("event-test-4", Timed.TimeoutEvent, 1)
+        seqNr  <- store.append("event-test-4", Timed.TimeoutEvent, 0)
         events <- store.loadEvents("event-test-4").runCollect
       yield assertTrue(
         seqNr == 1L,
@@ -66,10 +66,10 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
     test("loadEvents returns events in sequence order") {
       for
         store  <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        _      <- store.append("event-test-5", TestEvent.Started("order-test").timed, 1)
-        _      <- store.append("event-test-5", TestEvent.Processed("step-1").timed, 2)
-        _      <- store.append("event-test-5", TestEvent.Processed("step-2").timed, 3)
-        _      <- store.append("event-test-5", TestEvent.Finished.timed, 4)
+        _      <- store.append("event-test-5", TestEvent.Started("order-test").timed, 0)
+        _      <- store.append("event-test-5", TestEvent.Processed("step-1").timed, 1)
+        _      <- store.append("event-test-5", TestEvent.Processed("step-2").timed, 2)
+        _      <- store.append("event-test-5", TestEvent.Finished.timed, 3)
         events <- store.loadEvents("event-test-5").runCollect
       yield assertTrue(
         events.length == 4,
@@ -79,9 +79,9 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
     test("loadEventsFrom returns events after sequence number") {
       for
         store  <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        _      <- store.append("event-test-6", TestEvent.Started("from-test").timed, 1)
-        _      <- store.append("event-test-6", TestEvent.Processed("a").timed, 2)
-        _      <- store.append("event-test-6", TestEvent.Processed("b").timed, 3)
+        _      <- store.append("event-test-6", TestEvent.Started("from-test").timed, 0)
+        _      <- store.append("event-test-6", TestEvent.Processed("a").timed, 1)
+        _      <- store.append("event-test-6", TestEvent.Processed("b").timed, 2)
         events <- store.loadEventsFrom("event-test-6", 1).runCollect
       yield assertTrue(
         events.length == 2,
@@ -124,9 +124,9 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
     test("deleteEventsTo removes old events") {
       for
         store  <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        _      <- store.append("delete-test-1", TestEvent.Started("d").timed, 1)
-        _      <- store.append("delete-test-1", TestEvent.Processed("e").timed, 2)
-        _      <- store.append("delete-test-1", TestEvent.Finished.timed, 3)
+        _      <- store.append("delete-test-1", TestEvent.Started("d").timed, 0)
+        _      <- store.append("delete-test-1", TestEvent.Processed("e").timed, 1)
+        _      <- store.append("delete-test-1", TestEvent.Finished.timed, 2)
         _      <- store.deleteEventsTo("delete-test-1", 2)
         events <- store.loadEvents("delete-test-1").runCollect
       yield assertTrue(
@@ -137,8 +137,8 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
     test("highestSequenceNr returns correct value") {
       for
         store   <- ZIO.service[EventStore[String, TestState, TestEvent]]
-        _       <- store.append("highest-test-1", TestEvent.Started("h").timed, 1)
-        _       <- store.append("highest-test-1", TestEvent.Processed("i").timed, 2)
+        _       <- store.append("highest-test-1", TestEvent.Started("h").timed, 0)
+        _       <- store.append("highest-test-1", TestEvent.Processed("i").timed, 1)
         highest <- store.highestSequenceNr("highest-test-1")
       yield assertTrue(highest == 2L)
     },
@@ -152,8 +152,9 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
       for
         store <- ZIO.service[EventStore[String, TestState, TestEvent]]
         instanceId = s"concurrent-test-${java.util.UUID.randomUUID()}"
+        // All try to append expecting current seq = 0
         results <- ZIO.foreachPar(List("a", "b", "c")) { suffix =>
-          store.append(instanceId, TestEvent.Started(suffix).timed, 1).either
+          store.append(instanceId, TestEvent.Started(suffix).timed, 0).either
         }
         successes = results.collect { case Right(seqNr) => seqNr }
         failures  = results.collect { case Left(_: SequenceConflictError) => () }

@@ -390,5 +390,5 @@ object CommandQueueSpec extends ZIOSpecDefault:
         assertTrue(delay2.contains(30000L)) // Capped at maxDelay
       },
     ),
-  ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(60))
+  ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(60)) @@ TestAspect.withLiveClock
 end CommandQueueSpec

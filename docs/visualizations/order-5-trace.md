@@ -19,17 +19,17 @@ sequenceDiagram
     FSM->>FSM: InitiatePayment
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=5<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Buddy<br/>amount=250.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=5<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>amount=75.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: PaymentSucceeded
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=5<br/>petName=Buddy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=cd146227-4b39-45a2-a896-e33f989ed53a
+    Note right of CQ: orderId=5<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=7581ab60-bc5e-4a6c-a4f9-55a07adca01e
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Buddy<br/>notificationType=order_confirmed<br/>messageId=56b9d5bc-7b66-4a30-ba1d-bd9e8fdcaa4b
+    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: RequestShipping
@@ -37,19 +37,19 @@ sequenceDiagram
     FSM->>FSM: ShipmentDispatched
     Note over FSM: Shipped
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=56b9d5bc-7b66-4a30-ba1d-bd9e8fdcaa4b<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=cd146227-4b39-45a2-a896-e33f989ed53a<br/>trackingNumber=TRACK-634617<br/>carrier=PetExpress<br/>estimatedDelivery=6 business days<br/>success=true<br/>error=None
+    Note right of CQ: correlationId=7581ab60-bc5e-4a6c-a4f9-55a07adca01e<br/>trackingNumber=TRACK-351714<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=5 business days<br/>success=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Buddy<br/>notificationType=shipped<br/>messageId=56b9d5bc-7b66-4a30-ba1d-bd9e8fdcaa4b-shipped
+    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=shipped<br/>messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62-shipped
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=56b9d5bc-7b66-4a30-ba1d-bd9e8fdcaa4b-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62-shipped<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Shipped

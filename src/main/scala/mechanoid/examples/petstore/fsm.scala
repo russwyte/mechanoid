@@ -2,8 +2,7 @@ package mechanoid.examples.petstore
 
 import zio.*
 import zio.json.*
-import mechanoid.core.*
-import mechanoid.dsl.*
+import mechanoid.*
 
 // ============================================
 // Order FSM - States and Events
@@ -63,9 +62,9 @@ object OrderFSM:
       inline onPaymentProcessing: ZIO[Any, Throwable, Unit],
       inline onPaid: ZIO[Any, Throwable, Unit],
       inline onShipped: ZIO[Any, Throwable, Unit],
-  ): FSMDefinition[OrderState, OrderEvent, Any, Throwable] =
+  ): FSMDefinition[OrderState, OrderEvent, Nothing] =
     import OrderState.*, OrderEvent.*, T.*
-    TaskFSM[OrderState, OrderEvent]
+    fsm[OrderState, OrderEvent]
       // Created -> PaymentProcessing on InitiatePayment
       .when(Created)
       .on(InitiatePayment(amount, str))

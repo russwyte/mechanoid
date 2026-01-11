@@ -2,9 +2,9 @@ package mechanoid.persistence.lock
 
 import zio.*
 import mechanoid.core.*
-import mechanoid.persistence.*
+import mechanoid.runtime.FSMRuntime
 
-/** A wrapper that adds distributed locking to a PersistentFSMRuntime.
+/** A wrapper that adds distributed locking to an FSMRuntime.
   *
   * This ensures exactly-once transition semantics by acquiring a lock before processing each event. If another node is
   * processing the same FSM instance, the operation waits (up to timeout) or fails.
@@ -36,21 +36,21 @@ import mechanoid.persistence.*
   * {{{
   * val program = ZIO.scoped {
   *   for
-  *     fsm <- PersistentFSMRuntime.withLocking(orderId, definition, Pending)
+  *     fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
   *     _   <- fsm.send(Pay)  // Lock acquired automatically around this call
   *   yield ()
   * }.provide(eventStoreLayer, lockLayer)
   * }}}
   */
-final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock] (
-    underlying: PersistentFSMRuntime[Id, S, E, R, Err],
+final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, Cmd] private[lock] (
+    underlying: FSMRuntime[Id, S, E, Cmd],
     lock: FSMInstanceLock[Id],
     config: LockConfig,
-) extends PersistentFSMRuntime[Id, S, E, R, Err]:
+) extends FSMRuntime[Id, S, E, Cmd]:
 
   override def instanceId: Id = underlying.instanceId
 
-  override def send(event: E): ZIO[R, Err | MechanoidError, TransitionResult[S]] =
+  override def send(event: E): ZIO[Any, MechanoidError, TransitionResult[S]] =
     lock
       .withLock(instanceId, config.nodeId, config.lockDuration, Some(config.acquireTimeout)) {
         // Optionally validate lock is still held before proceeding
@@ -60,7 +60,6 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, R, Err] private[lock]
       .mapError {
         case e: LockError      => LockingError(e)
         case e: MechanoidError => e
-        case e: Err @unchecked => e
       }
 
   /** Validate that we still hold the lock (if configured). */
@@ -110,7 +109,7 @@ end LockedFSMRuntime
 
 object LockedFSMRuntime:
 
-  /** Wrap a PersistentFSMRuntime with distributed locking.
+  /** Wrap an FSMRuntime with distributed locking.
     *
     * @param underlying
     *   The runtime to wrap
@@ -121,10 +120,10 @@ object LockedFSMRuntime:
     * @return
     *   A new runtime that acquires locks around event processing
     */
-  def apply[Id, S <: MState, E <: MEvent, R, Err](
-      underlying: PersistentFSMRuntime[Id, S, E, R, Err],
+  def apply[Id, S <: MState, E <: MEvent, Cmd](
+      underlying: FSMRuntime[Id, S, E, Cmd],
       lock: FSMInstanceLock[Id],
       config: LockConfig = LockConfig.default,
-  ): LockedFSMRuntime[Id, S, E, R, Err] =
+  ): LockedFSMRuntime[Id, S, E, Cmd] =
     new LockedFSMRuntime(underlying, lock, config)
 end LockedFSMRuntime

@@ -134,6 +134,6 @@ object RedactorSpec extends ZIOSpecDefault:
         )
       },
     ),
-  )
+  ) @@ TestAspect.sequential
 
 end RedactorSpec

@@ -2,8 +2,8 @@ package mechanoid
 
 import zio.*
 import zio.test.*
-import mechanoid.core.*
-import mechanoid.dsl.*
+import mechanoid.*
+import mechanoid.core.SealedEnum
 import mechanoid.visualization.*
 import java.time.Instant
 
@@ -18,9 +18,9 @@ object VisualizationSpec extends ZIOSpecDefault:
     case Finish
     case Error(reason: String) extends TestEvent
 
-  val testFSM: FSMDefinition[TestState, TestEvent, Any, Nothing] =
+  val testFSM: FSMDefinition[TestState, TestEvent, Nothing] =
     import TestState.*, TestEvent.*
-    UFSM[TestState, TestEvent]
+    fsm[TestState, TestEvent]
       .when(Idle)
       .on(Start)
       .goto(Running)
@@ -37,7 +37,7 @@ object VisualizationSpec extends ZIOSpecDefault:
       test("extracts state names correctly") {
         val se = summon[SealedEnum[TestState]]
         assertTrue(
-          se.caseNames.toList == List("Idle", "Running", "Completed", "Failed"),
+          se.caseNames.values.toSet == Set("Idle", "Running", "Completed", "Failed"),
           se.nameOf(TestState.Idle) == "Idle",
           se.nameOf(TestState.Running) == "Running",
         )
@@ -45,9 +45,20 @@ object VisualizationSpec extends ZIOSpecDefault:
       test("extracts event names correctly") {
         val ee = summon[SealedEnum[TestEvent]]
         assertTrue(
-          ee.caseNames.toList == List("Start", "Finish", "Error"),
+          ee.caseNames.values.toSet == Set("Start", "Finish", "Error"),
           ee.nameOf(TestEvent.Start) == "Start",
           ee.nameOf(TestEvent.Error("test")) == "Error",
+        )
+      },
+      test("caseHash is stable and based on full name") {
+        val se = summon[SealedEnum[TestState]]
+        // caseHash should be the hashCode of the fully qualified name
+        val idleHash    = se.caseHash(TestState.Idle)
+        val runningHash = se.caseHash(TestState.Running)
+        assertTrue(
+          idleHash != runningHash,
+          se.nameFor(idleHash) == "Idle",
+          se.nameFor(runningHash) == "Running",
         )
       },
     ),
@@ -59,17 +70,17 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
       },
       test("metadata includes correct source states") {
-        val sources    = testFSM.transitionMeta.map(_.fromStateOrdinal).toSet
-        val idleOrd    = testFSM.stateEnum.ordinal(TestState.Idle)
-        val runningOrd = testFSM.stateEnum.ordinal(TestState.Running)
-        assertTrue(sources == Set(idleOrd, runningOrd))
+        val sources         = testFSM.transitionMeta.map(_.fromStateCaseHash).toSet
+        val idleCaseHash    = testFSM.stateEnum.caseHash(TestState.Idle)
+        val runningCaseHash = testFSM.stateEnum.caseHash(TestState.Running)
+        assertTrue(sources == Set(idleCaseHash, runningCaseHash))
       },
       test("metadata includes correct target states") {
-        val targets      = testFSM.transitionMeta.flatMap(_.targetStateOrdinal).toSet
-        val runningOrd   = testFSM.stateEnum.ordinal(TestState.Running)
-        val completedOrd = testFSM.stateEnum.ordinal(TestState.Completed)
-        val failedOrd    = testFSM.stateEnum.ordinal(TestState.Failed)
-        assertTrue(targets == Set(runningOrd, completedOrd, failedOrd))
+        val targets           = testFSM.transitionMeta.flatMap(_.targetStateCaseHash).toSet
+        val runningCaseHash   = testFSM.stateEnum.caseHash(TestState.Running)
+        val completedCaseHash = testFSM.stateEnum.caseHash(TestState.Completed)
+        val failedCaseHash    = testFSM.stateEnum.caseHash(TestState.Failed)
+        assertTrue(targets == Set(runningCaseHash, completedCaseHash, failedCaseHash))
       },
     ),
     suite("MermaidVisualizer")(
@@ -198,5 +209,5 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
       }
     ),
-  )
+  ) @@ TestAspect.sequential
 end VisualizationSpec

@@ -12,7 +12,7 @@ import scala.collection.mutable
 // ============================================
 
 /** In-memory EventStore for testing. Thread-safe via synchronized blocks. */
-class InMemoryEventStore[Id, S <: MState, E <: MEvent] extends EventStore[Id, S, E]:
+class SimpleEventStore[Id, S <: MState, E <: MEvent] extends EventStore[Id, S, E]:
   private val events    = mutable.Map[Id, mutable.ArrayBuffer[StoredEvent[Id, Timed[E]]]]()
   private val snapshots = mutable.Map[Id, FSMSnapshot[Id, S]]()
   private var seqNr     = 0L
@@ -68,4 +68,4 @@ class InMemoryEventStore[Id, S <: MState, E <: MEvent] extends EventStore[Id, S,
     snapshots.clear()
     seqNr = 0L
   }
-end InMemoryEventStore
+end SimpleEventStore

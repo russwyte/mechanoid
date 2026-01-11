@@ -5,7 +5,8 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 ## Features
 
 - **Declarative DSL** - Fluent builder API for defining state machines
-- **Type-safe** - States and events are Scala 3 enums with compile-time validation
+- **Type-safe** - States and events are Scala 3 enums or sealed traits with compile-time validation
+- **Hierarchical states** - Organize complex state spaces with nested sealed traits
 - **Effectful** - All transitions are ZIO effects with full environment and error support
 - **Event sourcing** - Optional persistence with snapshots and optimistic locking
 - **Durable timeouts** - Timeouts that survive node failures via database persistence
@@ -24,8 +25,8 @@ enum OrderState extends MState:
 enum OrderEvent extends MEvent:
   case Pay, Ship
 
-// Build FSM definition (UFSM = pure FSM, no environment, no errors)
-val orderFSM = UFSM[OrderState, OrderEvent]
+// Build FSM definition
+val orderFSM = fsm[OrderState, OrderEvent]
   .when(Pending).on(Pay).goto(Paid)
   .when(Paid).on(Ship).goto(Shipped)
 
@@ -45,7 +46,7 @@ val program = ZIO.scoped {
 See the [full documentation](docs/DOCUMENTATION.md) for:
 
 - [Core Concepts](docs/DOCUMENTATION.md#core-concepts) - States, events, transitions
-- [Defining FSMs](docs/DOCUMENTATION.md#defining-fsms) - Guards, actions, timeouts
+- [Defining FSMs](docs/DOCUMENTATION.md#defining-fsms) - Entry/exit actions, timeouts
 - [Running FSMs](docs/DOCUMENTATION.md#running-fsms) - Runtime, sending events
 - [Persistence](docs/DOCUMENTATION.md#persistence) - Event sourcing, snapshots, recovery
 - [Durable Timeouts](docs/DOCUMENTATION.md#durable-timeouts) - TimeoutStore, sweepers, leader election
@@ -57,14 +58,10 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 | Component | Description |
 |-----------|-------------|
-| `FSMDefinition` | Builder for defining state machines (use type aliases below) |
-| `UFSM` | Pure FSM - no environment, no errors (`FSMDefinition[S, E, Any, Nothing]`) |
-| `TaskFSM` | FSM with Throwable errors (`FSMDefinition[S, E, Any, Throwable]`) |
-| `IOFSM` | FSM with custom errors (`FSMDefinition[S, E, Any, Err]`) |
-| `URFSM` | FSM with environment, no errors (`FSMDefinition[S, E, R, Nothing]`) |
-| `RFSM` | FSM with environment and Throwable (`FSMDefinition[S, E, R, Throwable]`) |
-| `FSMRuntime` | In-memory FSM execution |
-| `PersistentFSMRuntime` | Event-sourced FSM with persistence |
+| `fsm[S, E]` | Entry point for defining state machines |
+| `fsm.withCommands[S, E, Cmd]` | Entry point for FSMs with commands |
+| `FSMDefinition[S, E, Cmd]` | Builder type for FSM definitions |
+| `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
 | `TimeoutSweeper` | Background service for durable timeouts |
 | `FSMInstanceLock` | Distributed locking for exactly-once transitions |
 | `LeaderElection` | Lease-based coordination for single-active mode |
@@ -73,11 +70,11 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 ## Example with Persistence
 
 ```scala
-import mechanoid.persistence.*
+import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime(orderId, orderDefinition, Pending)
+    fsm <- FSMRuntime(orderId, orderDefinition, Pending)
     _   <- fsm.send(Pay)      // Persisted to EventStore
     _   <- fsm.saveSnapshot   // Optional: snapshot for faster recovery
   yield ()
@@ -87,16 +84,17 @@ val program = ZIO.scoped {
 ## Example with Durable Timeouts
 
 ```scala
+import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 
 // FSM with timeout that survives node failures
-val definition = UFSM[State, Event]
+val definition = fsm[State, Event]
   .when(AwaitingPayment).onTimeout.goto(Cancelled)
   .withTimeout(AwaitingPayment, 30.minutes)
 
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withDurableTimeouts(id, definition, Pending)
+    fsm <- FSMRuntime.withDurableTimeouts(id, definition, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout persisted - another node's sweeper will fire it if this node dies
   yield ()
@@ -115,12 +113,13 @@ val sweeper = TimeoutSweeper.make(
 ## Example with Distributed Locking
 
 ```scala
+import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.lock.*
 
 // Exactly-once transitions across multiple nodes
 val program = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withLocking(orderId, definition, Pending)
+    fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
     _   <- fsm.send(Pay)  // Lock acquired automatically
   yield ()
 }.provide(eventStoreLayer, lockLayer)
@@ -128,7 +127,7 @@ val program = ZIO.scoped {
 // Combine with durable timeouts for maximum robustness
 val robustProgram = ZIO.scoped {
   for
-    fsm <- PersistentFSMRuntime.withLockingAndTimeouts(
+    fsm <- FSMRuntime.withLockingAndTimeouts(
       orderId, definition, Pending, LockConfig.default
     )
     _   <- fsm.send(StartPayment)

@@ -67,7 +67,7 @@ import scala.annotation.unused
   * [[EventReplayError]]. You must handle this explicitly:
   *
   * {{{
-  * PersistentFSMRuntime(id, definition, initialState)
+  * FSMRuntime(id, definition, initialState)
   *   .catchSome { case e: EventReplayError =>
   *     // Option 1: Log and skip (dangerous but sometimes needed)
   *     ZIO.logWarning(s"Skipping unrecognized event: ${e.event}") *>
@@ -112,7 +112,7 @@ import scala.annotation.unused
   * // Usage - store is created once and shared
   * val program = ZIO.scoped {
   *   for
-  *     fsm <- PersistentFSMRuntime(orderId, definition, Pending)
+  *     fsm <- FSMRuntime(orderId, definition, Pending)
   *     _   <- fsm.send(Pay)
   *   yield ()
   * }.provide(
