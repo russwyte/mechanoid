@@ -3,7 +3,7 @@ package mechanoid.examples
 import zio.*
 import zio.Console.printLine
 import mechanoid.*
-import mechanoid.core.Timed
+import mechanoid.core.{SealedEnum, Timed}
 import mechanoid.persistence.*
 import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.command.*
@@ -930,11 +930,12 @@ object PetStoreApp extends ZIOAppDefault:
 
       // Write FSM structure diagram - uses actual action functions for accurate visualization
       fsmDef = fsmManager.getDefinitionForVisualization
-      // Map states to command types they trigger
+      // Map states to command types they trigger (using caseHash for stable identification)
+      stateEnum     = summon[SealedEnum[OrderState]]
       stateCommands = Map(
-        OrderState.PaymentProcessing.ordinal -> List("ProcessPayment"),
-        OrderState.Paid.ordinal              -> List("RequestShipping", "SendNotification"),
-        OrderState.Shipped.ordinal           -> List("SendNotification"),
+        stateEnum.caseHash(OrderState.PaymentProcessing) -> List("ProcessPayment"),
+        stateEnum.caseHash(OrderState.Paid)              -> List("RequestShipping", "SendNotification"),
+        stateEnum.caseHash(OrderState.Shipped)           -> List("SendNotification"),
       )
       structureMermaid   = MermaidVisualizer.stateDiagramWithCommands(fsmDef, stateCommands, Some(OrderState.Created))
       structureFlowchart = MermaidVisualizer.flowchartWithCommands(fsmDef, stateCommands)

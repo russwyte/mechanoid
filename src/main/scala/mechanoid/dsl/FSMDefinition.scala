@@ -9,7 +9,7 @@ import scala.annotation.publicInBinary
 
 /** Builder for defining a finite state machine.
   *
-  * Both states and events are matched by their "shape" (ordinal), not exact value. This allows rich types like
+  * Both states and events are matched by their "shape" (caseHash), not exact value. This allows rich types like
   * `Failed(reason: String)` or `PaymentSucceeded(transactionId: String)` to work correctly - any `Failed(_)` will match
   * a transition defined for `Failed("")`.
   *
@@ -33,11 +33,11 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
     private[mechanoid] val eventEnum: SealedEnum[Timed[E]],
 ):
 
-  /** Get state names for visualization. */
-  def stateNames: Array[String] = stateEnum.caseNames
+  /** Get state names for visualization (caseHash -> name). */
+  def stateNames: Map[Int, String] = stateEnum.caseNames
 
-  /** Get event names for visualization (includes Timeout). */
-  def eventNames: Array[String] = eventEnum.caseNames
+  /** Get event names for visualization (caseHash -> name, includes Timeout). */
+  def eventNames: Map[Int, String] = eventEnum.caseNames
 
   /** Start defining transitions from a specific state.
     *
@@ -45,14 +45,14 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
     * will match any `Failed(_)` state.
     */
   def when(state: S): WhenBuilder[S, E, Cmd] =
-    new WhenBuilder(this, state.fsmOrdinal)
+    new WhenBuilder(this, state.fsmCaseHash)
 
   /** Define entry/exit actions for a state.
     *
     * The state's shape is used for matching, so actions defined for `Failed("")` will run for any `Failed(_)`.
     */
   def onState(state: S): StateBuilder[S, E, Cmd] =
-    new StateBuilder(this, state.fsmOrdinal)
+    new StateBuilder(this, state.fsmCaseHash)
 
   /** Set a timeout for a state.
     *
@@ -63,18 +63,18 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
     new FSMDefinition(
       transitions,
       lifecycles,
-      timeouts + (state.fsmOrdinal -> duration),
+      timeouts + (state.fsmCaseHash -> duration),
       transitionMeta,
     )
 
   /** Add a transition to the definition. */
   private[dsl] def addTransition(
-      fromOrdinal: Int,
+      fromCaseHash: Int,
       event: Timed[E],
       transition: Transition[S, Timed[E], S],
   ): FSMDefinition[S, E, Cmd] =
     new FSMDefinition(
-      transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
+      transitions + ((fromCaseHash, eventEnum.caseHash(event)) -> transition),
       lifecycles,
       timeouts,
       transitionMeta,
@@ -82,13 +82,13 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
 
   /** Add a transition with visualization metadata. */
   private[dsl] def addTransitionWithMeta(
-      fromOrdinal: Int,
+      fromCaseHash: Int,
       event: Timed[E],
       transition: Transition[S, Timed[E], S],
       meta: TransitionMeta,
   ): FSMDefinition[S, E, Cmd] =
     new FSMDefinition(
-      transitions + ((fromOrdinal, eventEnum.ordinal(event)) -> transition),
+      transitions + ((fromCaseHash, eventEnum.caseHash(event)) -> transition),
       lifecycles,
       timeouts,
       transitionMeta :+ meta,
@@ -96,13 +96,13 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
 
   /** Update lifecycle for a state. */
   private[dsl] def updateLifecycle(
-      stateOrd: Int,
+      stateCaseHash: Int,
       f: StateLifecycle[S, Cmd] => StateLifecycle[S, Cmd],
   ): FSMDefinition[S, E, Cmd] =
-    val current = lifecycles.getOrElse(stateOrd, StateLifecycle.empty[S, Cmd])
+    val current = lifecycles.getOrElse(stateCaseHash, StateLifecycle.empty[S, Cmd])
     new FSMDefinition(
       transitions,
-      lifecycles + (stateOrd -> f(current)),
+      lifecycles + (stateCaseHash -> f(current)),
       timeouts,
       transitionMeta,
     )
@@ -120,8 +120,8 @@ end FSMDefinition
 object FSMDefinition:
   /** Create a new FSM definition without commands.
     *
-    * Uses compile-time derivation to extract state and event ordinals, enabling rich types (case classes with data) to
-    * work correctly.
+    * Uses compile-time derivation to extract state and event caseHashes, enabling rich types (case classes with data)
+    * to work correctly.
     *
     * Both state and event types must be sealed traits or enums. Attempting to use non-sealed types will result in a
     * clear compile-time error.

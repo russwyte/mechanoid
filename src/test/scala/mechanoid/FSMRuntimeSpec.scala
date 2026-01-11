@@ -287,7 +287,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
       // The runtime should handle this by failing conflicting appends
       val id = uniqueId("concurrent")
       for
-        store <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
+//        store <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
         // Start FSM and immediately try concurrent transitions
         result <- ZIO.scoped {
           for
@@ -342,7 +342,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
       for
         store <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
         // Create and use multiple FSMs concurrently
-        results <- ZIO.collectAllPar(
+        _ <- ZIO.collectAllPar(
           List(
             ZIO.scoped {
               for
@@ -719,7 +719,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
     test("recovery fails for changed FSM definition (EventReplayError)") {
       val id = uniqueId("changed-def")
       for
-        store <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
+        // store <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
         // Create events with original definition
         _ <- ZIO.scoped {
           for
@@ -745,7 +745,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
             e.currentState == Paid,
             e.sequenceNr == 2L,
           )
-        case Left(other) =>
+        case Left(_) =>
           // Any other error is unexpected
           assertTrue(false)
         case Right(_) =>

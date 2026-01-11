@@ -439,9 +439,9 @@ object FSMRuntime:
       events: List[StoredEvent[?, Timed[E]]],
   ): ZIO[Any, EventReplayError, FSMState[S]] =
     ZIO.foldLeft(events)(FSMState.initial(startState)) { (fsmState, stored) =>
-      val currentOrdinal = definition.stateEnum.ordinal(fsmState.current)
-      val eventOrdinal   = definition.eventEnum.ordinal(stored.event)
-      definition.transitions.get((currentOrdinal, eventOrdinal)) match
+      val currentCaseHash = definition.stateEnum.caseHash(fsmState.current)
+      val eventCaseHash   = definition.eventEnum.caseHash(stored.event)
+      definition.transitions.get((currentCaseHash, eventCaseHash)) match
         case Some(transition) =>
           // Execute the transition action to get the result
           // During replay, errors are ignored (events were already validated when stored)
@@ -494,11 +494,11 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
   ): ZIO[Any, MechanoidError, TransitionResult[S]] =
     for
       fsmState <- stateRef.get
-      currentState   = fsmState.current
-      currentOrdinal = definition.stateEnum.ordinal(currentState)
-      eventOrdinal   = definition.eventEnum.ordinal(event)
+      currentState    = fsmState.current
+      currentCaseHash = definition.stateEnum.caseHash(currentState)
+      eventCaseHash   = definition.eventEnum.caseHash(event)
       transition <- ZIO
-        .fromOption(definition.transitions.get((currentOrdinal, eventOrdinal)))
+        .fromOption(definition.transitions.get((currentCaseHash, eventCaseHash)))
         .orElseFail(InvalidTransitionError(currentState, event: MEvent))
       result <- executeTransition(fsmState, event, transition)
     yield result
@@ -552,10 +552,10 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
         yield ()
 
   private[mechanoid] def runEntryAction(state: S): ZIO[Any, MechanoidError, Unit] =
-    definition.lifecycles.get(definition.stateEnum.ordinal(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
+    definition.lifecycles.get(definition.stateEnum.caseHash(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
 
   private def runExitAction(state: S): ZIO[Any, MechanoidError, Unit] =
-    definition.lifecycles.get(definition.stateEnum.ordinal(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
+    definition.lifecycles.get(definition.stateEnum.caseHash(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
 
   /** Cancel any pending timeout for this FSM instance.
     *
@@ -577,8 +577,8 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
     *   - Does NOT survive node failures
     */
   private[mechanoid] def startTimeout(state: S): ZIO[Any, Nothing, Unit] =
-    val stateOrd = definition.stateEnum.ordinal(state)
-    ZIO.foreachDiscard(definition.timeouts.get(stateOrd)) { duration =>
+    val stateCaseHash = definition.stateEnum.caseHash(state)
+    ZIO.foreachDiscard(definition.timeouts.get(stateCaseHash)) { duration =>
       timeoutStore match
         case Some(store) =>
           // Durable timeout: persist to TimeoutStore
@@ -591,8 +591,8 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
           // In-memory timeout: use fiber-based approach
           (ZIO.sleep(zio.Duration.fromScala(duration)) *>
             stateRef.get.flatMap { currentFsmState =>
-              // Compare by ordinal (shape) not exact value - timeout fires if still in same state shape
-              ZIO.when(definition.stateEnum.ordinal(currentFsmState.current) == stateOrd)(
+              // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
+              ZIO.when(definition.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(
                 sendInternal(Timed.TimeoutEvent).ignore
               )
             }).forkDaemon.unit

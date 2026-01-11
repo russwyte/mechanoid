@@ -15,7 +15,7 @@ import mechanoid.macros.ExpressionName
   */
 final class StateBuilder[S <: MState, E <: MEvent, Cmd](
     private val definition: FSMDefinition[S, E, Cmd],
-    private val stateOrdinal: Int,
+    private val stateCaseHash: Int,
 ):
 
   /** Define an action to execute when entering this state.
@@ -41,10 +41,10 @@ final class StateBuilder[S <: MState, E <: MEvent, Cmd](
   ): StateBuilder[S, E, Cmd] =
     val wrappedAction = action.mapError(wrapError)
     val newDef        = definition.updateLifecycle(
-      stateOrdinal,
+      stateCaseHash,
       lc => lc.copy(onEntry = Some(wrappedAction), onEntryDescription = Some(description)),
     )
-    new StateBuilder(newDef, stateOrdinal)
+    new StateBuilder(newDef, stateCaseHash)
   end onEntryWithDescription
 
   /** Define an action to execute when exiting this state.
@@ -70,10 +70,10 @@ final class StateBuilder[S <: MState, E <: MEvent, Cmd](
   ): StateBuilder[S, E, Cmd] =
     val wrappedAction = action.mapError(wrapError)
     val newDef        = definition.updateLifecycle(
-      stateOrdinal,
+      stateCaseHash,
       lc => lc.copy(onExit = Some(wrappedAction), onExitDescription = Some(description)),
     )
-    new StateBuilder(newDef, stateOrdinal)
+    new StateBuilder(newDef, stateCaseHash)
   end onExitWithDescription
 
   /** Enqueue a single command when entering this state.
@@ -86,14 +86,14 @@ final class StateBuilder[S <: MState, E <: MEvent, Cmd](
     */
   def enqueue(factory: S => Cmd): StateBuilder[S, E, Cmd] =
     val newDef = definition.updateLifecycle(
-      stateOrdinal,
+      stateCaseHash,
       lc =>
         val newFactory: S => List[Cmd] = lc.commandFactory match
           case Some(existing) => s => existing(s) :+ factory(s)
           case None           => s => List(factory(s))
         lc.copy(commandFactory = Some(newFactory)),
     )
-    new StateBuilder(newDef, stateOrdinal)
+    new StateBuilder(newDef, stateCaseHash)
   end enqueue
 
   /** Enqueue multiple commands when entering this state.
@@ -106,14 +106,14 @@ final class StateBuilder[S <: MState, E <: MEvent, Cmd](
     */
   def enqueueAll(factory: S => List[Cmd]): StateBuilder[S, E, Cmd] =
     val newDef = definition.updateLifecycle(
-      stateOrdinal,
+      stateCaseHash,
       lc =>
         val newFactory: S => List[Cmd] = lc.commandFactory match
           case Some(existing) => s => existing(s) ++ factory(s)
           case None           => factory
         lc.copy(commandFactory = Some(newFactory)),
     )
-    new StateBuilder(newDef, stateOrdinal)
+    new StateBuilder(newDef, stateCaseHash)
   end enqueueAll
 
   /** Complete the state configuration and return to the FSM definition. */

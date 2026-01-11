@@ -18,22 +18,22 @@ import mechanoid.visualization.{TransitionMeta, TransitionKind}
   */
 final class TransitionBuilder[S <: MState, E <: MEvent, Cmd](
     private val definition: FSMDefinition[S, E, Cmd],
-    private val fromStateOrdinal: Int,
+    private val fromStateCaseHash: Int,
     private val event: Timed[E],
 ):
-  private val eventOrdinal: Int = definition.eventEnum.ordinal(event)
+  private val eventCaseHash: Int = definition.eventEnum.caseHash(event)
 
   /** Transition to the specified target state. */
   def goto(targetState: S): FSMDefinition[S, E, Cmd] =
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Goto(targetState))
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
-      fromStateOrdinal,
-      eventOrdinal,
-      Some(definition.stateEnum.ordinal(targetState)),
+      fromStateCaseHash,
+      eventCaseHash,
+      Some(definition.stateEnum.caseHash(targetState)),
       TransitionKind.Goto,
     )
-    definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+    definition.addTransitionWithMeta(fromStateCaseHash, event, transition, meta)
   end goto
 
   /** Stay in the current state (no transition). */
@@ -41,12 +41,12 @@ final class TransitionBuilder[S <: MState, E <: MEvent, Cmd](
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Stay)
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
-      fromStateOrdinal,
-      eventOrdinal,
+      fromStateCaseHash,
+      eventCaseHash,
       None,
       TransitionKind.Stay,
     )
-    definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+    definition.addTransitionWithMeta(fromStateCaseHash, event, transition, meta)
   end stay
 
   /** Stop the FSM. */
@@ -54,12 +54,12 @@ final class TransitionBuilder[S <: MState, E <: MEvent, Cmd](
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Stop(None))
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
-      fromStateOrdinal,
-      eventOrdinal,
+      fromStateCaseHash,
+      eventCaseHash,
       None,
       TransitionKind.Stop(None),
     )
-    definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+    definition.addTransitionWithMeta(fromStateCaseHash, event, transition, meta)
   end stop
 
   /** Stop the FSM with a reason. */
@@ -67,11 +67,11 @@ final class TransitionBuilder[S <: MState, E <: MEvent, Cmd](
     val action     = (_: S, _: Timed[E]) => ZIO.succeed(TransitionResult.Stop(Some(reason)))
     val transition = Transition[S, Timed[E], S](action, None)
     val meta       = TransitionMeta(
-      fromStateOrdinal,
-      eventOrdinal,
+      fromStateCaseHash,
+      eventCaseHash,
       None,
       TransitionKind.Stop(Some(reason)),
     )
-    definition.addTransitionWithMeta(fromStateOrdinal, event, transition, meta)
+    definition.addTransitionWithMeta(fromStateCaseHash, event, transition, meta)
   end stop
 end TransitionBuilder

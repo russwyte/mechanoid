@@ -18,10 +18,7 @@ export core.InvalidTransitionError
 export core.FSMStoppedError
 export core.ActionFailedError
 export core.ProcessingTimeoutError
-export core.StateData
-export core.EventData
-export core.TerminalState
-export core.SealedEnum
+export core.CaseHasher
 
 // Re-export DSL
 export dsl.FSMDefinition

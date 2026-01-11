@@ -12,15 +12,15 @@ enum TransitionKind:
 
 /** Metadata about a transition for visualization purposes. */
 case class TransitionMeta(
-    fromStateOrdinal: Int,
-    eventOrdinal: Int,
-    targetStateOrdinal: Option[Int], // None for Stay/Stop, Some for Goto
+    fromStateCaseHash: Int,
+    eventCaseHash: Int,
+    targetStateCaseHash: Option[Int], // None for Stay/Stop, Some for Goto
     kind: TransitionKind,
 )
 
 /** Metadata about a state for visualization. */
 case class StateMeta(
-    ordinal: Int,
+    caseHash: Int,
     name: String,
     hasEntryAction: Boolean,
     hasExitAction: Boolean,
@@ -31,8 +31,8 @@ case class StateMeta(
 case class FSMMeta(
     transitions: List[TransitionMeta],
     states: List[StateMeta],
-    stateNames: Map[Int, String],
-    eventNames: Map[Int, String],
+    stateNames: Map[Int, String], // caseHash -> name
+    eventNames: Map[Int, String], // caseHash -> name
 )
 
 /** A single step in an FSM execution trace. */

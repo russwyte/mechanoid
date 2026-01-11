@@ -49,16 +49,16 @@ object GraphVizVisualizer:
     // Collect all states
     val allStates = fsm.transitionMeta
       .flatMap { meta =>
-        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+        List(meta.fromStateCaseHash) ++ meta.targetStateCaseHash.toList
       }
       .distinct
       .sorted
 
     // Define state nodes with labels showing timeout/lifecycle info
-    allStates.foreach { stateOrdinal =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
-      val timeout   = fsm.timeouts.get(stateOrdinal)
-      val lifecycle = fsm.lifecycles.get(stateOrdinal)
+    allStates.foreach { stateCaseHash =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
+      val timeout   = fsm.timeouts.get(stateCaseHash)
+      val lifecycle = fsm.lifecycles.get(stateCaseHash)
 
       val annotations = List(
         timeout.map(d => s"timeout: ${formatDuration(d)}"),
@@ -92,12 +92,12 @@ object GraphVizVisualizer:
 
     // Add transitions
     fsm.transitionMeta.foreach { meta =>
-      val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
-      val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
+      val fromName  = fsm.stateEnum.nameFor(meta.fromStateCaseHash)
+      val eventName = fsm.eventEnum.nameFor(meta.eventCaseHash)
 
       meta.kind match
         case TransitionKind.Goto =>
-          val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+          val targetName = fsm.stateEnum.nameFor(meta.targetStateCaseHash.get)
           sb.append(s"    $fromName -> $targetName [label=\"$eventName\"];\n")
         case TransitionKind.Stay =>
           sb.append(s"    $fromName -> $fromName [label=\"$eventName\"];\n")
@@ -128,28 +128,27 @@ object GraphVizVisualizer:
     // Collect all states
     val allStates = fsm.transitionMeta
       .flatMap { meta =>
-        List(meta.fromStateOrdinal) ++ meta.targetStateOrdinal.toList
+        List(meta.fromStateCaseHash) ++ meta.targetStateCaseHash.toList
       }
       .distinct
       .sorted
 
     // Track visited states and transitions
-    val visitedStateOrdinals = trace.visitedStates.map(fsm.stateEnum.ordinal)
-    val currentStateOrdinal  = fsm.stateEnum.ordinal(trace.currentState)
+    val visitedStateCaseHashes = trace.visitedStates.map(fsm.stateEnum.caseHash)
+    val currentStateCaseHash   = fsm.stateEnum.caseHash(trace.currentState)
 
-    // Build set of taken transitions (from, event, to)
+    // Build set of taken transitions (from, to) by caseHash
     val takenTransitions = trace.steps.map { step =>
-      val fromOrd = fsm.stateEnum.ordinal(step.from)
-      val toOrd   = fsm.stateEnum.ordinal(step.to)
-      // Note: eventOrd not used directly since we match on (from, to) pairs
-      (fromOrd, toOrd)
+      val fromHash = fsm.stateEnum.caseHash(step.from)
+      val toHash   = fsm.stateEnum.caseHash(step.to)
+      (fromHash, toHash)
     }.toSet
 
     // Define state nodes with highlighting
-    allStates.foreach { stateOrdinal =>
-      val stateName = fsm.stateEnum.nameFor(stateOrdinal)
-      val timeout   = fsm.timeouts.get(stateOrdinal)
-      val lifecycle = fsm.lifecycles.get(stateOrdinal)
+    allStates.foreach { stateCaseHash =>
+      val stateName = fsm.stateEnum.nameFor(stateCaseHash)
+      val timeout   = fsm.timeouts.get(stateCaseHash)
+      val lifecycle = fsm.lifecycles.get(stateCaseHash)
 
       val annotations = List(
         timeout.map(d => s"timeout: ${formatDuration(d)}"),
@@ -162,8 +161,8 @@ object GraphVizVisualizer:
         else s"$stateName\\n[${annotations.mkString(", ")}]"
 
       val fillColor =
-        if stateOrdinal == currentStateOrdinal then config.currentColor
-        else if visitedStateOrdinals.contains(stateOrdinal) then config.visitedColor
+        if stateCaseHash == currentStateCaseHash then config.currentColor
+        else if visitedStateCaseHashes.contains(stateCaseHash) then config.visitedColor
         else if timeout.isDefined then config.timeoutColor
         else "white"
 
@@ -183,16 +182,16 @@ object GraphVizVisualizer:
 
     // Add transitions with highlighting for taken paths
     fsm.transitionMeta.foreach { meta =>
-      val fromName  = fsm.stateEnum.nameFor(meta.fromStateOrdinal)
-      val eventName = fsm.eventEnum.nameFor(meta.eventOrdinal)
+      val fromName  = fsm.stateEnum.nameFor(meta.fromStateCaseHash)
+      val eventName = fsm.eventEnum.nameFor(meta.eventCaseHash)
 
-      val targetOrd = meta.targetStateOrdinal.getOrElse(meta.fromStateOrdinal)
-      val isTaken   = takenTransitions.contains((meta.fromStateOrdinal, targetOrd))
+      val targetOrd = meta.targetStateCaseHash.getOrElse(meta.fromStateCaseHash)
+      val isTaken   = takenTransitions.contains((meta.fromStateCaseHash, targetOrd))
       val edgeStyle = if isTaken then ", penwidth=2, color=blue" else ""
 
       meta.kind match
         case TransitionKind.Goto =>
-          val targetName = fsm.stateEnum.nameFor(meta.targetStateOrdinal.get)
+          val targetName = fsm.stateEnum.nameFor(meta.targetStateCaseHash.get)
           sb.append(s"    $fromName -> $targetName [label=\"$eventName\"$edgeStyle];\n")
         case TransitionKind.Stay =>
           sb.append(s"    $fromName -> $fromName [label=\"$eventName\"$edgeStyle];\n")

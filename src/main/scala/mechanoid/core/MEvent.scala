@@ -11,11 +11,45 @@ package mechanoid.core
 trait MEvent
 
 object MEvent:
-  /** Extension method providing ordinal access via typeclass, avoiding name collision with Scala 3 enum's ordinal. */
-  extension [E <: MEvent](e: E)(using se: SealedEnum[E]) private[mechanoid] inline def fsmOrdinal: Int = se.ordinal(e)
+
+  /** Automatically derive SealedEnum for any sealed MEvent subtype.
+    *
+    * This enables users to simply write:
+    * {{{
+    * enum MyEvent extends MEvent:
+    *   case Start, Stop
+    * }}}
+    *
+    * Without needing to explicitly derive anything.
+    *
+    * Also supports hierarchical event definitions with nested sealed traits. The macro recursively discovers all leaf
+    * cases (non-sealed case classes/objects).
+    */
+  inline given sealedEnum[E <: MEvent]: SealedEnum[E] =
+    SealedEnum.derived
+
+  /** Extension method providing caseHash access via typeclass. */
+  extension [E <: MEvent](e: E)(using se: SealedEnum[E]) private[mechanoid] inline def fsmCaseHash: Int = se.caseHash(e)
 
   /** Wrap an event as a Timed event for use with EventStore. Internal use only. */
   extension [E <: MEvent](e: E) private[mechanoid] def timed: Timed[E] = Timed.UserEvent(e)
+
+  /** Derive a SealedEnum for an event type with a specific hasher.
+    *
+    * Use this when the default hasher produces collisions (the compiler will tell you):
+    *
+    * {{{
+    * enum MyEvent extends MEvent:
+    *   case Start, Stop
+    *
+    * object MyEvent:
+    *   // The type is inferred - you don't need to reference SealedEnum
+    *   given murmur3Hasher = MEvent.deriveWithHasher[MyEvent](CaseHasher.Murmur3)
+    * }}}
+    */
+  inline def deriveWithHasher[E <: MEvent](inline hasher: CaseHasher): SealedEnum[E] =
+    SealedEnum.deriveWithHasher[E](hasher)
+end MEvent
 
 /** Sealed ADT for events that include the built-in Timeout event.
   *
@@ -35,22 +69,28 @@ object Timed:
 
   /** Derive SealedEnum for Timed event types using the base event's SealedEnum. */
   given sealedEnum[E <: MEvent](using base: SealedEnum[E]): SealedEnum[Timed[E]] with
-    def ordinal(value: Timed[E]): Int = value match
-      case TimeoutEvent => Timeout.Ordinal
-      case UserEvent(e) => base.ordinal(e)
+    import mechanoid.macros.SealedEnumMacros.CaseInfo
 
-    val caseNames: Array[String] = base.caseNames :+ "Timeout"
+    def caseHash(value: Timed[E]): Int = value match
+      case TimeoutEvent => Timeout.CaseHash
+      case UserEvent(e) => base.caseHash(e)
 
-    override def nameFor(ordinal: Int): String =
-      if ordinal == Timeout.Ordinal then "Timeout"
-      else base.nameFor(ordinal)
+    val caseInfos: Array[CaseInfo] =
+      base.caseInfos :+ CaseInfo("Timeout", "mechanoid.core.Timeout", Timeout.CaseHash)
+
+    val caseNames: Map[Int, String] =
+      base.caseNames + (Timeout.CaseHash -> "Timeout")
+
+    override def nameFor(hash: Int): String =
+      if hash == Timeout.CaseHash then "Timeout"
+      else base.nameFor(hash)
   end sealedEnum
 
-  /** Extension method providing ordinal access for timed events. */
+  /** Extension method providing caseHash access for timed events. */
   extension [E <: MEvent](e: Timed[E])(using base: SealedEnum[E])
-    private[mechanoid] inline def fsmOrdinal: Int = e match
-      case TimeoutEvent  => Timeout.Ordinal
-      case UserEvent(ev) => base.ordinal(ev)
+    private[mechanoid] inline def fsmCaseHash: Int = e match
+      case TimeoutEvent  => Timeout.CaseHash
+      case UserEvent(ev) => base.caseHash(ev)
 
   /** Extension methods that don't require SealedEnum. */
   extension [E <: MEvent](e: Timed[E])
@@ -66,20 +106,10 @@ object Timed:
   end extension
 end Timed
 
-/** Event that carries a payload.
-  *
-  * Useful for events that need to pass data:
-  * {{{
-  * case class DataReceived(payload: Array[Byte]) extends MEvent with EventData[Array[Byte]]:
-  *   def data: Array[Byte] = payload
-  * }}}
-  */
-trait EventData[D]:
-  def data: D
-
 /** Built-in timeout event. Internal use only.
   *
   * This event is automatically sent when a state's timeout duration elapses.
   */
 private[mechanoid] case object Timeout extends MEvent:
-  val Ordinal: Int = -1
+  /** Stable hash for the Timeout event, computed from its fully qualified name. */
+  val CaseHash: Int = "mechanoid.core.Timeout".hashCode
