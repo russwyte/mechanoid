@@ -6,7 +6,7 @@
 |--------|-------|
 | ⏳ Pending | 0 |
 | ⚙️ Processing | 0 |
-| ✅ Completed | 21 |
+| ✅ Completed | 20 |
 | ❌ Failed | 2 |
 | ⏭️ Skipped | 0 |
 
@@ -34,7 +34,7 @@ flowchart LR
     style cmd3 fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
     style cmd4 fill:#87CEEB,stroke:#4682B4,stroke-width:2px
 
-    cmd0 -->|6| completed
+    cmd0 -->|5| completed
     cmd1 -->|3| completed
     cmd1 -->|2| failed
     cmd2 -->|3| completed
@@ -48,49 +48,48 @@ flowchart LR
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 1 | ProcessPayment(orderId=1, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ❌ Failed | 1 | 16:50:04.279 |
-|   | ↳ Error: FraudCheckFailed |   |   |   |
+| 1 | ProcessPayment(orderId=1, customerId={redacted}, customerName={redacted}, petName=Buddy, amount=250.0, paymentMethod={redacted}) | ✅ Completed | 1 | 13:33:45.539 |
+| 2 | RequestShipping(orderId=1, petName=Buddy, customerName={redacted}, customerAddress={redacted}, correlationId=2da0f8a4-d05c-431d-90d7-10c230976a68) | ✅ Completed | 1 | 13:33:45.974 |
+| 3 | SendNotification(orderId=1, customerEmail={redacted}, customerName={redacted}, petName=Buddy, notificationType=order_confirmed, messageId=80823bca-abc6-4b22-8c88-341bbf1c89ed) | ✅ Completed | 1 | 13:33:45.975 |
+| 4 | NotificationCallback(messageId=80823bca-abc6-4b22-8c88-341bbf1c89ed, delivered=true, error=None) | ✅ Completed | 1 | 13:33:46.672 |
+| 6 | ShippingCallback(correlationId=2da0f8a4-d05c-431d-90d7-10c230976a68, trackingNumber=TRACK-708825, carrier=PetExpress, estimatedDelivery=4 business days, success=true, error=None) | ✅ Completed | 1 | 13:33:46.812 |
+| 7 | SendNotification(orderId=1, customerEmail={redacted}, customerName={redacted}, petName=Buddy, notificationType=shipped, messageId=80823bca-abc6-4b22-8c88-341bbf1c89ed-shipped) | ✅ Completed | 1 | 13:33:47.004 |
+| 8 | NotificationCallback(messageId=80823bca-abc6-4b22-8c88-341bbf1c89ed-shipped, delivered=true, error=None) | ✅ Completed | 1 | 13:33:47.622 |
 
 ### Instance: 2
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 2 | ProcessPayment(orderId=2, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:50:05.545 |
-| 3 | RequestShipping(orderId=2, petName=Hoppy, customerName={redacted}, customerAddress={redacted}, correlationId=4f3520d9-1270-46cd-ab83-215a53842e4e) | ✅ Completed | 1 | 16:50:05.783 |
-| 4 | SendNotification(orderId=2, customerEmail={redacted}, customerName={redacted}, petName=Hoppy, notificationType=order_confirmed, messageId=937ebdbe-1066-4b19-8636-88dac73cafed) | ✅ Completed | 1 | 16:50:05.783 |
-| 6 | NotificationCallback(messageId=937ebdbe-1066-4b19-8636-88dac73cafed, delivered=true, error=None) | ✅ Completed | 1 | 16:50:06.820 |
-| 7 | ShippingCallback(correlationId=4f3520d9-1270-46cd-ab83-215a53842e4e, trackingNumber=TRACK-450056, carrier=FurryFriends Delivery, estimatedDelivery=4 business days, success=true, error=None) | ✅ Completed | 1 | 16:50:06.855 |
-| 8 | SendNotification(orderId=2, customerEmail={redacted}, customerName={redacted}, petName=Hoppy, notificationType=shipped, messageId=937ebdbe-1066-4b19-8636-88dac73cafed-shipped) | ✅ Completed | 1 | 16:50:07.044 |
-| 9 | NotificationCallback(messageId=937ebdbe-1066-4b19-8636-88dac73cafed-shipped, delivered=true, error=None) | ✅ Completed | 1 | 16:50:07.761 |
+| 5 | ProcessPayment(orderId=2, customerId={redacted}, customerName={redacted}, petName=Tweety, amount=75.0, paymentMethod={redacted}) | ✅ Completed | 2 | 13:33:46.807 |
+| 14 | RequestShipping(orderId=2, petName=Tweety, customerName={redacted}, customerAddress={redacted}, correlationId=2e3a649d-3a32-4011-afd3-1a1c2540b54f) | ✅ Completed | 1 | 13:33:50.240 |
+| 15 | SendNotification(orderId=2, customerEmail={redacted}, customerName={redacted}, petName=Tweety, notificationType=order_confirmed, messageId=8220dac6-838e-47ec-88f0-491b99219530) | ✅ Completed | 1 | 13:33:50.240 |
+| 17 | ShippingCallback(correlationId=2e3a649d-3a32-4011-afd3-1a1c2540b54f, trackingNumber=TRACK-969114, carrier=FurryFriends Delivery, estimatedDelivery=6 business days, success=true, error=None) | ✅ Completed | 1 | 13:33:51.153 |
+| 18 | SendNotification(orderId=2, customerEmail={redacted}, customerName={redacted}, petName=Tweety, notificationType=shipped, messageId=8220dac6-838e-47ec-88f0-491b99219530-shipped) | ✅ Completed | 1 | 13:33:53.127 |
+| 19 | NotificationCallback(messageId=8220dac6-838e-47ec-88f0-491b99219530-shipped, delivered=true, error=None) | ✅ Completed | 1 | 13:33:53.629 |
 
 ### Instance: 3
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 5 | ProcessPayment(orderId=3, customerId={redacted}, customerName={redacted}, petName=Buddy, amount=250.0, paymentMethod={redacted}) | ❌ Failed | 1 | 16:50:06.806 |
-|   | ↳ Error: InsufficientFunds |   |   |   |
+| 9 | ProcessPayment(orderId=3, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ✅ Completed | 1 | 13:33:48.069 |
+| 10 | RequestShipping(orderId=3, petName=Hoppy, customerName={redacted}, customerAddress={redacted}, correlationId=300f991a-8295-495b-aeaf-b1be0229cdcf) | ✅ Completed | 2 | 13:33:48.266 |
+| 11 | SendNotification(orderId=3, customerEmail={redacted}, customerName={redacted}, petName=Hoppy, notificationType=order_confirmed, messageId=345493ac-58af-4549-88af-04d065c4bc16) | ✅ Completed | 1 | 13:33:48.266 |
+| 12 | NotificationCallback(messageId=345493ac-58af-4549-88af-04d065c4bc16, delivered=true, error=None) | ✅ Completed | 1 | 13:33:49.063 |
+| 20 | ShippingCallback(correlationId=300f991a-8295-495b-aeaf-b1be0229cdcf, trackingNumber=TRACK-2317, carrier=FurryFriends Delivery, estimatedDelivery=6 business days, success=true, error=None) | ✅ Completed | 1 | 13:33:54.749 |
+| 21 | SendNotification(orderId=3, customerEmail={redacted}, customerName={redacted}, petName=Hoppy, notificationType=shipped, messageId=345493ac-58af-4549-88af-04d065c4bc16-shipped) | ✅ Completed | 1 | 13:33:54.876 |
+| 22 | NotificationCallback(messageId=345493ac-58af-4549-88af-04d065c4bc16-shipped, delivered=true, error=None) | ✅ Completed | 1 | 13:33:55.556 |
 
 ### Instance: 4
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 10 | ProcessPayment(orderId=4, customerId={redacted}, customerName={redacted}, petName=Whiskers, amount=150.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:50:08.066 |
-| 11 | RequestShipping(orderId=4, petName=Whiskers, customerName={redacted}, customerAddress={redacted}, correlationId=404ff617-6e3b-47b9-872f-f0232b0ba623) | ✅ Completed | 1 | 16:50:08.319 |
-| 12 | SendNotification(orderId=4, customerEmail={redacted}, customerName={redacted}, petName=Whiskers, notificationType=order_confirmed, messageId=fd2c76e1-23c0-4438-9933-e48a857d4346) | ✅ Completed | 1 | 16:50:08.319 |
-| 13 | NotificationCallback(messageId=fd2c76e1-23c0-4438-9933-e48a857d4346, delivered=true, error=None) | ✅ Completed | 1 | 16:50:09.104 |
-| 15 | ShippingCallback(correlationId=404ff617-6e3b-47b9-872f-f0232b0ba623, trackingNumber=TRACK-206515, carrier=FurryFriends Delivery, estimatedDelivery=3 business days, success=true, error=None) | ✅ Completed | 1 | 16:50:09.679 |
-| 18 | SendNotification(orderId=4, customerEmail={redacted}, customerName={redacted}, petName=Whiskers, notificationType=shipped, messageId=fd2c76e1-23c0-4438-9933-e48a857d4346-shipped) | ✅ Completed | 1 | 16:50:10.032 |
-| 21 | NotificationCallback(messageId=fd2c76e1-23c0-4438-9933-e48a857d4346-shipped, delivered=true, error=None) | ✅ Completed | 1 | 16:50:10.973 |
+| 13 | ProcessPayment(orderId=4, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ❌ Failed | 1 | 13:33:49.331 |
+|   | ↳ Error: FraudCheckFailed |   |   |   |
 
 ### Instance: 5
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 14 | ProcessPayment(orderId=5, customerId={redacted}, customerName={redacted}, petName=Tweety, amount=75.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:50:09.328 |
-| 16 | RequestShipping(orderId=5, petName=Tweety, customerName={redacted}, customerAddress={redacted}, correlationId=7581ab60-bc5e-4a6c-a4f9-55a07adca01e) | ✅ Completed | 1 | 16:50:09.730 |
-| 17 | SendNotification(orderId=5, customerEmail={redacted}, customerName={redacted}, petName=Tweety, notificationType=order_confirmed, messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62) | ✅ Completed | 1 | 16:50:09.731 |
-| 19 | NotificationCallback(messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62, delivered=true, error=None) | ✅ Completed | 1 | 16:50:10.470 |
-| 20 | ShippingCallback(correlationId=7581ab60-bc5e-4a6c-a4f9-55a07adca01e, trackingNumber=TRACK-351714, carrier=FurryFriends Delivery, estimatedDelivery=5 business days, success=true, error=None) | ✅ Completed | 1 | 16:50:10.913 |
-| 22 | SendNotification(orderId=5, customerEmail={redacted}, customerName={redacted}, petName=Tweety, notificationType=shipped, messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62-shipped) | ✅ Completed | 1 | 16:50:10.984 |
-| 23 | NotificationCallback(messageId=5e64a290-b8bc-4ef5-80de-e48ac6980a62-shipped, delivered=true, error=None) | ✅ Completed | 1 | 16:50:11.789 |
+| 16 | ProcessPayment(orderId=5, customerId={redacted}, customerName={redacted}, petName=Goldie, amount=25.0, paymentMethod={redacted}) | ❌ Failed | 1 | 13:33:50.591 |
+|   | ↳ Error: CardDeclined(Generic decline) |   |   |   |
 

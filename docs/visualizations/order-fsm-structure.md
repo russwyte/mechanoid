@@ -5,12 +5,12 @@
 ```mermaid
 stateDiagram-v2
     [*] --> Created
-    Created --> PaymentProcessing: InitiatePayment
+    Shipped --> Delivered: DeliveryConfirmed
     PaymentProcessing --> Paid: PaymentSucceeded
     PaymentProcessing --> Cancelled: PaymentFailed
-    Paid --> ShippingRequested: RequestShipping
     ShippingRequested --> Shipped: ShipmentDispatched
-    Shipped --> Delivered: DeliveryConfirmed
+    Paid --> ShippingRequested: RequestShipping
+    Created --> PaymentProcessing: InitiatePayment
     note left of PaymentProcessing : enqueuePaymentCommand [ProcessPayment]
     note left of Paid : enqueueShippingCommands [RequestShipping, SendNotification]
     note left of Shipped : enqueueShippedNotification [SendNotification]
@@ -22,13 +22,13 @@ stateDiagram-v2
 flowchart TB
     subgraph FSM["🔄 FSM States"]
         direction LR
-        Created(("🆕 Created"))
-        PaymentProcessing(("⏳ PaymentProcessing"))
-        Paid(("💰 Paid"))
-        ShippingRequested(("⏳ ShippingRequested"))
         Shipped(("📦 Shipped"))
+        PaymentProcessing(("⏳ PaymentProcessing"))
+        ShippingRequested(("⏳ ShippingRequested"))
         Delivered(("✅ Delivered"))
         Cancelled(("❌ Cancelled"))
+        Paid(("💰 Paid"))
+        Created(("🆕 Created"))
         Created -->|InitiatePayment| PaymentProcessing
         PaymentProcessing -->|PaymentSucceeded| Paid
         PaymentProcessing -->|PaymentFailed| Cancelled
@@ -65,13 +65,13 @@ digraph FSM {
     node [shape=ellipse, fontsize=12];
     edge [fontsize=10];
 
-    Created [label="Created"];
-    PaymentProcessing [label="PaymentProcessing\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueuePaymentCommand]"];
-    Paid [label="Paid\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueueShippingCommands]"];
-    ShippingRequested [label="ShippingRequested"];
     Shipped [label="Shipped\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueueShippedNotification]"];
+    PaymentProcessing [label="PaymentProcessing\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueuePaymentCommand]"];
+    ShippingRequested [label="ShippingRequested"];
     Delivered [label="Delivered"];
     Cancelled [label="Cancelled"];
+    Paid [label="Paid\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueueShippingCommands]"];
+    Created [label="Created"];
     __start__ [shape=point, width=0.2];
     __start__ -> Created;
 
