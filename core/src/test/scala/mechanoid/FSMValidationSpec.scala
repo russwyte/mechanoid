@@ -47,9 +47,6 @@ object FSMValidationSpec extends ZIOSpecDefault:
             .when(C)
             .on(E1)
             .goto(A)
-            .when(C)
-            .on(E1)
-            .goto(A)
 
         }
 
