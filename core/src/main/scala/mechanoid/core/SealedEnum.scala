@@ -2,7 +2,7 @@ package mechanoid.core
 
 import scala.annotation.{implicitNotFound, nowarn}
 import mechanoid.macros.SealedEnumMacros
-import mechanoid.macros.SealedEnumMacros.CaseInfo
+import mechanoid.macros.SealedEnumMacros.{CaseInfo, HierarchyInfo}
 
 /** Type class that proves a type is a sealed enum or sealed trait.
   *
@@ -45,6 +45,19 @@ private[mechanoid] trait SealedEnum[T]:
 
   /** Get all hashes in declaration order. */
   def allHashes: Array[Int] = caseInfos.map(_.hash)
+
+  /** Get hierarchy information mapping parent types to their leaf descendants.
+    *
+    * This enables `whenAny[ParentState]` to expand to transitions for all leaf states under that parent.
+    */
+  def hierarchyInfo: HierarchyInfo
+
+  /** Get all leaf hashes that are descendants of the given parent hash.
+    *
+    * Returns empty set if the hash doesn't correspond to a parent type.
+    */
+  def leafHashesFor(parentHash: Int): Set[Int] =
+    hierarchyInfo.parentToLeaves.getOrElse(parentHash, Set.empty)
 end SealedEnum
 
 private[mechanoid] object SealedEnum:
@@ -74,6 +87,8 @@ private[mechanoid] object SealedEnum:
       val caseInfos: Array[CaseInfo] = SealedEnumMacros.extractCaseInfo[T](hasher)
 
       val caseNames: Map[Int, String] = caseInfos.map(ci => ci.hash -> ci.simpleName).toMap
+
+      val hierarchyInfo: HierarchyInfo = SealedEnumMacros.extractHierarchyInfo[T](hasher)
 
       // Use macro-generated pattern matching for caseHash
       // This works with nested sealed traits (Mirror.ordinal only works with direct children)

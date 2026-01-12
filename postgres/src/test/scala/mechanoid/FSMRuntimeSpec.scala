@@ -32,16 +32,17 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   import OrderState.*
   import OrderEvent.*
 
-  val orderDefinition = fsm[OrderState, OrderEvent]
-    .when(Pending)
-    .on(Pay)
-    .goto(Paid)
-    .when(Paid)
-    .on(Ship)
-    .goto(Shipped)
-    .when(Shipped)
-    .on(Deliver)
-    .goto(Delivered)
+  val orderDefinition = build[OrderState, OrderEvent] {
+    _.when(Pending)
+      .on(Pay)
+      .goto(Paid)
+      .when(Paid)
+      .on(Ship)
+      .goto(Shipped)
+      .when(Shipped)
+      .on(Deliver)
+      .goto(Delivered)
+  }
 
   /** Generate a unique instance ID for test isolation. */
   def uniqueId(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
@@ -730,10 +731,11 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
         }
         // Try to recover with a DIFFERENT definition that doesn't have Ship transition
         // We create a definition that only has Pending -> Paid
-        restrictedDefinition = fsm[OrderState, OrderEvent]
-          .when(Pending)
-          .on(Pay)
-          .goto(Paid)
+        restrictedDefinition = build[OrderState, OrderEvent] {
+          _.when(Pending)
+            .on(Pay)
+            .goto(Paid)
+        }
         // No Ship transition!
         // This should fail because Ship event exists but no transition is defined
         result <- ZIO.scoped {

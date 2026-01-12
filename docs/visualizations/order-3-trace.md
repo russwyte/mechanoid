@@ -1,10 +1,11 @@
 # Order 3 Execution Trace
 
-**Final State:** Shipped
+**Final State:** Paid
 
 ## Command Summary
 
-- Completed: 7
+- Completed: 3
+- Failed: 1
 
 ## FSM + Commands Sequence Diagram
 
@@ -19,40 +20,24 @@ sequenceDiagram
     FSM->>FSM: InitiatePayment
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=3<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=3<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>amount=75.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: PaymentSucceeded
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=3<br/>petName=Hoppy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=300f991a-8295-495b-aeaf-b1be0229cdcf
+    Note right of CQ: orderId=3<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=4a2b00d7-b1b7-44b9-9dc3-a88d967739d3
     CQ->>W: claim
-    W->>CQ: ✅ Completed
+    W->>CQ: ❌ Failed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=order_confirmed<br/>messageId=345493ac-58af-4549-88af-04d065c4bc16
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>FSM: RequestShipping
-    Note over FSM: ShippingRequested
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=345493ac-58af-4549-88af-04d065c4bc16<br/>delivered=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>FSM: ShipmentDispatched
-    Note over FSM: Shipped
-    FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=300f991a-8295-495b-aeaf-b1be0229cdcf<br/>trackingNumber=TRACK-2317<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=6 business days<br/>success=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=shipped<br/>messageId=345493ac-58af-4549-88af-04d065c4bc16-shipped
+    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=62ba75ad-b96c-4a3a-b14e-db70fe2806a9
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=345493ac-58af-4549-88af-04d065c4bc16-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=62ba75ad-b96c-4a3a-b14e-db70fe2806a9<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    Note over FSM: Current: Shipped
+    Note over FSM: Current: Paid
 ```
 
 ## FSM-Only Sequence Diagram
@@ -65,11 +50,7 @@ sequenceDiagram
     Note over FSM: PaymentProcessing
     FSM->>FSM: PaymentSucceeded
     Note over FSM: Paid
-    FSM->>FSM: RequestShipping
-    Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
-    Note over FSM: Shipped
-    Note over FSM: Current: Shipped
+    Note over FSM: Current: Paid
 ```
 
 ## Flowchart with Commands
@@ -112,9 +93,7 @@ flowchart TB
     style SendNotification fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
 
     style Created fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style ShippingRequested fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style PaymentProcessing fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Shipped fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style Paid fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Shipped fill:#90EE90,stroke:#228B22,stroke-width:4px
+    style Paid fill:#90EE90,stroke:#228B22,stroke-width:4px
 ```

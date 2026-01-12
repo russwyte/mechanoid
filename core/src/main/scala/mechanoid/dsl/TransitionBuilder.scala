@@ -74,4 +74,21 @@ final class TransitionBuilder[S <: MState, E <: MEvent, Cmd](
     )
     definition.addTransitionWithMeta(fromStateCaseHash, event, transition, meta)
   end stop
+
+  /** Mark this transition as an intentional override.
+    *
+    * Use this when you want to replace a transition that was defined earlier (e.g., when using `whenAny[T]` to set
+    * defaults and then overriding for specific states).
+    *
+    * Example:
+    * {{{
+    * build {
+    *   fsm[MyState, MyEvent]
+    *     .whenAny[Parent].on(Cancel).goto(Draft)           // Default for all
+    *     .when(SpecificState).on(Cancel).override.goto(Special)  // Intentional override
+    * }
+    * }}}
+    */
+  def `override`: OverrideTransitionBuilder[S, E, Cmd] =
+    new OverrideTransitionBuilder(definition, fromStateCaseHash, event)
 end TransitionBuilder

@@ -69,7 +69,7 @@ object Timed:
 
   /** Derive SealedEnum for Timed event types using the base event's SealedEnum. */
   given sealedEnum[E <: MEvent](using base: SealedEnum[E]): SealedEnum[Timed[E]] with
-    import mechanoid.macros.SealedEnumMacros.CaseInfo
+    import mechanoid.macros.SealedEnumMacros.{CaseInfo, HierarchyInfo}
 
     def caseHash(value: Timed[E]): Int = value match
       case TimeoutEvent => Timeout.CaseHash
@@ -80,6 +80,9 @@ object Timed:
 
     val caseNames: Map[Int, String] =
       base.caseNames + (Timeout.CaseHash -> "Timeout")
+
+    // Timed is a flat wrapper, so hierarchy comes from the base event
+    val hierarchyInfo: HierarchyInfo = base.hierarchyInfo
 
     override def nameFor(hash: Int): String =
       if hash == Timeout.CaseHash then "Timeout"

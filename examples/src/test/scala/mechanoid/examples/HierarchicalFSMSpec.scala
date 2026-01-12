@@ -24,8 +24,9 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
           names.contains("Rejected"),
           names.contains("Published"),
           names.contains("Archived"),
-          // Should have exactly 8 leaf states
-          se.caseInfos.length == 8,
+          names.contains("Cancelled"),
+          // Should have exactly 9 leaf states
+          se.caseInfos.length == 9,
         )
       },
       test("excludes parent sealed traits from cases") {
@@ -48,12 +49,13 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
           se.caseHash(Rejected),
           se.caseHash(Published),
           se.caseHash(Archived),
+          se.caseHash(Cancelled),
         )
         assertTrue(
           // All hashes should be unique
-          hashes.distinct.length == 8,
+          hashes.distinct.length == 9,
           // All hashes should be non-zero (except by coincidence)
-          hashes.forall(_ != 0) || hashes.distinct.length == 8,
+          hashes.forall(_ != 0) || hashes.distinct.length == 9,
         )
       },
       test("nameOf works for nested states") {
@@ -169,8 +171,71 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
           Rejected,
           Published,
           Archived,
+          Cancelled,
         )
-        assertTrue(allStates.length == 8)
+        assertTrue(allStates.length == 9)
+      },
+    ),
+    suite("whenAny - hierarchical transitions")(
+      test("CancelReview from any InReview state goes to Draft") {
+        ZIO.scoped {
+          for
+            // Test from PendingReview
+            fsm1 <- FSMRuntime.make(DocumentWorkflowFSM.definition, PendingReview)
+            _    <- fsm1.send(CancelReview)
+            s1   <- fsm1.currentState
+
+            // Test from UnderReview
+            fsm2 <- FSMRuntime.make(DocumentWorkflowFSM.definition, UnderReview)
+            _    <- fsm2.send(CancelReview)
+            s2   <- fsm2.currentState
+
+            // Test from ChangesRequested
+            fsm3 <- FSMRuntime.make(DocumentWorkflowFSM.definition, ChangesRequested)
+            _    <- fsm3.send(CancelReview)
+            s3   <- fsm3.currentState
+          yield assertTrue(
+            s1 == Draft,
+            s2 == Draft,
+            s3 == Draft,
+          )
+        }
+      },
+      test("Abandon from any Approval state goes to Cancelled") {
+        ZIO.scoped {
+          for
+            // Test from PendingApproval
+            fsm1 <- FSMRuntime.make(DocumentWorkflowFSM.definition, PendingApproval)
+            _    <- fsm1.send(Abandon)
+            s1   <- fsm1.currentState
+
+            // Test from Rejected
+            fsm2 <- FSMRuntime.make(DocumentWorkflowFSM.definition, Rejected)
+            _    <- fsm2.send(Abandon)
+            s2   <- fsm2.currentState
+          yield assertTrue(
+            s1 == Cancelled,
+            s2 == Cancelled,
+          )
+        }
+      },
+      test("hierarchyInfo contains correct parent-to-leaf mappings") {
+        val se        = summon[SealedEnum[DocumentState]]
+        val hierarchy = se.hierarchyInfo.parentToLeaves
+
+        // Get the hash of InReview parent
+        val inReviewHash = "mechanoid.examples.hierarchical.InReview".hashCode
+
+        // InReview should map to its leaf states
+        val inReviewLeaves = hierarchy.get(inReviewHash)
+
+        assertTrue(
+          inReviewLeaves.isDefined,
+          inReviewLeaves.get.contains(se.caseHash(PendingReview)),
+          inReviewLeaves.get.contains(se.caseHash(UnderReview)),
+          inReviewLeaves.get.contains(se.caseHash(ChangesRequested)),
+          inReviewLeaves.get.size == 3,
+        )
       },
     ),
   ) @@ TestAspect.sequential

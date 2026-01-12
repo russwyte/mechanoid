@@ -69,32 +69,5 @@ export stores.InMemoryCommandStore
 export stores.InMemoryTimeoutStore
 export stores.InMemoryFSMInstanceLock
 
-/** Create a new FSM definition without commands.
-  *
-  * This is the primary entry point for defining FSMs with a fluent DSL:
-  *
-  * {{{
-  * import mechanoid.*
-  *
-  * val myFSM = fsm[MyState, MyEvent]
-  *   .when(Idle).on(Start).goto(Running)
-  *   .when(Running).on(Stop).goto(Idle)
-  * }}}
-  */
-def fsm[S <: MState: SealedEnum, E <: MEvent: SealedEnum]: FSMDefinition[S, E, Nothing] =
-  FSMDefinition[S, E]
-
-/** Create a new FSM definition with commands.
-  *
-  * Commands enable the transactional outbox pattern for reliable side effect execution:
-  *
-  * {{{
-  * import mechanoid.*
-  *
-  * val myFSM = fsm[MyState, MyEvent, MyCommand]
-  *   .when(Idle).on(Start).goto(Running)
-  *   .onState(Running).enqueue(_ => NotifySystem).done
-  * }}}
-  */
-def fsmWithCommands[S <: MState: SealedEnum, E <: MEvent: SealedEnum, Cmd]: FSMDefinition[S, E, Cmd] =
-  FSMDefinition.withCommands[S, E, Cmd]
+// Re-export build macro for FSM validation
+export macros.FSMValidation.build

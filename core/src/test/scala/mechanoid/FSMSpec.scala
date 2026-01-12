@@ -45,10 +45,11 @@ object FSMSpec extends ZIOSpecDefault:
 
   def spec = suite("FSM Spec")(
     test("should start in initial state") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+      }
 
       ZIO.scoped {
         for
@@ -58,10 +59,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should transition on valid event") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+      }
 
       ZIO.scoped {
         for
@@ -75,16 +77,17 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should follow transition sequence") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
-        .when(Green)
-        .on(Timer)
-        .goto(Yellow)
-        .when(Yellow)
-        .on(Timer)
-        .goto(Red)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+          .when(Green)
+          .on(Timer)
+          .goto(Yellow)
+          .when(Yellow)
+          .on(Timer)
+          .goto(Red)
+      }
 
       ZIO.scoped {
         for
@@ -101,10 +104,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should stay in state when configured") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Emergency)
-        .stay
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Emergency)
+          .stay
+      }
 
       ZIO.scoped {
         for
@@ -118,10 +122,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should fail on invalid transition") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+      }
 
       ZIO.scoped {
         for
@@ -135,14 +140,14 @@ object FSMSpec extends ZIOSpecDefault:
     test("should execute entry action on initial state") {
       for
         entryRef <- Ref.make(false)
-        definition =
-          fsm[TrafficLight, TrafficEvent]
-            .when(Red)
+        definition = build[TrafficLight, TrafficEvent] {
+          _.when(Red)
             .on(Timer)
             .goto(Green)
             .onState(Red)
             .onEntry(entryRef.set(true))
             .done
+        }
         _        <- ZIO.scoped(definition.build(Red))
         entryRan <- entryRef.get
       yield assertTrue(entryRan)
@@ -150,9 +155,8 @@ object FSMSpec extends ZIOSpecDefault:
     test("should execute entry and exit actions on transition") {
       for
         log <- Ref.make(List.empty[String])
-        definition =
-          fsm[TrafficLight, TrafficEvent]
-            .when(Red)
+        definition = build[TrafficLight, TrafficEvent] {
+          _.when(Red)
             .on(Timer)
             .goto(Green)
             .onState(Red)
@@ -161,6 +165,7 @@ object FSMSpec extends ZIOSpecDefault:
             .onState(Green)
             .onEntry(log.update(_ :+ "entry-green"))
             .done
+        }
         _ <- ZIO.scoped {
           for
             fsm <- definition.build(Red)
@@ -173,10 +178,11 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Stop tests
     test("should stop FSM and report not running") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+      }
 
       ZIO.scoped {
         for
@@ -191,10 +197,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should return Stop result after FSM is stopped") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+      }
 
       ZIO.scoped {
         for
@@ -207,10 +214,11 @@ object FSMSpec extends ZIOSpecDefault:
 
     // FSMState metadata tests
     test("should track state metadata") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+      }
 
       ZIO.scoped {
         for
@@ -232,14 +240,14 @@ object FSMSpec extends ZIOSpecDefault:
     test("should run entry action when transitioning directly") {
       for
         enteredYellow <- Ref.make(false)
-        definition =
-          fsm[TrafficLight, TrafficEvent]
-            .when(Red)
+        definition = build[TrafficLight, TrafficEvent] {
+          _.when(Red)
             .on(Timer)
             .goto(Yellow)
             .onState(Yellow)
             .onEntry(enteredYellow.set(true))
             .done
+        }
         result <- ZIO.scoped {
           for
             fsm     <- definition.build(Red)
@@ -256,14 +264,15 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Timeout tests - using live clock
     test("should trigger timeout event after duration") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
-        .when(Red)
-        .onTimeout
-        .goto(Yellow)
-        .withTimeout(Red, 50.millis)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+          .when(Red)
+          .onTimeout
+          .goto(Yellow)
+          .withTimeout(Red, 50.millis)
+      }
 
       ZIO.scoped {
         for
@@ -279,14 +288,15 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should cancel timeout when transitioning to new state") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Timer)
-        .goto(Green)
-        .when(Red)
-        .onTimeout
-        .goto(Yellow)
-        .withTimeout(Red, 100.millis)
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Timer)
+          .goto(Green)
+          .when(Red)
+          .onTimeout
+          .goto(Yellow)
+          .withTimeout(Red, 100.millis)
+      }
 
       ZIO.scoped {
         for
@@ -302,10 +312,11 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Stay does not add to history
     test("should not add to history on stay") {
-      val definition = fsm[TrafficLight, TrafficEvent]
-        .when(Red)
-        .on(Emergency)
-        .stay
+      val definition = build[TrafficLight, TrafficEvent] {
+        _.when(Red)
+          .on(Emergency)
+          .stay
+      }
 
       ZIO.scoped {
         for
@@ -320,16 +331,17 @@ object FSMSpec extends ZIOSpecDefault:
     // Sealed trait hierarchy tests
     test("should handle sealed trait hierarchy with case classes") {
       // Build FSM with transitions between different state types
-      val definition = fsm[DocumentState, DocumentEvent]
-        .when(Draft)
-        .on(SubmitForReview("reviewer1"))
-        .goto(UnderReview("reviewer1"))
-        .when(UnderReview("reviewer1"))
-        .on(ApproveDoc("manager"))
-        .goto(Approved("manager"))
-        .when(Approved("manager"))
-        .on(PublishDoc)
-        .goto(Published)
+      val definition = build[DocumentState, DocumentEvent] {
+        _.when(Draft)
+          .on(SubmitForReview("reviewer1"))
+          .goto(UnderReview("reviewer1"))
+          .when(UnderReview("reviewer1"))
+          .on(ApproveDoc("manager"))
+          .goto(Approved("manager"))
+          .when(Approved("manager"))
+          .on(PublishDoc)
+          .goto(Published)
+      }
 
       ZIO.scoped {
         for
@@ -353,19 +365,20 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionState.*
       import ConnectionEvent.*
 
-      val definition = fsm[ConnectionState, ConnectionEvent]
-        .when(Disconnected)
-        .on(Connect)
-        .goto(Connecting(1))
-        .when(Connecting(1))
-        .on(Success("session-123"))
-        .goto(Connected("session-123"))
-        .when(Connecting(1))
-        .on(Failure("timeout"))
-        .goto(Failed("timeout"))
-        .when(Connected("session-123"))
-        .on(Disconnect)
-        .goto(Disconnected)
+      val definition = build[ConnectionState, ConnectionEvent] {
+        _.when(Disconnected)
+          .on(Connect)
+          .goto(Connecting(1))
+          .when(Connecting(1))
+          .on(Success("session-123"))
+          .goto(Connected("session-123"))
+          .when(Connecting(1))
+          .on(Failure("timeout"))
+          .goto(Failed("timeout"))
+          .when(Connected("session-123"))
+          .on(Disconnect)
+          .goto(Disconnected)
+      }
 
       ZIO.scoped {
         for
@@ -388,16 +401,17 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionEvent.*
 
       // Define transitions with "template" values - actual data doesn't matter for matching
-      val definition = fsm[ConnectionState, ConnectionEvent]
-        .when(Failed("")) // Will match ANY Failed(_)
-        .on(Connect)
-        .goto(Connecting(1))
-        .when(Connecting(0)) // Will match ANY Connecting(_)
-        .on(Failure(""))     // Will match ANY Failure(_) - events also use ordinal matching
-        .goto(Failed("retry"))
-        .when(Connected("")) // Will match ANY Connected(_)
-        .on(Disconnect)
-        .goto(Disconnected)
+      val definition = build[ConnectionState, ConnectionEvent] {
+        _.when(Failed("")) // Will match ANY Failed(_)
+          .on(Connect)
+          .goto(Connecting(1))
+          .when(Connecting(0)) // Will match ANY Connecting(_)
+          .on(Failure(""))     // Will match ANY Failure(_) - events also use ordinal matching
+          .goto(Failed("retry"))
+          .when(Connected("")) // Will match ANY Connected(_)
+          .on(Disconnect)
+          .goto(Disconnected)
+      }
 
       ZIO.scoped {
         for
@@ -432,9 +446,8 @@ object FSMSpec extends ZIOSpecDefault:
         actionLog <- Ref.make(List.empty[String])
 
         // Define entry/exit actions with template states - they match by shape
-        definition =
-          fsm[ConnectionState, ConnectionEvent]
-            .when(Disconnected)
+        definition = build[ConnectionState, ConnectionEvent] {
+          _.when(Disconnected)
             .on(Connect)
             .goto(Connecting(1))
             .when(Connecting(0)) // Template - matches any Connecting(_)
@@ -448,6 +461,7 @@ object FSMSpec extends ZIOSpecDefault:
             .onState(Connected("template"))
             .onEntry(actionLog.update(_ :+ "entering-connected"))
             .done
+        }
 
         result <- ZIO.scoped {
           for
@@ -471,16 +485,17 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionEvent.*
 
       // Define transitions with "template" event values
-      val definition = fsm[ConnectionState, ConnectionEvent]
-        .when(Disconnected)
-        .on(Connect) // Simple case object
-        .goto(Connecting(1))
-        .when(Connecting(0))
-        .on(Success("")) // Template: empty string
-        .goto(Connected("session-from-event"))
-        .when(Connecting(0))
-        .on(Failure("")) // Template: empty string
-        .goto(Failed("failure-happened"))
+      val definition = build[ConnectionState, ConnectionEvent] {
+        _.when(Disconnected)
+          .on(Connect) // Simple case object
+          .goto(Connecting(1))
+          .when(Connecting(0))
+          .on(Success("")) // Template: empty string
+          .goto(Connected("session-from-event"))
+          .when(Connecting(0))
+          .on(Failure("")) // Template: empty string
+          .goto(Failed("failure-happened"))
+      }
 
       ZIO.scoped {
         for
@@ -506,6 +521,296 @@ object FSMSpec extends ZIOSpecDefault:
         )
       }
     },
+
+    // whenAny tests - hierarchical state transitions
+    suite("whenAny - hierarchical transitions")(
+      test("whenAny applies to all leaf states under a parent") {
+        // Define hierarchical states
+        sealed trait HierState extends MState
+        case object Active     extends HierState
+        sealed trait Inactive  extends HierState
+        case object Paused     extends Inactive
+        case object Stopped    extends Inactive
+
+        sealed trait HierEvent extends MEvent
+        case object Activate   extends HierEvent
+        case object Pause      extends HierEvent
+        case object Stop       extends HierEvent
+        case object Resume     extends HierEvent
+
+        // whenAny[Inactive] should apply to both Paused and Stopped
+        val definition = build[HierState, HierEvent] {
+          _.when(Active)
+            .on(Pause)
+            .goto(Paused)
+            .when(Active)
+            .on(Stop)
+            .goto(Stopped)
+            .whenAny[Inactive]
+            .on(Activate)
+            .goto(Active) // Both Paused and Stopped can Activate -> Active
+        }
+
+        ZIO.scoped {
+          for
+            // Test from Paused
+            fsm1   <- definition.build(Paused)
+            _      <- fsm1.send(Activate)
+            state1 <- fsm1.currentState
+
+            // Test from Stopped
+            fsm2   <- definition.build(Stopped)
+            _      <- fsm2.send(Activate)
+            state2 <- fsm2.currentState
+          yield assertTrue(
+            state1 == Active,
+            state2 == Active,
+          )
+        }
+      },
+      test("leaf-level transition overrides whenAny") {
+        sealed trait OverrideState extends MState
+        case object Ready          extends OverrideState
+        sealed trait Processing    extends OverrideState
+        case object Running        extends Processing
+        case object Waiting        extends Processing
+        case object Done           extends OverrideState
+
+        sealed trait OverrideEvent extends MEvent
+        case object Cancel         extends OverrideEvent
+        case object Start          extends OverrideEvent
+
+        // Default: any Processing state cancels to Ready
+        // Override: Running cancels to Done (different behavior)
+        val definition = build[OverrideState, OverrideEvent] {
+          _.when(Ready)
+            .on(Start)
+            .goto(Running)
+            .whenAny[Processing]
+            .on(Cancel)
+            .goto(Ready) // Default for all Processing
+            .when(Running)
+            .on(Cancel)
+            .`override`
+            .goto(Done) // Override for Running specifically
+        }
+
+        ZIO.scoped {
+          for
+            // Running should use override -> Done
+            fsm1   <- definition.build(Running)
+            _      <- fsm1.send(Cancel)
+            state1 <- fsm1.currentState
+
+            // Waiting should use default -> Ready
+            fsm2   <- definition.build(Waiting)
+            _      <- fsm2.send(Cancel)
+            state2 <- fsm2.currentState
+          yield assertTrue(
+            state1 == Done, // Override won
+            state2 == Ready, // Default from whenAny
+          )
+        }
+      },
+      test("whenAny works with stay") {
+        sealed trait StayState extends MState
+        case object Idle       extends StayState
+        sealed trait Busy      extends StayState
+        case object Working    extends Busy
+        case object Blocked    extends Busy
+
+        sealed trait StayEvent extends MEvent
+        case object Ping       extends StayEvent
+        case object Start      extends StayEvent
+
+        val definition = build[StayState, StayEvent] {
+          _.when(Idle)
+            .on(Start)
+            .goto(Working)
+            .whenAny[Busy]
+            .on(Ping)
+            .stay // All Busy states stay on Ping
+        }
+
+        ZIO.scoped {
+          for
+            fsm    <- definition.build(Working)
+            result <- fsm.send(Ping)
+            state  <- fsm.currentState
+          yield assertTrue(
+            result == TransitionResult.Stay,
+            state == Working,
+          )
+        }
+      },
+      test("whenAny works with stop") {
+        sealed trait StopState       extends MState
+        case object Running          extends StopState
+        sealed trait Error           extends StopState
+        case object RecoverableError extends Error
+        case object FatalError       extends Error
+
+        sealed trait StopEvent extends MEvent
+        case object Fail       extends StopEvent
+        case object Shutdown   extends StopEvent
+
+        val definition = build[StopState, StopEvent] {
+          _.when(Running)
+            .on(Fail)
+            .goto(FatalError)
+            .whenAny[Error]
+            .on(Shutdown)
+            .stop // All Error states can shutdown
+        }
+
+        ZIO.scoped {
+          for
+            fsm     <- definition.build(FatalError)
+            result  <- fsm.send(Shutdown)
+            running <- fsm.isRunning
+          yield assertTrue(
+            result.isInstanceOf[TransitionResult.Stop[?]],
+            !running,
+          )
+        }
+      },
+      test("whenAny with nested hierarchy") {
+        // Three-level hierarchy
+        sealed trait DeepState extends MState
+        case object Root       extends DeepState
+        sealed trait Level1    extends DeepState
+        sealed trait Level2    extends Level1
+        case object Leaf1      extends Level1
+        case object Leaf2A     extends Level2
+        case object Leaf2B     extends Level2
+
+        sealed trait DeepEvent extends MEvent
+        case object Reset      extends DeepEvent
+        case object GoDeep     extends DeepEvent
+
+        // whenAny[Level1] should hit Leaf1, Leaf2A, and Leaf2B
+        val definition = build[DeepState, DeepEvent] {
+          _.when(Root)
+            .on(GoDeep)
+            .goto(Leaf2A)
+            .whenAny[Level1]
+            .on(Reset)
+            .goto(Root) // All Level1 descendants (including Level2 leaves)
+        }
+
+        ZIO.scoped {
+          for
+            fsm1   <- definition.build(Leaf1)
+            _      <- fsm1.send(Reset)
+            state1 <- fsm1.currentState
+
+            fsm2   <- definition.build(Leaf2A)
+            _      <- fsm2.send(Reset)
+            state2 <- fsm2.currentState
+
+            fsm3   <- definition.build(Leaf2B)
+            _      <- fsm3.send(Reset)
+            state3 <- fsm3.currentState
+          yield assertTrue(
+            state1 == Root,
+            state2 == Root,
+            state3 == Root,
+          )
+        }
+      },
+      test("whenAny[T](states*) applies only to listed states with type safety") {
+        sealed trait SelectState extends MState
+        case object Idle         extends SelectState
+        sealed trait Active      extends SelectState
+        case object Running      extends Active
+        case object Paused       extends Active
+        case object Blocked      extends Active
+
+        sealed trait SelectEvent extends MEvent
+        case object Cancel       extends SelectEvent
+        case object Start        extends SelectEvent
+
+        // Only Running and Paused can cancel, NOT Blocked (even though it's also Active)
+        val definition = build[SelectState, SelectEvent] {
+          _.when(Idle)
+            .on(Start)
+            .goto(Running)
+            .whenAny[Active](Running, Paused) // Type-safe: must be Active subtypes
+            .on(Cancel)
+            .goto(Idle)
+        }
+
+        ZIO.scoped {
+          for
+            // Running can cancel
+            fsm1   <- definition.build(Running)
+            _      <- fsm1.send(Cancel)
+            state1 <- fsm1.currentState
+
+            // Paused can cancel
+            fsm2   <- definition.build(Paused)
+            _      <- fsm2.send(Cancel)
+            state2 <- fsm2.currentState
+
+            // Blocked cannot cancel (invalid transition)
+            fsm3  <- definition.build(Blocked)
+            error <- fsm3.send(Cancel).flip
+          yield assertTrue(
+            state1 == Idle,
+            state2 == Idle,
+            error.isInstanceOf[InvalidTransitionError],
+          )
+        }
+      },
+      test("whenStates applies to explicit list regardless of hierarchy") {
+        sealed trait MixedState extends MState
+        case object StateA      extends MixedState
+        sealed trait GroupB     extends MixedState
+        case object StateB1     extends GroupB
+        case object StateB2     extends GroupB
+        sealed trait GroupC     extends MixedState
+        case object StateC1     extends GroupC
+        case object StateC2     extends GroupC
+
+        sealed trait MixedEvent extends MEvent
+        case object Reset       extends MixedEvent
+
+        // Mix states from different groups - not possible with whenAny[T]
+        val definition = build[MixedState, MixedEvent] {
+          _.whenStates(StateA, StateB1, StateC2) // From different hierarchy branches
+            .on(Reset)
+            .goto(StateA)
+        }
+
+        ZIO.scoped {
+          for
+            // StateA can reset
+            fsm1   <- definition.build(StateA)
+            _      <- fsm1.send(Reset)
+            state1 <- fsm1.currentState
+
+            // StateB1 can reset
+            fsm2   <- definition.build(StateB1)
+            _      <- fsm2.send(Reset)
+            state2 <- fsm2.currentState
+
+            // StateC2 can reset
+            fsm3   <- definition.build(StateC2)
+            _      <- fsm3.send(Reset)
+            state3 <- fsm3.currentState
+
+            // StateB2 cannot reset (not in list)
+            fsm4  <- definition.build(StateB2)
+            error <- fsm4.send(Reset).flip
+          yield assertTrue(
+            state1 == StateA,
+            state2 == StateA,
+            state3 == StateA,
+            error.isInstanceOf[InvalidTransitionError],
+          )
+        }
+      },
+    ),
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(
     5.seconds
   )

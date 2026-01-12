@@ -25,18 +25,19 @@ enum OrderState extends MState:
 enum OrderEvent extends MEvent:
   case Pay, Ship
 
-// Build FSM definition
-val orderFSM = fsm[OrderState, OrderEvent]
-  .when(Pending).on(Pay).goto(Paid)
-  .when(Paid).on(Ship).goto(Shipped)
+// Build FSM definition with compile-time validation
+val orderFSM = build[OrderState, OrderEvent] {
+  _.when(Pending).on(Pay).goto(Paid)
+    .when(Paid).on(Ship).goto(Shipped)
+}
 
 // Run
 val program = ZIO.scoped {
   for
-    fsm <- orderFSM.build(Pending)
-    _   <- fsm.send(Pay)
-    _   <- fsm.send(Ship)
-    s   <- fsm.currentState
+    runtime <- orderFSM.build(Pending)
+    _   <- runtime.send(Pay)
+    _   <- runtime.send(Ship)
+    s   <- runtime.currentState
   yield s // Shipped
 }
 ```
@@ -58,9 +59,10 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 | Component | Description |
 |-----------|-------------|
-| `fsm[S, E]` | Entry point for defining state machines |
-| `fsm.withCommands[S, E, Cmd]` | Entry point for FSMs with commands |
-| `FSMDefinition[S, E, Cmd]` | Builder type for FSM definitions |
+| `build[S, E] { ... }` | Entry point with compile-time validation (recommended) |
+| `build[S, E, Cmd] { ... }` | Entry point for FSMs with commands (recommended) |
+| `FSMDefinition[S, E]` | Direct construction without validation |
+| `FSMDefinition.withCommands[S, E, Cmd]` | Direct construction for FSMs with commands |
 | `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
 | `TimeoutSweeper` | Background service for durable timeouts |
 | `FSMInstanceLock` | Distributed locking for exactly-once transitions |
@@ -88,9 +90,10 @@ import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 
 // FSM with timeout that survives node failures
-val definition = fsm[State, Event]
-  .when(AwaitingPayment).onTimeout.goto(Cancelled)
-  .withTimeout(AwaitingPayment, 30.minutes)
+val definition = build[State, Event] {
+  _.when(AwaitingPayment).onTimeout.goto(Cancelled)
+    .withTimeout(AwaitingPayment, 30.minutes)
+}
 
 val program = ZIO.scoped {
   for

@@ -10,8 +10,10 @@ import mechanoid.*
 
 /** Document lifecycle states using hierarchical organization.
   *
-  * This demonstrates how to organize related states using nested sealed traits. The hierarchy is purely for code
-  * organization - at runtime, only leaf states participate in FSM transitions.
+  * This demonstrates how to organize related states using nested sealed traits. The hierarchy enables:
+  *   - Clear visual grouping of related states
+  *   - Type-safe state categories (e.g., `InReview` type for all review states)
+  *   - Using `whenAny[ParentState]` to define transitions for all states in a group
   *
   * Hierarchy:
   * {{{
@@ -25,17 +27,20 @@ import mechanoid.*
   *   │   ├── PendingApproval      (leaf)
   *   │   └── Rejected             (leaf)
   *   ├── Published                (leaf - final state)
-  *   └── Archived                 (leaf - final state)
+  *   ├── Archived                 (leaf - final state)
+  *   └── Cancelled                (leaf - cancelled state)
   * }}}
   *
-  * Benefits of hierarchical organization:
-  *   - Clear visual grouping of related states
-  *   - Type-safe state categories (e.g., `InReview` type for all review states)
-  *   - IDE navigation: jump to parent to see all related states
-  *   - Documentation: hierarchy serves as visual documentation
+  * The `whenAny[T]` method allows defining transitions that apply to all leaf states under a parent:
+  * {{{
+  * // Cancel from any InReview state goes back to Draft
+  * .whenAny[InReview].on(CancelReview).goto(Draft)
   *
-  * Important: Transitions are defined only for leaf states. Parent states (InReview, Approval) cannot be used in
-  * `.when()` directly because they're abstract - you can only have instances of their subtypes.
+  * // Abandon from any Approval state also goes to Cancelled
+  * .whenAny[Approval].on(Abandon).goto(Cancelled)
+  * }}}
+  *
+  * Leaf-level transitions can override parent-level ones when defined after `whenAny`.
   */
 sealed trait DocumentState extends MState derives JsonCodec
 
@@ -70,6 +75,9 @@ case object Published extends DocumentState
 /** Document archived (no longer active). */
 case object Archived extends DocumentState
 
+/** Document cancelled - workflow terminated. */
+case object Cancelled extends DocumentState
+
 // ============================================
 // Document Workflow Events
 // ============================================
@@ -86,6 +94,8 @@ case object ApprovePublication   extends DocumentEvent
 case object RejectPublication    extends DocumentEvent
 case object Publish              extends DocumentEvent
 case object Archive              extends DocumentEvent
+case object CancelReview         extends DocumentEvent // Cancel from any review state
+case object Abandon              extends DocumentEvent // Abandon from any approval state
 
 // ============================================
 // Document Workflow FSM Definition
@@ -95,23 +105,28 @@ object DocumentWorkflowFSM:
 
   /** Create the document workflow FSM definition.
     *
-    * Note how transitions are defined for leaf states only:
-    *   - Draft (leaf at root level)
-    *   - PendingReview, UnderReview, ChangesRequested (leaves under InReview)
-    *   - PendingApproval, Rejected (leaves under Approval)
-    *   - Published, Archived (leaves at root level)
+    * This definition demonstrates both individual state transitions and `whenAny[T]` for parent-level transitions.
     *
-    * Parent states (InReview, Approval) are abstract sealed traits and cannot be instantiated - this means you can only
-    * use their concrete subtypes in `.when()`, which is enforced by Scala's type system.
+    * Individual transitions are defined for specific leaf states, while `whenAny[T]` creates transitions for all leaf
+    * states under a parent sealed trait. This is useful for:
+    *   - Cancel/abort actions that apply to multiple related states
+    *   - Default behaviors that can be overridden by specific states
+    *
+    * Note: `whenAny` transitions can be overridden by leaf-level transitions defined after them using `.override`.
     */
-  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] =
-    fsm[DocumentState, DocumentEvent]
-      // ---- Draft transitions ----
-      .when(Draft)
+  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] = build[DocumentState, DocumentEvent] {
+    // ---- Draft transitions ----
+    _.when(Draft)
       .on(SubmitForReview)
       .goto(PendingReview)
 
-      // ---- Review Phase transitions (all leaf states under InReview) ----
+      // ---- whenAny[InReview]: applies to PendingReview, UnderReview, ChangesRequested ----
+      // Any state in the review phase can be cancelled, returning to Draft
+      .whenAny[InReview]
+      .on(CancelReview)
+      .goto(Draft)
+
+      // ---- Review Phase transitions (individual leaf states) ----
       // PendingReview: waiting for reviewer assignment
       .when(PendingReview)
       .on(AssignReviewer)
@@ -130,7 +145,13 @@ object DocumentWorkflowFSM:
       .on(ResubmitAfterChanges)
       .goto(PendingReview)
 
-      // ---- Approval Phase transitions (all leaf states under Approval) ----
+      // ---- whenAny[Approval]: applies to PendingApproval, Rejected ----
+      // Any state in the approval phase can be abandoned, going to Cancelled
+      .whenAny[Approval]
+      .on(Abandon)
+      .goto(Cancelled)
+
+      // ---- Approval Phase transitions (individual leaf states) ----
       // PendingApproval: waiting for final sign-off
       .when(PendingApproval)
       .on(ApprovePublication)
@@ -149,5 +170,5 @@ object DocumentWorkflowFSM:
       .when(Published)
       .on(Archive)
       .goto(Archived)
-  end definition
+  }
 end DocumentWorkflowFSM

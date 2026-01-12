@@ -78,19 +78,20 @@ enum OrderState extends MState:
 enum OrderEvent extends MEvent:
   case Pay, Ship, Deliver
 
-// Build FSM definition
-val orderFSM = fsm[OrderState, OrderEvent]
-  .when(Pending).on(Pay).goto(Paid)
-  .when(Paid).on(Ship).goto(Shipped)
-  .when(Shipped).on(Deliver).goto(Delivered)
+// Build FSM definition with compile-time validation
+val orderFSM = build[OrderState, OrderEvent] {
+  _.when(Pending).on(Pay).goto(Paid)
+    .when(Paid).on(Ship).goto(Shipped)
+    .when(Shipped).on(Deliver).goto(Delivered)
+}
 
 // Run the FSM
 val program = ZIO.scoped {
   for
-    fsm <- orderFSM.build(Pending)
-    _   <- fsm.send(Pay)
-    _   <- fsm.send(Ship)
-    s   <- fsm.currentState
+    runtime <- orderFSM.build(Pending)
+    _   <- runtime.send(Pay)
+    _   <- runtime.send(Ship)
+    s   <- runtime.currentState
   yield s // Shipped
 }
 ```
@@ -142,6 +143,23 @@ Benefits:
 - **IDE navigation** - Jump to parent trait to see all related states
 
 **Important:** Transitions use leaf states only. Parent traits (`Processing`) are for organization - you cannot use them in `.when()`. The macro automatically discovers all leaf cases recursively.
+
+#### Multi-State Transitions
+
+For transitions that apply to multiple states, use `whenAny` or `whenStates`:
+
+```scala
+// Apply to all leaf states under a parent type
+.whenAny[Processing].on(Cancel).goto(Cancelled)
+
+// Apply to specific states under a parent type
+.whenAny[Processing](ValidatingPayment, ChargingCard).on(Pause).goto(Paused)
+
+// Apply to specific states (not based on hierarchy)
+.whenStates(Created, Completed).on(Archive).goto(Archived)
+```
+
+Use `whenStates` when the states don't share a common parent but should have the same transition.
 
 ### Events
 
@@ -209,21 +227,45 @@ fsm.state.map { s =>
 
 ### Basic Definition
 
-Use `fsm[S, E]` to build your FSM:
+Use the `build` macro to create FSM definitions with compile-time validation:
 
 ```scala
 import mechanoid.*
 
-val definition = fsm[MyState, MyEvent]
-  .when(State1).on(Event1).goto(State2)
-  .when(State1).on(Event2).stay
-  .when(State2).on(Event3).goto(State3)
+val definition = build[MyState, MyEvent] {
+  _.when(State1).on(Event1).goto(State2)
+    .when(State1).on(Event2).stay
+    .when(State2).on(Event3).goto(State3)
+}
 ```
 
 All FSM definitions share the same type: `FSMDefinition[S, E, Cmd]`. The third type parameter `Cmd` represents commands that can be enqueued for side effect execution:
 
-- `fsm[S, E]` - FSM without commands (Cmd = Nothing)
-- `fsm.withCommands[S, E, Cmd]` - FSM with commands of type Cmd
+- `build[S, E] { ... }` - FSM without commands, with compile-time validation (recommended)
+- `build[S, E, Cmd] { ... }` - FSM with commands, with compile-time validation (recommended)
+- `FSMDefinition[S, E]` - Direct construction without validation
+- `FSMDefinition.withCommands[S, E, Cmd]` - Direct construction with commands
+
+**Compile-time Validation:**
+
+The `build` macro detects duplicate transitions at compile time:
+
+```scala
+// This will fail at compile time:
+val bad = build[MyState, MyEvent] {
+  _.when(State1).on(Event1).goto(State2)
+    .when(State1).on(Event1).goto(State3)  // Error: Duplicate transition
+}
+```
+
+To intentionally override a transition (e.g., after `whenAny`), use `.override`:
+
+```scala
+val definition = build[MyState, MyEvent] {
+  _.whenAny[Parent].on(Cancel).goto(Draft)
+    .when(SpecificState).on(Cancel).override.goto(Special)  // OK - intentional override
+}
+```
 
 The library uses unified error types—all errors are represented as `MechanoidError`.
 
@@ -232,12 +274,21 @@ The library uses unified error types—all errors are represented as `MechanoidE
 Define actions that run when entering or leaving a state:
 
 ```scala
-val definition = fsm[State, Event]
-  .when(Active).on(Deactivate).goto(Inactive)
-  .onState(Active)
-    .onEntry(ZIO.logInfo("Entered Active state"))
-    .onExit(ZIO.logInfo("Leaving Active state"))
-    .done
+val definition = build[State, Event] {
+  _.when(Active).on(Deactivate).goto(Inactive)
+    .onState(Active)
+      .onEntry(ZIO.logInfo("Entered Active state"))
+      .onExit(ZIO.logInfo("Leaving Active state"))
+      .done
+}
+```
+
+Action names are automatically extracted at compile time for visualization purposes. If you want custom descriptions, use `onEntryWithDescription` or `onExitWithDescription`:
+
+```scala
+.onState(Active)
+  .onEntryWithDescription(myComplexAction, "Initialize active state resources")
+  .done
 ```
 
 ### Timeouts
@@ -247,9 +298,10 @@ Schedule automatic timeout events:
 ```scala
 import scala.concurrent.duration.*
 
-val definition = fsm[State, Event]
-  .when(WaitingForPayment).onTimeout.goto(Cancelled)
-  .withTimeout(WaitingForPayment, 30.minutes)
+val definition = build[State, Event] {
+  _.when(WaitingForPayment).onTimeout.goto(Cancelled)
+    .withTimeout(WaitingForPayment, 30.minutes)
+}
 ```
 
 When the FSM enters `WaitingForPayment`, a timer starts. If no other event arrives within 30 minutes, a `Timeout` event is automatically sent.
@@ -817,39 +869,67 @@ RetryPolicy.exponentialBackoff(
 
 ### Integration with FSM
 
-Enqueue commands in **entry actions** (they don't run during replay):
+The `StateBuilder` provides declarative methods to enqueue commands when entering a state. This is the recommended approach:
 
 ```scala
-val definition = fsm[OrderState, OrderEvent]
-  .when(Pending).on(Pay).goto(Paid)
-  .when(Paid).on(Ship).goto(Shipped)
-  // Enqueue command when entering Paid state
-  .onState(Paid).onEntry {
-    for
-      order <- getOrderDetails
-      _ <- commandStore.enqueue(
-        instanceId = order.id,
-        command = ChargeCard(order.total, order.paymentToken),
-        idempotencyKey = s"charge-order-${order.id}"
-      )
-    yield ()
-  }.done
-  // Enqueue notification when entering Shipped state
-  .onState(Shipped).onEntry {
-    for
-      order <- getOrderDetails
-      _ <- commandStore.enqueue(
-        order.id,
-        SendEmail(order.customerEmail, "shipped-notification"),
-        s"ship-email-${order.id}"
-      )
-      _ <- commandStore.enqueue(
-        order.id,
-        NotifyWarehouse(order.id),
-        s"warehouse-notify-${order.id}"
-      )
-    yield ()
-  }.done
+// Define command type
+enum OrderCommand:
+  case ChargeCard(amount: BigDecimal, token: String)
+  case SendEmail(to: String, template: String)
+  case NotifyWarehouse(orderId: String)
+
+// Use build with commands type parameter
+val definition = build[OrderState, OrderEvent, OrderCommand] {
+  _.when(Pending).on(Pay).goto(Paid)
+    .when(Paid).on(Ship).goto(Shipped)
+    // Declaratively enqueue command when entering Paid state
+    .onState(Paid)
+      .enqueue(state => ChargeCard(state.total, state.paymentToken))
+      .done
+    // Enqueue multiple commands when entering Shipped state
+    .onState(Shipped)
+      .enqueue(_ => SendEmail(customerEmail, "shipped-notification"))
+      .enqueue(state => NotifyWarehouse(state.orderId))
+      .done
+}
+```
+
+The `enqueue` method:
+- Takes a function `S => Cmd` that produces a command from the current state
+- Automatically generates idempotency keys based on `instanceId-seqNr`
+- Commands are persisted atomically with the state transition
+
+For multiple commands, you can chain `.enqueue` calls or use `.enqueueAll`:
+
+```scala
+.onState(Shipped)
+  .enqueueAll { state =>
+    List(
+      SendEmail(state.email, "shipped"),
+      NotifyWarehouse(state.orderId)
+    )
+  }
+  .done
+```
+
+**Alternative: Manual enqueueing in entry actions**
+
+For advanced use cases where you need more control (e.g., conditional enqueueing, custom idempotency keys), you can use entry actions:
+
+```scala
+val definition = build[OrderState, OrderEvent, OrderCommand] {
+  _.when(Pending).on(Pay).goto(Paid)
+    .onState(Paid).onEntry {
+      for
+        order <- getOrderDetails
+        _ <- commandStore.enqueue(
+          instanceId = order.id,
+          command = ChargeCard(order.total, order.paymentToken),
+          idempotencyKey = s"charge-order-${order.id}"
+        )
+      yield ()
+    }.done
+}
 ```
 
 **Complete flow:**
@@ -898,14 +978,41 @@ All visualizers work with any FSM definition, whether or not it uses commands.
 
 Generate [Mermaid](https://mermaid.js.org/) diagrams that render directly in GitHub, GitLab, and many documentation tools.
 
-#### State Diagram
+#### Extension Methods
+
+FSM definitions have extension methods for convenient visualization:
+
+```scala
+import mechanoid.visualization.*
+
+// State diagram using extension method
+val diagram = orderDefinition.toMermaidStateDiagram(Some(OrderState.Created))
+
+// Flowchart
+val flowchart = orderDefinition.toMermaidFlowchart
+
+// With execution trace highlighting
+val highlighted = orderDefinition.toMermaidFlowchartWithTrace(trace)
+
+// GraphViz
+val dot = orderDefinition.toGraphViz(name = "OrderFSM", initialState = Some(OrderState.Created))
+```
+
+Execution traces also have extension methods:
+
+```scala
+val sequenceDiagram = trace.toMermaidSequenceDiagram
+val timeline = trace.toGraphVizTimeline
+```
+
+#### State Diagram (Static Methods)
 
 Shows the FSM structure with all states and transitions:
 
 ```scala
 import mechanoid.visualization.MermaidVisualizer
 
-// Basic state diagram
+// Basic state diagram using static method
 val diagram = MermaidVisualizer.stateDiagram(
   fsm = orderDefinition,
   initialState = Some(OrderState.Created)
@@ -1218,26 +1325,27 @@ enum OrderState extends MState:
 enum OrderEvent extends MEvent:
   case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel
 
-// FSM Definition
-val orderDefinition = fsm[OrderState, OrderEvent]
+// FSM Definition with compile-time validation
+val orderDefinition = build[OrderState, OrderEvent] {
   // Happy path
-  .when(Pending).on(RequestPayment).goto(AwaitingPayment)
-  .when(AwaitingPayment).on(ConfirmPayment).goto(Paid)
-  .when(AwaitingPayment).onTimeout.goto(Cancelled)
-  .when(Paid).on(Ship).goto(Shipped)
-  .when(Shipped).on(Deliver).goto(Delivered)
-  // Cancellation
-  .when(Pending).on(Cancel).goto(Cancelled)
-  .when(AwaitingPayment).on(Cancel).goto(Cancelled)
-  // Timeout for payment
-  .withTimeout(AwaitingPayment, scala.concurrent.duration.Duration(30, "minutes"))
-  // Lifecycle hooks
-  .onState(AwaitingPayment)
-    .onEntry(ZIO.logInfo("Waiting for payment..."))
-    .done
-  .onState(Cancelled)
-    .onEntry(ZIO.logInfo("Order cancelled"))
-    .done
+  _.when(Pending).on(RequestPayment).goto(AwaitingPayment)
+    .when(AwaitingPayment).on(ConfirmPayment).goto(Paid)
+    .when(AwaitingPayment).onTimeout.goto(Cancelled)
+    .when(Paid).on(Ship).goto(Shipped)
+    .when(Shipped).on(Deliver).goto(Delivered)
+    // Cancellation
+    .when(Pending).on(Cancel).goto(Cancelled)
+    .when(AwaitingPayment).on(Cancel).goto(Cancelled)
+    // Timeout for payment
+    .withTimeout(AwaitingPayment, scala.concurrent.duration.Duration(30, "minutes"))
+    // Lifecycle hooks
+    .onState(AwaitingPayment)
+      .onEntry(ZIO.logInfo("Waiting for payment..."))
+      .done
+    .onState(Cancelled)
+      .onEntry(ZIO.logInfo("Order cancelled"))
+      .done
+}
 
 // Running with persistence and durable timeouts
 val program = ZIO.scoped {

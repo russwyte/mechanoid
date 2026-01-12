@@ -1,6 +1,5 @@
 package mechanoid.persistence.postgres
 
-import saferis.*
 import zio.*
 import zio.json.*
 import zio.test.*
