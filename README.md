@@ -140,6 +140,16 @@ val robustProgram = ZIO.scoped {
 - Scala 3.x
 - ZIO 2.x
 
+## Development
+
+After cloning, set up the pre-commit hook to check formatting:
+
+```bash
+git config core.hooksPath hooks
+```
+
+This enables a pre-commit hook that runs `sbt scalafmtCheckAll`. If formatting fails, run `sbt scalafmtAll` to fix it.
+
 ## License
 
 [Apache 2.0](LICENSE)
