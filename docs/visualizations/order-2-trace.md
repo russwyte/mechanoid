@@ -4,7 +4,7 @@
 
 ## Command Summary
 
-- Completed: 7
+- Completed: 6
 
 ## FSM + Commands Sequence Diagram
 
@@ -19,37 +19,33 @@ sequenceDiagram
     FSM->>FSM: InitiatePayment
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=2<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=2<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>amount=75.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: PaymentSucceeded
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=2<br/>petName=Hoppy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=4f3520d9-1270-46cd-ab83-215a53842e4e
+    Note right of CQ: orderId=2<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=2e3a649d-3a32-4011-afd3-1a1c2540b54f
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=2<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=order_confirmed<br/>messageId=937ebdbe-1066-4b19-8636-88dac73cafed
+    Note right of CQ: orderId=2<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=8220dac6-838e-47ec-88f0-491b99219530
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: RequestShipping
     Note over FSM: ShippingRequested
     FSM->>FSM: ShipmentDispatched
     Note over FSM: Shipped
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=937ebdbe-1066-4b19-8636-88dac73cafed<br/>delivered=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=4f3520d9-1270-46cd-ab83-215a53842e4e<br/>trackingNumber=TRACK-450056<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=4 business days<br/>success=true<br/>error=None
+    Note right of CQ: correlationId=2e3a649d-3a32-4011-afd3-1a1c2540b54f<br/>trackingNumber=TRACK-969114<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=6 business days<br/>success=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=2<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=shipped<br/>messageId=937ebdbe-1066-4b19-8636-88dac73cafed-shipped
+    Note right of CQ: orderId=2<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=shipped<br/>messageId=8220dac6-838e-47ec-88f0-491b99219530-shipped
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=937ebdbe-1066-4b19-8636-88dac73cafed-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=8220dac6-838e-47ec-88f0-491b99219530-shipped<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Shipped
@@ -78,13 +74,13 @@ sequenceDiagram
 flowchart TB
     subgraph FSM["🔄 FSM States"]
         direction LR
-        Created(("🆕 Created"))
-        PaymentProcessing(("⏳ PaymentProcessing"))
-        Paid(("💰 Paid"))
-        ShippingRequested(("⏳ ShippingRequested"))
         Shipped(("📦 Shipped"))
+        PaymentProcessing(("⏳ PaymentProcessing"))
+        ShippingRequested(("⏳ ShippingRequested"))
         Delivered(("✅ Delivered"))
         Cancelled(("❌ Cancelled"))
+        Paid(("💰 Paid"))
+        Created(("🆕 Created"))
         Created -->|InitiatePayment| PaymentProcessing
         PaymentProcessing -->|PaymentSucceeded| Paid
         PaymentProcessing -->|PaymentFailed| Cancelled
