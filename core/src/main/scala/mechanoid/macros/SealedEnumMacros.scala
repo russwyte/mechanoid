@@ -9,6 +9,12 @@ object SealedEnumMacros:
   /** Case information extracted at compile time. */
   case class CaseInfo(simpleName: String, fullName: String, hash: Int)
 
+  /** Hierarchy information mapping parent types to their leaf descendants.
+    *
+    * This enables `whenAny[ParentState]` to expand to transitions for all leaf states under that parent.
+    */
+  case class HierarchyInfo(parentToLeaves: Map[Int, Set[Int]])
+
   /** Extract case information for a sealed type at compile time.
     *
     * Returns an array of CaseInfo containing:
@@ -89,6 +95,94 @@ object SealedEnumMacros:
 
     '{ Array(${ Varargs(caseInfoExprs) }*) }
   end extractCaseInfoImpl
+
+  /** Extract hierarchy information for a sealed type at compile time.
+    *
+    * Returns a HierarchyInfo containing a mapping from each parent (sealed trait) hash to the set of all its leaf
+    * descendant hashes. This enables `whenAny[ParentState]` to expand to transitions for all leaf states.
+    *
+    * For example, given:
+    * {{{
+    * sealed trait DocumentState
+    * case object Draft extends DocumentState
+    * sealed trait InReview extends DocumentState
+    *   case object PendingReview extends InReview
+    *   case object UnderReview extends InReview
+    * }}}
+    *
+    * The hierarchy info would map:
+    *   - hash(DocumentState) -> {hash(Draft), hash(PendingReview), hash(UnderReview)}
+    *   - hash(InReview) -> {hash(PendingReview), hash(UnderReview)}
+    */
+  inline def extractHierarchyInfo[T](inline hasher: CaseHasher): HierarchyInfo =
+    ${ extractHierarchyInfoImpl[T]('hasher) }
+
+  private def extractHierarchyInfoImpl[T: Type](hasher: Expr[CaseHasher])(using Quotes): Expr[HierarchyInfo] =
+    import quotes.reflect.*
+
+    val tpe    = TypeRepr.of[T]
+    val symbol = tpe.typeSymbol
+
+    if !symbol.flags.is(Flags.Sealed) then
+      report.errorAndAbort(
+        s"Type ${symbol.fullName} must be a sealed trait or enum for hierarchy extraction"
+      )
+
+    val (hashFn, _) = detectHasher(hasher)
+
+    // Build mapping from each sealed parent to its leaf descendants
+    // Returns (parentFullName, Set[leafFullName])
+    def collectHierarchy(sym: Symbol): List[(String, Set[String])] =
+      val leafDescendants = findLeafCasesWithNames(sym)
+      val selfEntry       =
+        if sym.flags.is(Flags.Sealed) && leafDescendants.nonEmpty then List((sym.fullName, leafDescendants.toSet))
+        else Nil
+
+      val childEntries = sym.children.flatMap { child =>
+        if child.flags.is(Flags.Sealed) then collectHierarchy(child)
+        else Nil
+      }
+
+      selfEntry ++ childEntries
+    end collectHierarchy
+
+    // Helper to find all leaf case names under a symbol
+    def findLeafCasesWithNames(sym: Symbol): List[String] =
+      sym.children.flatMap { child =>
+        if child.flags.is(Flags.Sealed) then findLeafCasesWithNames(child)
+        else if child.flags.is(Flags.Case) || child.flags.is(Flags.Enum) then List(child.fullName)
+        else Nil
+      }
+
+    val hierarchy = collectHierarchy(symbol)
+
+    // Convert names to hashes
+    val parentToLeavesMap: Map[Int, Set[Int]] = hierarchy.map { case (parentName, leafNames) =>
+      hashFn(parentName) -> leafNames.map(hashFn)
+    }.toMap
+
+    // Generate the expression
+    val mapEntries = parentToLeavesMap.toList.map { case (parentHash, leafHashes) =>
+      val leafSetExpr = Expr(leafHashes)
+      '{ ${ Expr(parentHash) } -> $leafSetExpr }
+    }
+
+    '{ HierarchyInfo(Map(${ Varargs(mapEntries) }*)) }
+  end extractHierarchyInfoImpl
+
+  /** Get the hash of a type at compile time.
+    *
+    * This is used by `whenAny[T]` to get the hash of the parent type parameter.
+    */
+  inline def typeHash[T](inline hasher: CaseHasher): Int =
+    ${ typeHashImpl[T]('hasher) }
+
+  private def typeHashImpl[T: Type](hasher: Expr[CaseHasher])(using Quotes): Expr[Int] =
+    import quotes.reflect.*
+    val tpe         = TypeRepr.of[T]
+    val symbol      = tpe.typeSymbol
+    val (hashFn, _) = detectHasher(hasher)
+    Expr(hashFn(symbol.fullName))
 
   /** Detect the hasher type from the expression and return a compile-time hash function.
     *

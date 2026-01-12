@@ -506,6 +506,288 @@ object FSMSpec extends ZIOSpecDefault:
         )
       }
     },
+
+    // whenAny tests - hierarchical state transitions
+    suite("whenAny - hierarchical transitions")(
+      test("whenAny applies to all leaf states under a parent") {
+        // Define hierarchical states
+        sealed trait HierState extends MState
+        case object Active     extends HierState
+        sealed trait Inactive  extends HierState
+        case object Paused     extends Inactive
+        case object Stopped    extends Inactive
+
+        sealed trait HierEvent extends MEvent
+        case object Activate   extends HierEvent
+        case object Pause      extends HierEvent
+        case object Stop       extends HierEvent
+        case object Resume     extends HierEvent
+
+        // whenAny[Inactive] should apply to both Paused and Stopped
+        val definition = fsm[HierState, HierEvent]
+          .when(Active)
+          .on(Pause)
+          .goto(Paused)
+          .when(Active)
+          .on(Stop)
+          .goto(Stopped)
+          .whenAny[Inactive]
+          .on(Activate)
+          .goto(Active) // Both Paused and Stopped can Activate -> Active
+
+        ZIO.scoped {
+          for
+            // Test from Paused
+            fsm1   <- definition.build(Paused)
+            _      <- fsm1.send(Activate)
+            state1 <- fsm1.currentState
+
+            // Test from Stopped
+            fsm2   <- definition.build(Stopped)
+            _      <- fsm2.send(Activate)
+            state2 <- fsm2.currentState
+          yield assertTrue(
+            state1 == Active,
+            state2 == Active,
+          )
+        }
+      },
+      test("leaf-level transition overrides whenAny") {
+        sealed trait OverrideState extends MState
+        case object Ready          extends OverrideState
+        sealed trait Processing    extends OverrideState
+        case object Running        extends Processing
+        case object Waiting        extends Processing
+        case object Done           extends OverrideState
+
+        sealed trait OverrideEvent extends MEvent
+        case object Cancel         extends OverrideEvent
+        case object Start          extends OverrideEvent
+
+        // Default: any Processing state cancels to Ready
+        // Override: Running cancels to Done (different behavior)
+        val definition = fsm[OverrideState, OverrideEvent]
+          .when(Ready)
+          .on(Start)
+          .goto(Running)
+          .whenAny[Processing]
+          .on(Cancel)
+          .goto(Ready) // Default for all Processing
+          .when(Running)
+          .on(Cancel)
+          .goto(Done) // Override for Running specifically
+
+        ZIO.scoped {
+          for
+            // Running should use override -> Done
+            fsm1   <- definition.build(Running)
+            _      <- fsm1.send(Cancel)
+            state1 <- fsm1.currentState
+
+            // Waiting should use default -> Ready
+            fsm2   <- definition.build(Waiting)
+            _      <- fsm2.send(Cancel)
+            state2 <- fsm2.currentState
+          yield assertTrue(
+            state1 == Done, // Override won
+            state2 == Ready, // Default from whenAny
+          )
+        }
+      },
+      test("whenAny works with stay") {
+        sealed trait StayState extends MState
+        case object Idle       extends StayState
+        sealed trait Busy      extends StayState
+        case object Working    extends Busy
+        case object Blocked    extends Busy
+
+        sealed trait StayEvent extends MEvent
+        case object Ping       extends StayEvent
+        case object Start      extends StayEvent
+
+        val definition = fsm[StayState, StayEvent]
+          .when(Idle)
+          .on(Start)
+          .goto(Working)
+          .whenAny[Busy]
+          .on(Ping)
+          .stay // All Busy states stay on Ping
+
+        ZIO.scoped {
+          for
+            fsm    <- definition.build(Working)
+            result <- fsm.send(Ping)
+            state  <- fsm.currentState
+          yield assertTrue(
+            result == TransitionResult.Stay,
+            state == Working,
+          )
+        }
+      },
+      test("whenAny works with stop") {
+        sealed trait StopState       extends MState
+        case object Running          extends StopState
+        sealed trait Error           extends StopState
+        case object RecoverableError extends Error
+        case object FatalError       extends Error
+
+        sealed trait StopEvent extends MEvent
+        case object Fail       extends StopEvent
+        case object Shutdown   extends StopEvent
+
+        val definition = fsm[StopState, StopEvent]
+          .when(Running)
+          .on(Fail)
+          .goto(FatalError)
+          .whenAny[Error]
+          .on(Shutdown)
+          .stop // All Error states can shutdown
+
+        ZIO.scoped {
+          for
+            fsm     <- definition.build(FatalError)
+            result  <- fsm.send(Shutdown)
+            running <- fsm.isRunning
+          yield assertTrue(
+            result.isInstanceOf[TransitionResult.Stop[?]],
+            !running,
+          )
+        }
+      },
+      test("whenAny with nested hierarchy") {
+        // Three-level hierarchy
+        sealed trait DeepState extends MState
+        case object Root       extends DeepState
+        sealed trait Level1    extends DeepState
+        sealed trait Level2    extends Level1
+        case object Leaf1      extends Level1
+        case object Leaf2A     extends Level2
+        case object Leaf2B     extends Level2
+
+        sealed trait DeepEvent extends MEvent
+        case object Reset      extends DeepEvent
+        case object GoDeep     extends DeepEvent
+
+        // whenAny[Level1] should hit Leaf1, Leaf2A, and Leaf2B
+        val definition = fsm[DeepState, DeepEvent]
+          .when(Root)
+          .on(GoDeep)
+          .goto(Leaf2A)
+          .whenAny[Level1]
+          .on(Reset)
+          .goto(Root) // All Level1 descendants (including Level2 leaves)
+
+        ZIO.scoped {
+          for
+            fsm1   <- definition.build(Leaf1)
+            _      <- fsm1.send(Reset)
+            state1 <- fsm1.currentState
+
+            fsm2   <- definition.build(Leaf2A)
+            _      <- fsm2.send(Reset)
+            state2 <- fsm2.currentState
+
+            fsm3   <- definition.build(Leaf2B)
+            _      <- fsm3.send(Reset)
+            state3 <- fsm3.currentState
+          yield assertTrue(
+            state1 == Root,
+            state2 == Root,
+            state3 == Root,
+          )
+        }
+      },
+      test("whenAny[T](states*) applies only to listed states with type safety") {
+        sealed trait SelectState extends MState
+        case object Idle         extends SelectState
+        sealed trait Active      extends SelectState
+        case object Running      extends Active
+        case object Paused       extends Active
+        case object Blocked      extends Active
+
+        sealed trait SelectEvent extends MEvent
+        case object Cancel       extends SelectEvent
+        case object Start        extends SelectEvent
+
+        // Only Running and Paused can cancel, NOT Blocked (even though it's also Active)
+        val definition = fsm[SelectState, SelectEvent]
+          .when(Idle)
+          .on(Start)
+          .goto(Running)
+          .whenAny[Active](Running, Paused) // Type-safe: must be Active subtypes
+          .on(Cancel)
+          .goto(Idle)
+
+        ZIO.scoped {
+          for
+            // Running can cancel
+            fsm1   <- definition.build(Running)
+            _      <- fsm1.send(Cancel)
+            state1 <- fsm1.currentState
+
+            // Paused can cancel
+            fsm2   <- definition.build(Paused)
+            _      <- fsm2.send(Cancel)
+            state2 <- fsm2.currentState
+
+            // Blocked cannot cancel (invalid transition)
+            fsm3  <- definition.build(Blocked)
+            error <- fsm3.send(Cancel).flip
+          yield assertTrue(
+            state1 == Idle,
+            state2 == Idle,
+            error.isInstanceOf[InvalidTransitionError],
+          )
+        }
+      },
+      test("whenStates applies to explicit list regardless of hierarchy") {
+        sealed trait MixedState extends MState
+        case object StateA      extends MixedState
+        sealed trait GroupB     extends MixedState
+        case object StateB1     extends GroupB
+        case object StateB2     extends GroupB
+        sealed trait GroupC     extends MixedState
+        case object StateC1     extends GroupC
+        case object StateC2     extends GroupC
+
+        sealed trait MixedEvent extends MEvent
+        case object Reset       extends MixedEvent
+
+        // Mix states from different groups - not possible with whenAny[T]
+        val definition = fsm[MixedState, MixedEvent]
+          .whenStates(StateA, StateB1, StateC2) // From different hierarchy branches
+          .on(Reset)
+          .goto(StateA)
+
+        ZIO.scoped {
+          for
+            // StateA can reset
+            fsm1   <- definition.build(StateA)
+            _      <- fsm1.send(Reset)
+            state1 <- fsm1.currentState
+
+            // StateB1 can reset
+            fsm2   <- definition.build(StateB1)
+            _      <- fsm2.send(Reset)
+            state2 <- fsm2.currentState
+
+            // StateC2 can reset
+            fsm3   <- definition.build(StateC2)
+            _      <- fsm3.send(Reset)
+            state3 <- fsm3.currentState
+
+            // StateB2 cannot reset (not in list)
+            fsm4  <- definition.build(StateB2)
+            error <- fsm4.send(Reset).flip
+          yield assertTrue(
+            state1 == StateA,
+            state2 == StateA,
+            state3 == StateA,
+            error.isInstanceOf[InvalidTransitionError],
+          )
+        }
+      },
+    ),
   ) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(
     5.seconds
   )
