@@ -1,11 +1,11 @@
 package mechanoid.persistence.postgres
 
-import saferis.*
 import zio.*
 import zio.test.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
 import mechanoid.persistence.*
+import zio.json.*
 
 object PostgresEventStoreSpec extends ZIOSpecDefault:
 
