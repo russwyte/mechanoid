@@ -20,16 +20,17 @@ object VisualizationSpec extends ZIOSpecDefault:
 
   val testFSM: FSMDefinition[TestState, TestEvent, Nothing] =
     import TestState.*, TestEvent.*
-    fsm[TestState, TestEvent]
-      .when(Idle)
-      .on(Start)
-      .goto(Running)
-      .when(Running)
-      .on(Finish)
-      .goto(Completed)
-      .when(Running)
-      .on(Error(""))
-      .goto(Failed)
+    build[TestState, TestEvent] {
+      _.when(Idle)
+        .on(Start)
+        .goto(Running)
+        .when(Running)
+        .on(Finish)
+        .goto(Completed)
+        .when(Running)
+        .on(Error(""))
+        .goto(Failed)
+    }
   end testFSM
 
   def spec = suite("Visualization")(

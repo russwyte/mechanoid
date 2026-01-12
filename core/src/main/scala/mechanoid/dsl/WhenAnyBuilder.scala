@@ -116,4 +116,20 @@ final class MultiTransitionBuilder[S <: MState, E <: MEvent, Cmd](
       defn.addTransitionWithMeta(fromStateHash, event, transition, meta)
     }
   end stop
+
+  /** Mark these transitions as intentional overrides.
+    *
+    * Use this when you want to replace transitions that were defined earlier.
+    *
+    * Example:
+    * {{{
+    * build {
+    *   fsm[MyState, MyEvent]
+    *     .whenAny[AllStates].on(Reset).goto(Initial)      // Default for all
+    *     .whenAny[Special](A, B).on(Reset).override.goto(SpecialReset)  // Override for A, B
+    * }
+    * }}}
+    */
+  def `override`: OverrideMultiTransitionBuilder[S, E, Cmd] =
+    new OverrideMultiTransitionBuilder(definition, stateHashes, event)
 end MultiTransitionBuilder

@@ -112,12 +112,11 @@ object DocumentWorkflowFSM:
     *   - Cancel/abort actions that apply to multiple related states
     *   - Default behaviors that can be overridden by specific states
     *
-    * Note: `whenAny` transitions can be overridden by leaf-level transitions defined after them.
+    * Note: `whenAny` transitions can be overridden by leaf-level transitions defined after them using `.override`.
     */
-  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] =
-    fsm[DocumentState, DocumentEvent]
-      // ---- Draft transitions ----
-      .when(Draft)
+  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] = build[DocumentState, DocumentEvent] {
+    // ---- Draft transitions ----
+    _.when(Draft)
       .on(SubmitForReview)
       .goto(PendingReview)
 
@@ -171,5 +170,5 @@ object DocumentWorkflowFSM:
       .when(Published)
       .on(Archive)
       .goto(Archived)
-  end definition
+  }
 end DocumentWorkflowFSM

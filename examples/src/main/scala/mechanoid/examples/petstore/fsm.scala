@@ -64,40 +64,41 @@ object OrderFSM:
       inline onShipped: ZIO[Any, Throwable, Unit],
   ): FSMDefinition[OrderState, OrderEvent, Nothing] =
     import OrderState.*, OrderEvent.*, T.*
-    fsm[OrderState, OrderEvent]
+    build[OrderState, OrderEvent] {
       // Created -> PaymentProcessing on InitiatePayment
-      .when(Created)
-      .on(InitiatePayment(amount, str))
-      .goto(PaymentProcessing)
-      // PaymentProcessing -> Paid on PaymentSucceeded
-      .when(PaymentProcessing)
-      .on(PaymentSucceeded(str))
-      .goto(Paid)
-      // PaymentProcessing -> Cancelled on PaymentFailed
-      .when(PaymentProcessing)
-      .on(PaymentFailed(str))
-      .goto(Cancelled)
-      // Paid -> ShippingRequested on RequestShipping
-      .when(Paid)
-      .on(RequestShipping(str))
-      .goto(ShippingRequested)
-      // ShippingRequested -> Shipped on ShipmentDispatched
-      .when(ShippingRequested)
-      .on(ShipmentDispatched(str, str, str))
-      .goto(Shipped)
-      // Shipped -> Delivered on DeliveryConfirmed
-      .when(Shipped)
-      .on(DeliveryConfirmed(str))
-      .goto(Delivered)
-      // Entry actions
-      .onState(PaymentProcessing)
-      .onEntry(onPaymentProcessing)
-      .done
-      .onState(Paid)
-      .onEntry(onPaid)
-      .done
-      .onState(Shipped)
-      .onEntry(onShipped)
-      .done
+      _.when(Created)
+        .on(InitiatePayment(amount, str))
+        .goto(PaymentProcessing)
+        // PaymentProcessing -> Paid on PaymentSucceeded
+        .when(PaymentProcessing)
+        .on(PaymentSucceeded(str))
+        .goto(Paid)
+        // PaymentProcessing -> Cancelled on PaymentFailed
+        .when(PaymentProcessing)
+        .on(PaymentFailed(str))
+        .goto(Cancelled)
+        // Paid -> ShippingRequested on RequestShipping
+        .when(Paid)
+        .on(RequestShipping(str))
+        .goto(ShippingRequested)
+        // ShippingRequested -> Shipped on ShipmentDispatched
+        .when(ShippingRequested)
+        .on(ShipmentDispatched(str, str, str))
+        .goto(Shipped)
+        // Shipped -> Delivered on DeliveryConfirmed
+        .when(Shipped)
+        .on(DeliveryConfirmed(str))
+        .goto(Delivered)
+        // Entry actions
+        .onState(PaymentProcessing)
+        .onEntry(onPaymentProcessing)
+        .done
+        .onState(Paid)
+        .onEntry(onPaid)
+        .done
+        .onState(Shipped)
+        .onEntry(onShipped)
+        .done
+    }
   end definition
 end OrderFSM
