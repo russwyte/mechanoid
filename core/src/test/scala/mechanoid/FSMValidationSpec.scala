@@ -2,7 +2,6 @@ package mechanoid
 
 import zio.*
 import zio.test.*
-import scala.concurrent.duration.*
 
 /** Tests for the build macro and duplicate transition detection.
   *

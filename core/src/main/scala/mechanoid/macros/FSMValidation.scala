@@ -96,22 +96,28 @@ object FSMValidation:
     /** Extract the name of a term for display in error messages. */
     def extractName(term: Term): String =
       term match
-        case Ident(name)         => name
-        case Select(_, name)     => name
-        case Apply(fn, _)        => extractName(fn)
-        case TypeApply(fn, _)    => extractName(fn)
-        case Inlined(_, _, expr) => extractName(expr)
-        case Typed(expr, _)      => extractName(expr)
-        case Block(_, expr)      => extractName(expr)
-        case _                   => term.show(using Printer.TreeShortCode)
+        case Ident(name)           => name
+        case Select(qual, "apply") => extractName(qual) // For case class constructors
+        case Select(_, name)       => name
+        case Apply(fn, _)          => extractName(fn)
+        case TypeApply(fn, _)      => extractName(fn)
+        case Inlined(_, _, expr)   => extractName(expr)
+        case Typed(expr, _)        => extractName(expr)
+        case Block(_, expr)        => extractName(expr)
+        case _                     => term.show(using Printer.TreeShortCode)
 
     /** Extract the argument value as a string for display. */
     def extractArgName(term: Term): String =
       term match
-        case Ident(name)        => name
-        case Select(qual, name) => s"${extractArgName(qual)}.$name"
-        case Literal(const)     => const.value.toString
-        case Apply(fn, args)    =>
+        case Ident(name)                        => name
+        case Select(qual, name)                 => s"${extractArgName(qual)}.$name"
+        case Literal(const)                     => const.value.toString
+        case Apply(Select(qual, "apply"), args) =>
+          // Case class constructor: Success("msg") -> Success(msg)
+          val typeName = extractName(qual)
+          val argsStr  = args.map(extractArgName).mkString(", ")
+          s"$typeName($argsStr)"
+        case Apply(fn, args) =>
           val fnName  = extractName(fn)
           val argsStr = args.map(extractArgName).mkString(", ")
           s"$fnName($argsStr)"
@@ -126,9 +132,14 @@ object FSMValidation:
         case Inlined(_, _, expr) =>
           extractTransitions(expr)
 
-        // Handle Block (common with side effects)
+        // Handle Block - need to look inside DefDef for lambda bodies
         case Block(stats, expr) =>
-          stats.flatMap(s => extractTransitions(s.asInstanceOf[Term])) ++ extractTransitions(expr)
+          val fromStats = stats.flatMap {
+            case d: DefDef => d.rhs.map(extractTransitions).getOrElse(Nil)
+            case t: Term   => extractTransitions(t)
+            case _         => Nil
+          }
+          fromStats ++ extractTransitions(expr)
 
         // Pattern: .goto(target), .stay, .stop, .stop(reason)
         // These are the terminal transition methods
