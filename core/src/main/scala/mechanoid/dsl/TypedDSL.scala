@@ -54,7 +54,7 @@ object TypedDSL:
 
     /** Configure lifecycle actions (onEntry/onExit) for states matching type T.
       *
-      * Example: {{{\n * .onState[Connected].onEntry(ZIO.logInfo("Connected!")).done }}}
+      * Example: {{{\n * .onState[Connected].onEntry(ZIO.logInfo("Connected!")).done}}}
       */
     inline def onState[T <: S]: TypedStateBuilder[S, E, Cmd] =
       val parentHash = SealedEnumMacros.typeHash[T](CaseHasher.Default)
@@ -64,7 +64,7 @@ object TypedDSL:
 
     /** Configure lifecycle actions for specific state values.
       *
-      * Example: {{{\n * .onState(Running, Paused).onEntry(logActive).done }}}
+      * Example: {{{\n * .onState(Running, Paused).onEntry(logActive).done}}}
       */
     def onState(first: S, rest: S*): TypedStateBuilder[S, E, Cmd] =
       val hashes = (first +: rest).map(s => definition.stateEnum.caseHash(s)).toSet
@@ -74,7 +74,7 @@ object TypedDSL:
       *
       * When the FSM stays in a matching state for longer than the timeout, a timeout event is generated.
       *
-      * Example: {{{\n * .withTimeout[Waiting](5.seconds) }}}
+      * Example: {{{\n * .withTimeout[Waiting](5.seconds)}}}
       */
     inline def withTimeout[T <: S](timeout: Duration): TypedFSMBuilder[S, E, Cmd] =
       val parentHash = SealedEnumMacros.typeHash[T](CaseHasher.Default)
@@ -86,7 +86,7 @@ object TypedDSL:
 
     /** Set a timeout for specific state values.
       *
-      * Example: {{{\n * .withTimeout(5.seconds, Waiting, Pending) }}}
+      * Example: {{{\n * .withTimeout(5.seconds, Waiting, Pending)}}}
       */
     def withTimeout(timeout: Duration, first: S, rest: S*): TypedFSMBuilder[S, E, Cmd] =
       var updatedDef = definition
