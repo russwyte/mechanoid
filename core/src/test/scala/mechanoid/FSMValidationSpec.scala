@@ -2,13 +2,14 @@ package mechanoid
 
 import zio.*
 import zio.test.*
+import mechanoid.dsl.TypedDSL
 
-/** Tests for the build macro and duplicate transition detection.
+/** Tests for TypedDSL FSM definitions with compile-time validation.
   *
-  * Note: Compile-time error tests cannot be run as regular tests. The tests here verify that valid definitions work
-  * correctly with build, and that .override allows intentional overrides.
+  * Use `validated[S, E] { ... }` for compile-time duplicate detection. Use `TypedDSL[S, E]...build` for runtime-only
+  * (later definitions override earlier ones).
   *
-  * To verify compile-time error detection, try uncommenting the code in the "should not compile" comments.
+  * To test that duplicates fail compilation, uncomment the code in the "should not compile" comments.
   */
 object FSMValidationSpec extends ZIOSpecDefault:
 
@@ -19,7 +20,7 @@ object FSMValidationSpec extends ZIOSpecDefault:
   enum TestEvent extends MEvent:
     case E1, E2
 
-  // Hierarchical states for whenAny testing
+  // Hierarchical states for parent type matching
   sealed trait HierState extends MState
   case object Root       extends HierState
   sealed trait Parent    extends HierState
@@ -35,17 +36,17 @@ object FSMValidationSpec extends ZIOSpecDefault:
   import TestEvent.*
 
   def spec = suite("FSMValidation")(
-    suite("build macro")(
+    suite("validated macro")(
       test("accepts valid definition without duplicates") {
-        val definition = build[TestState, TestEvent] {
-          _.when(A)
-            .on(E1)
+        val definition = validated[TestState, TestEvent] {
+          _.when[A.type]
+            .on[E1.type]
             .goto(B)
-            .when(B)
-            .on(E1)
+            .when[B.type]
+            .on[E1.type]
             .goto(C)
-            .when(C)
-            .on(E1)
+            .when[C.type]
+            .on[E1.type]
             .goto(A)
 
         }
@@ -59,12 +60,12 @@ object FSMValidationSpec extends ZIOSpecDefault:
         }
       },
       test("accepts definition with different events on same state") {
-        val definition = build[TestState, TestEvent] {
-          _.when(A)
-            .on(E1)
+        val definition = validated[TestState, TestEvent] {
+          _.when[A.type]
+            .on[E1.type]
             .goto(B)
-            .when(A)
-            .on(E2)
+            .when[A.type]
+            .on[E2.type]
             .goto(C) // Different event, same state - OK
         }
 
@@ -77,12 +78,12 @@ object FSMValidationSpec extends ZIOSpecDefault:
         }
       },
       test("accepts definition with same event on different states") {
-        val definition = build[TestState, TestEvent] {
-          _.when(A)
-            .on(E1)
+        val definition = validated[TestState, TestEvent] {
+          _.when[A.type]
+            .on[E1.type]
             .goto(B)
-            .when(B)
-            .on(E1)
+            .when[B.type]
+            .on[E1.type]
             .goto(C) // Same event, different state - OK
         }
 
@@ -95,40 +96,58 @@ object FSMValidationSpec extends ZIOSpecDefault:
           yield assertTrue(state == C)
         }
       },
+      // NOTE: Uncomment below to verify compile-time error detection:
+      //
+      // test("duplicate transition should fail to compile") {
+      //   val definition = validated[TestState, TestEvent] {
+      //     _.when[A.type].on[E1.type].goto(B)
+      //       .when[A.type].on[E1.type].goto(C)  // ERROR: Duplicate transition
+      //   }
+      //   assertTrue(true)
+      // }
+      //
+      // Expected error:
+      // "Duplicate transition detected.
+      //    State: type (conflicts with: type)
+      //    Event: type (conflicts with: type)
+      //    First definition:  goto(B)
+      //    Second definition: goto(C)
+      //  To fix: Remove duplicate OR use .override.goto(...)"
     ),
     suite(".override modifier")(
-      test("allows explicit override of previous transition") {
-        val definition = build[TestState, TestEvent] {
-          _.when(A)
-            .on(E1)
-            .goto(B) // First definition
-            .when(A)
-            .on(E1)
-            .`override`
-            .goto(C) // Explicit override - should go to C, not B
-        }
+      test("later definition overrides earlier one") {
+        // Without validation macro, later transitions simply override earlier ones
+        val definition = TypedDSL[TestState, TestEvent]
+          .when[A.type]
+          .on[E1.type]
+          .goto(B) // First definition
+          .when[A.type]
+          .on[E1.type]
+          .`override`
+          .goto(C) // Later definition wins
+          .build
 
         ZIO.scoped {
           for
             fsm   <- definition.build(A)
             _     <- fsm.send(E1)
             state <- fsm.currentState
-          yield assertTrue(state == C) // Override wins
+          yield assertTrue(state == C) // Later definition wins
         }
       },
-      test("allows whenAny followed by specific override") {
-        val definition = build[HierState, HierEvent] {
-          _.when(Root)
-            .on(Go)
-            .goto(ChildA)
-            .whenAny[Parent]
-            .on(Reset)
-            .goto(Root) // Default: all children go to Root
-            .when(ChildA)
-            .on(Reset)
-            .`override`
-            .goto(ChildB) // Override: ChildA goes to ChildB instead
-        }
+      test("when[Parent] followed by specific override") {
+        val definition = TypedDSL[HierState, HierEvent]
+          .when[Root.type]
+          .on[Go.type]
+          .goto(ChildA)
+          .when[Parent]
+          .on[Reset.type]
+          .goto(Root) // Default: all children go to Root
+          .when[ChildA.type]
+          .on[Reset.type]
+          .`override`
+          .goto(ChildB) // Override: ChildA goes to ChildB
+          .build
 
         ZIO.scoped {
           for
@@ -143,20 +162,20 @@ object FSMValidationSpec extends ZIOSpecDefault:
             state2 <- fsm2.currentState
           yield assertTrue(
             state1 == ChildB, // Override
-            state2 == Root,   // Default from whenAny
+            state2 == Root,   // Default from when[Parent]
           )
         }
       },
       test("override works with stay") {
-        val definition = build[TestState, TestEvent] {
-          _.when(A)
-            .on(E1)
-            .goto(B)
-            .when(A)
-            .on(E1)
-            .`override`
-            .stay // Override to stay instead
-        }
+        val definition = TypedDSL[TestState, TestEvent]
+          .when[A.type]
+          .on[E1.type]
+          .goto(B)
+          .when[A.type]
+          .on[E1.type]
+          .`override`
+          .stay // Override to stay instead
+          .build
 
         ZIO.scoped {
           for
@@ -170,15 +189,15 @@ object FSMValidationSpec extends ZIOSpecDefault:
         }
       },
       test("override works with stop") {
-        val definition = build[TestState, TestEvent] {
-          _.when(A)
-            .on(E1)
-            .goto(B)
-            .when(A)
-            .on(E1)
-            .`override`
-            .stop // Override to stop instead
-        }
+        val definition = TypedDSL[TestState, TestEvent]
+          .when[A.type]
+          .on[E1.type]
+          .goto(B)
+          .when[A.type]
+          .on[E1.type]
+          .`override`
+          .stop // Override to stop instead
+          .build
 
         ZIO.scoped {
           for
@@ -192,23 +211,5 @@ object FSMValidationSpec extends ZIOSpecDefault:
         }
       },
     ),
-    // NOTE: The following definitions should NOT compile due to duplicate transitions.
-    // Uncomment to verify compile-time error detection:
-    //
-    // test("duplicate transition should fail to compile") {
-    //   val definition = build[TestState, TestEvent] {
-    //     _.when(A).on(E1).goto(B)
-    //       .when(A).on(E1).goto(C)  // ERROR: Duplicate transition
-    //   }
-    //   assertTrue(true)
-    // }
-    //
-    // The expected compile error:
-    // "Duplicate transition detected for state 'A' on event 'E1'.
-    //    First definition:  goto(B)
-    //    Second definition: goto(C)
-    //  To fix this:
-    //    - Remove one of the duplicate definitions, OR
-    //    - Use .override.goto(...) if the override is intentional"
   ) @@ TestAspect.sequential
 end FSMValidationSpec

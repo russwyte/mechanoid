@@ -22,6 +22,9 @@ export core.CaseHasher
 
 // Re-export DSL
 export dsl.FSMDefinition
+export dsl.TypedDSL
+export macros.TypedFSMValidation.validated
+export macros.TypedFSMValidation.validatedWithCommands
 
 // Re-export runtime
 export runtime.FSMRuntime
@@ -68,6 +71,3 @@ export stores.InMemoryEventStore
 export stores.InMemoryCommandStore
 export stores.InMemoryTimeoutStore
 export stores.InMemoryFSMInstanceLock
-
-// Re-export build macro for FSM validation
-export macros.FSMValidation.build

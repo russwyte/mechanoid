@@ -182,6 +182,47 @@ enum PaymentEvent extends MEvent:
   case Refund(orderId: String, amount: BigDecimal)
 ```
 
+**Event hierarchies:**
+
+Like states, events can be organized into hierarchies using sealed traits:
+
+```scala
+sealed trait UserEvent extends MEvent
+sealed trait InputEvent extends UserEvent
+case object Click extends InputEvent
+case object Tap extends InputEvent
+case object Swipe extends InputEvent
+```
+
+#### Multi-Event Transitions
+
+For transitions that are triggered by multiple events, use `onAny` or `onEvents`:
+
+```scala
+// Apply to all leaf events under a parent type
+.when(Idle).onAny[InputEvent].goto(Processing)
+
+// Apply to specific events under a parent type
+.when(Idle).onAny[InputEvent](Click, Tap).goto(Processing)
+
+// Apply to specific events (not based on hierarchy)
+.when(Active).onEvents(Pause, Stop).goto(Paused)
+```
+
+Use `onEvents` when the events don't share a common parent but should trigger the same transition.
+
+**Combining multi-state and multi-event:**
+
+You can combine `whenAny`/`whenStates` with `onAny`/`onEvents` to create transitions for the cartesian product of states and events:
+
+```scala
+// All Working states respond to Cancel OR Abort
+.whenAny[Working].onEvents(Cancel, Abort).goto(Stopped)
+
+// All Processing states respond to any UserInput
+.whenAny[Processing].onAny[UserInput].goto(Idle)
+```
+
 ### Transitions
 
 A transition defines what happens when an event is received in a specific state:
@@ -195,6 +236,9 @@ A transition defines what happens when an event is received in a specific state:
 
 // Stop the FSM
 .when(Failed).on(Shutdown).stop
+
+// Multiple events trigger the same transition
+.when(Active).onEvents(Pause, Suspend).goto(Paused)
 ```
 
 **TransitionResult** represents the outcome:
