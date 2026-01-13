@@ -1,10 +1,11 @@
 # Order 1 Execution Trace
 
-**Final State:** Shipped
+**Final State:** Paid
 
 ## Command Summary
 
-- Completed: 6
+- Completed: 3
+- Failed: 1
 
 ## FSM + Commands Sequence Diagram
 
@@ -16,39 +17,27 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(250.0,Visa ****4242)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=1<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>amount=150.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=1<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Buddy<br/>amount=250.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(TXN-818219)
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=1<br/>petName=Whiskers<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=6af53de1-d7c1-4785-adb6-5a0e32c203c3
+    Note right of CQ: orderId=1<br/>petName=Buddy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=f536f9a8-10e6-4226-94bf-0242d2da2cba
     CQ->>W: claim
-    W->>CQ: ✅ Completed
+    W->>CQ: ❌ Failed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>notificationType=order_confirmed<br/>messageId=bb8e9bf3-e064-4c36-a942-6589e2d7a4d4
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>FSM: RequestShipping
-    Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
-    Note over FSM: Shipped
-    FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=6af53de1-d7c1-4785-adb6-5a0e32c203c3<br/>trackingNumber=TRACK-799082<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=3 business days<br/>success=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>notificationType=shipped<br/>messageId=bb8e9bf3-e064-4c36-a942-6589e2d7a4d4-shipped
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Buddy<br/>notificationType=order_confirmed<br/>messageId=cf2fbad5-29aa-4b5a-a15d-13fdb8e728fa
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=bb8e9bf3-e064-4c36-a942-6589e2d7a4d4-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=cf2fbad5-29aa-4b5a-a15d-13fdb8e728fa<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    Note over FSM: Current: Shipped
+    Note over FSM: Current: Paid
 ```
 
 ## FSM-Only Sequence Diagram
@@ -57,15 +46,11 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-1
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(250.0,Visa ****4242)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(TXN-818219)
     Note over FSM: Paid
-    FSM->>FSM: RequestShipping
-    Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
-    Note over FSM: Shipped
-    Note over FSM: Current: Shipped
+    Note over FSM: Current: Paid
 ```
 
 ## Flowchart with Commands
@@ -108,9 +93,7 @@ flowchart TB
     style SendNotification fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
 
     style Created fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style ShippingRequested fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style PaymentProcessing fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Shipped fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style Paid fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Shipped fill:#90EE90,stroke:#228B22,stroke-width:4px
+    style Paid fill:#90EE90,stroke:#228B22,stroke-width:4px
 ```

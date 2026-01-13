@@ -2,8 +2,8 @@ package mechanoid
 
 import zio.*
 import zio.test.*
-import mechanoid.*
 import mechanoid.core.SealedEnum
+import mechanoid.machine.*
 import mechanoid.visualization.*
 import java.time.Instant
 
@@ -14,24 +14,20 @@ object VisualizationSpec extends ZIOSpecDefault:
     case Idle, Running, Completed, Failed
 
   enum TestEvent extends MEvent:
-    case Start
-    case Finish
-    case Error(reason: String) extends TestEvent
+    case Start, Finish, Error
 
-  val testFSM: FSMDefinition[TestState, TestEvent, Nothing] =
+  // Use the new DSL and access .definition for visualization
+  val testMachine: Machine[TestState, TestEvent, Nothing] =
     import TestState.*, TestEvent.*
-    TypedDSL[TestState, TestEvent]
-      .when[Idle.type]
-      .on[Start.type]
-      .goto(Running)
-      .when[Running.type]
-      .on[Finish.type]
-      .goto(Completed)
-      .when[Running.type]
-      .on[Error]
-      .goto(Failed)
-      .build
-  end testFSM
+    build[TestState, TestEvent](
+      Idle via Start to Running,
+      Running via Finish to Completed,
+      Running via Error to Failed,
+    )
+  end testMachine
+
+  // Access the underlying definition for visualization tests
+  val testFSM = testMachine.definition
 
   def spec = suite("Visualization")(
     suite("SealedEnum name extraction")(
@@ -48,7 +44,7 @@ object VisualizationSpec extends ZIOSpecDefault:
         assertTrue(
           ee.caseNames.values.toSet == Set("Start", "Finish", "Error"),
           ee.nameOf(TestEvent.Start) == "Start",
-          ee.nameOf(TestEvent.Error("test")) == "Error",
+          ee.nameOf(TestEvent.Error) == "Error",
         )
       },
       test("caseHash is stable and based on full name") {

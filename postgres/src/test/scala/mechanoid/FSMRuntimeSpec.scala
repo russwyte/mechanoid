@@ -5,6 +5,7 @@ import zio.test.*
 import zio.json.*
 import saferis.Transactor
 import mechanoid.core.Timed
+import mechanoid.machine.*
 import mechanoid.persistence.*
 import mechanoid.persistence.postgres.PostgresEventStore
 import mechanoid.runtime.FSMRuntime
@@ -32,17 +33,14 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   import OrderState.*
   import OrderEvent.*
 
-  val orderDefinition = validated[OrderState, OrderEvent] {
-    _.when[Pending.type]
-      .on[Pay.type]
-      .goto(Paid)
-      .when[Paid.type]
-      .on[Ship.type]
-      .goto(Shipped)
-      .when[Shipped.type]
-      .on[Deliver.type]
-      .goto(Delivered)
-  }
+  val orderMachine = build[OrderState, OrderEvent](
+    Pending via Pay to Paid,
+    Paid via Ship to Shipped,
+    Shipped via Deliver to Delivered,
+  )
+
+  // Access the underlying definition for FSMRuntime
+  val orderDefinition = orderMachine.definition
 
   /** Generate a unique instance ID for test isolation. */
   def uniqueId(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
@@ -731,9 +729,10 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
         }
         // Try to recover with a DIFFERENT definition that doesn't have Ship transition
         // We create a definition that only has Pending -> Paid
-        restrictedDefinition = validated[OrderState, OrderEvent] {
-          _.when[Pending.type].on[Pay.type].goto(Paid)
-        }
+        restrictedMachine = build[OrderState, OrderEvent](
+          Pending via Pay to Paid
+        )
+        restrictedDefinition = restrictedMachine.definition
         // No Ship transition!
         // This should fail because Ship event exists but no transition is defined
         result <- ZIO.scoped {

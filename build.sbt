@@ -64,7 +64,7 @@ lazy val core = project
       "dev.zio" %% "zio-streams"       % zioVersion,
       "dev.zio" %% "zio-logging"       % "2.5.2",
       "dev.zio" %% "zio-logging-slf4j" % "2.5.2",
-      "dev.zio" %% "zio-json"          % "0.7.42",
+      "dev.zio" %% "zio-json"          % "0.8.0",
       "dev.zio" %% "zio-test"          % zioVersion % Test,
       "dev.zio" %% "zio-test-sbt"      % zioVersion % Test,
       "dev.zio" %% "zio-test-magnolia" % zioVersion % Test,

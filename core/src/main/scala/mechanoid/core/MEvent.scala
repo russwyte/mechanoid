@@ -109,10 +109,19 @@ object Timed:
   end extension
 end Timed
 
-/** Built-in timeout event. Internal use only.
+/** Built-in timeout event.
   *
-  * This event is automatically sent when a state's timeout duration elapses.
+  * This event is automatically sent when a state's timeout duration elapses. Use this in transitions to define what
+  * happens when a timeout fires:
+  *
+  * {{{
+  * // Set timeout duration on a state
+  * Processing @@ timeout(30.seconds)
+  *
+  * // Define what happens when timeout fires
+  * Processing via Timeout to TimedOut
+  * }}}
   */
-private[mechanoid] case object Timeout extends MEvent:
+case object Timeout extends MEvent:
   /** Stable hash for the Timeout event, computed from its fully qualified name. */
   val CaseHash: Int = "mechanoid.core.Timeout".hashCode

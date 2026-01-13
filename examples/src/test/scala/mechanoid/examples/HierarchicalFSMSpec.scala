@@ -4,9 +4,14 @@ import zio.*
 import zio.test.*
 import mechanoid.core.{MState, SealedEnum}
 import mechanoid.examples.hierarchical.*
-import mechanoid.runtime.FSMRuntime
 
-/** Tests for hierarchical state organization using nested sealed traits. */
+/** Tests for hierarchical state organization using nested sealed traits.
+  *
+  * These tests demonstrate:
+  *   - SealedEnum discovering all leaf cases in a hierarchy
+  *   - The new suite-style DSL with `all[Parent]` for group transitions
+  *   - Using `Machine.start()` to run FSM instances
+  */
 object HierarchicalFSMSpec extends ZIOSpecDefault:
 
   def spec = suite("Hierarchical FSM")(
@@ -72,7 +77,8 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
       test("happy path: Draft -> Published -> Archived") {
         ZIO.scoped {
           for
-            fsm <- FSMRuntime.make(DocumentWorkflowFSM.definition, Draft)
+            // Use the new Machine.start() API
+            fsm <- DocumentWorkflowFSM.definition.start(Draft)
             _   <- fsm.send(SubmitForReview)
             s1  <- fsm.currentState
             _   <- fsm.send(AssignReviewer)
@@ -95,7 +101,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
       test("rejection path: can resubmit after rejection") {
         ZIO.scoped {
           for
-            fsm <- FSMRuntime.make(DocumentWorkflowFSM.definition, Draft)
+            fsm <- DocumentWorkflowFSM.definition.start(Draft)
             _   <- fsm.send(SubmitForReview)
             _   <- fsm.send(AssignReviewer)
             _   <- fsm.send(ApproveReview)
@@ -112,7 +118,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
       test("changes requested path: can resubmit after changes") {
         ZIO.scoped {
           for
-            fsm <- FSMRuntime.make(DocumentWorkflowFSM.definition, Draft)
+            fsm <- DocumentWorkflowFSM.definition.start(Draft)
             _   <- fsm.send(SubmitForReview)
             _   <- fsm.send(AssignReviewer)
             _   <- fsm.send(RequestChanges)
@@ -128,7 +134,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
       test("state history tracks all transitions") {
         ZIO.scoped {
           for
-            fsm     <- FSMRuntime.make(DocumentWorkflowFSM.definition, Draft)
+            fsm     <- DocumentWorkflowFSM.definition.start(Draft)
             _       <- fsm.send(SubmitForReview)
             _       <- fsm.send(AssignReviewer)
             _       <- fsm.send(ApproveReview)
@@ -176,22 +182,22 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
         assertTrue(allStates.length == 9)
       },
     ),
-    suite("whenAny - hierarchical transitions")(
+    suite("all[Parent] - hierarchical transitions")(
       test("CancelReview from any InReview state goes to Draft") {
         ZIO.scoped {
           for
-            // Test from PendingReview
-            fsm1 <- FSMRuntime.make(DocumentWorkflowFSM.definition, PendingReview)
+            // Test from PendingReview - uses all[InReview] via CancelReview to Draft
+            fsm1 <- DocumentWorkflowFSM.definition.start(PendingReview)
             _    <- fsm1.send(CancelReview)
             s1   <- fsm1.currentState
 
-            // Test from UnderReview
-            fsm2 <- FSMRuntime.make(DocumentWorkflowFSM.definition, UnderReview)
+            // Test from UnderReview - same group transition applies
+            fsm2 <- DocumentWorkflowFSM.definition.start(UnderReview)
             _    <- fsm2.send(CancelReview)
             s2   <- fsm2.currentState
 
-            // Test from ChangesRequested
-            fsm3 <- FSMRuntime.make(DocumentWorkflowFSM.definition, ChangesRequested)
+            // Test from ChangesRequested - same group transition applies
+            fsm3 <- DocumentWorkflowFSM.definition.start(ChangesRequested)
             _    <- fsm3.send(CancelReview)
             s3   <- fsm3.currentState
           yield assertTrue(
@@ -204,13 +210,13 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
       test("Abandon from any Approval state goes to Cancelled") {
         ZIO.scoped {
           for
-            // Test from PendingApproval
-            fsm1 <- FSMRuntime.make(DocumentWorkflowFSM.definition, PendingApproval)
+            // Test from PendingApproval - uses all[Approval] via Abandon to Cancelled
+            fsm1 <- DocumentWorkflowFSM.definition.start(PendingApproval)
             _    <- fsm1.send(Abandon)
             s1   <- fsm1.currentState
 
-            // Test from Rejected
-            fsm2 <- FSMRuntime.make(DocumentWorkflowFSM.definition, Rejected)
+            // Test from Rejected - same group transition applies
+            fsm2 <- DocumentWorkflowFSM.definition.start(Rejected)
             _    <- fsm2.send(Abandon)
             s2   <- fsm2.currentState
           yield assertTrue(

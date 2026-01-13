@@ -17,24 +17,24 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(25.0,Visa ****4242)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=3<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>amount=75.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=3<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>amount=25.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(TXN-687055)
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=3<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=4a2b00d7-b1b7-44b9-9dc3-a88d967739d3
+    Note right of CQ: orderId=3<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=dab79dd1-d4ac-4977-ab43-ed79a56cca4d
     CQ->>W: claim
     W->>CQ: ❌ Failed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=62ba75ad-b96c-4a3a-b14e-db70fe2806a9
+    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=de6fcabd-d4cd-445a-8817-47c7a600f25a
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=62ba75ad-b96c-4a3a-b14e-db70fe2806a9<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=de6fcabd-d4cd-445a-8817-47c7a600f25a<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Paid
@@ -46,9 +46,9 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-3
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(25.0,Visa ****4242)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(TXN-687055)
     Note over FSM: Paid
     Note over FSM: Current: Paid
 ```

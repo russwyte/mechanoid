@@ -77,11 +77,14 @@ object MermaidVisualizer:
     * sequenceDiagram
     *     participant FSM
     *     Note over FSM: Created
-    *     FSM->>FSM: StartEvent
+    *     FSM->>FSM: PaymentSucceeded(TXN-123)
     *     Note over FSM: Processing
     *     FSM->>FSM: FinishEvent
     *     Note over FSM: Completed
     * ```
+    *
+    * Note: For parameterized events, the full representation with actual runtime values is shown (e.g.,
+    * `PaymentSucceeded(TXN-123)` instead of just `PaymentSucceeded`).
     */
   def sequenceDiagram[S <: MState, E <: MEvent](
       trace: ExecutionTrace[S, E],
@@ -97,15 +100,16 @@ object MermaidVisualizer:
 
     // Each transition step
     trace.steps.foreach { step =>
-      val eventName =
+      // For runtime traces, show the full event representation with actual values
+      val eventLabel =
         if step.isTimeout then "Timeout"
-        else eventEnum.nameOf(step.event)
+        else formatEventForDiagram(step.event)
 
       val toName = stateEnum.nameOf(step.to)
 
-      if step.isSelfTransition then sb.append(s"    FSM->>FSM: $eventName (stay)\n")
+      if step.isSelfTransition then sb.append(s"    FSM->>FSM: $eventLabel (stay)\n")
       else
-        sb.append(s"    FSM->>FSM: $eventName\n")
+        sb.append(s"    FSM->>FSM: $eventLabel\n")
         sb.append(s"    Note over FSM: $toName\n")
     }
 
@@ -114,6 +118,36 @@ object MermaidVisualizer:
 
     sb.toString
   end sequenceDiagram
+
+  /** Format an event for diagram display.
+    *
+    * For case objects: returns just the name (e.g., "Cancel") For parameterized case classes: returns name with params
+    * (e.g., "PaymentSucceeded(TXN-123)")
+    *
+    * Long parameter values are truncated for readability.
+    */
+  def formatEventForDiagram[E](event: E): String =
+    formatValueForDiagram(event)
+
+  /** Format a state for diagram display.
+    *
+    * For case objects: returns just the name (e.g., "Idle") For parameterized case classes: returns name with params
+    * (e.g., "Connecting(3)")
+    *
+    * Long parameter values are truncated for readability.
+    */
+  def formatStateForDiagram[S](state: S): String =
+    formatValueForDiagram(state)
+
+  /** Format any value for diagram display, handling both case objects and parameterized case classes. */
+  private def formatValueForDiagram[T](value: T): String =
+    val full = value.toString
+    // Truncate long parameter values for readability
+    if full.length > 60 then
+      val parenIdx = full.indexOf('(')
+      if parenIdx > 0 then s"${full.substring(0, parenIdx)}(...)"
+      else full.take(57) + "..."
+    else escapeMermaid(full)
 
   /** Generate a flowchart showing execution path with highlighting.
     *
@@ -299,7 +333,8 @@ object MermaidVisualizer:
 
   /** Generate a sequence diagram showing execution trace with command details.
     *
-    * Shows FSM state transitions alongside command execution.
+    * Shows FSM state transitions alongside command execution. For parameterized events, shows full representation with
+    * actual runtime values.
     */
   def sequenceDiagramWithCommands[S <: MState, E <: MEvent, Id, Cmd](
       trace: ExecutionTrace[S, E],
@@ -326,16 +361,17 @@ object MermaidVisualizer:
     // Interleave FSM transitions with command execution
     var cmdIdx = 0
     trace.steps.foreach { step =>
-      val eventName =
+      // For runtime traces, show the full event representation with actual values
+      val eventLabel =
         if step.isTimeout then "Timeout"
-        else eventEnum.nameOf(step.event)
+        else formatEventForDiagram(step.event)
 
       val toName = stateEnum.nameOf(step.to)
 
       // FSM transition
-      if step.isSelfTransition then sb.append(s"    FSM->>FSM: $eventName (stay)\n")
+      if step.isSelfTransition then sb.append(s"    FSM->>FSM: $eventLabel (stay)\n")
       else
-        sb.append(s"    FSM->>FSM: $eventName\n")
+        sb.append(s"    FSM->>FSM: $eventLabel\n")
         sb.append(s"    Note over FSM: $toName\n")
 
       // Show commands enqueued around this transition

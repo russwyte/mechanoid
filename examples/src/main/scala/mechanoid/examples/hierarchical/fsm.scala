@@ -2,7 +2,8 @@ package mechanoid.examples.hierarchical
 
 import zio.*
 import zio.json.*
-import mechanoid.*
+import mechanoid.core.{MState, MEvent}
+import mechanoid.machine.*
 
 // ============================================
 // Document Workflow - Hierarchical States
@@ -13,7 +14,7 @@ import mechanoid.*
   * This demonstrates how to organize related states using nested sealed traits. The hierarchy enables:
   *   - Clear visual grouping of related states
   *   - Type-safe state categories (e.g., `InReview` type for all review states)
-  *   - Using `whenAny[ParentState]` to define transitions for all states in a group
+  *   - Using `all[ParentState]` to define transitions for all states in a group
   *
   * Hierarchy:
   * {{{
@@ -31,16 +32,16 @@ import mechanoid.*
   *   └── Cancelled                (leaf - cancelled state)
   * }}}
   *
-  * The `whenAny[T]` method allows defining transitions that apply to all leaf states under a parent:
+  * The `all[T]` matcher allows defining transitions that apply to all leaf states under a parent:
   * {{{
   * // Cancel from any InReview state goes back to Draft
-  * .whenAny[InReview].on(CancelReview).goto(Draft)
+  * all[InReview] via CancelReview to Draft,
   *
-  * // Abandon from any Approval state also goes to Cancelled
-  * .whenAny[Approval].on(Abandon).goto(Cancelled)
+  * // Abandon from any Approval state goes to Cancelled
+  * all[Approval] via Abandon to Cancelled,
   * }}}
   *
-  * Leaf-level transitions can override parent-level ones when defined after `whenAny`.
+  * Leaf-level transitions can override parent-level ones using `@@ Aspect.overriding`.
   */
 sealed trait DocumentState extends MState derives JsonCodec
 
@@ -103,72 +104,60 @@ case object Abandon              extends DocumentEvent // Abandon from any appro
 
 object DocumentWorkflowFSM:
 
-  /** Create the document workflow FSM definition.
+  /** The document workflow FSM definition.
     *
-    * This definition demonstrates both individual state transitions and `whenAny[T]` for parent-level transitions.
+    * This definition demonstrates the power of the suite-style DSL:
     *
-    * Individual transitions are defined for specific leaf states, while `whenAny[T]` creates transitions for all leaf
-    * states under a parent sealed trait. This is useful for:
+    *   - **Readable syntax**: `State via Event to Target` reads like plain English
+    *   - **Hierarchical matching**: `all[InReview]` matches ALL leaf states under a parent trait
+    *   - **Override support**: Use `@@ Aspect.overriding` to override parent-level transitions
+    *
+    * The `all[T]` pattern is incredibly powerful for:
     *   - Cancel/abort actions that apply to multiple related states
-    *   - Default behaviors that can be overridden by specific states
+    *   - Default behaviors for entire state groups
+    *   - Reducing boilerplate in complex workflows
     *
-    * Note: `whenAny` transitions can be overridden by leaf-level transitions defined after them using `.override`.
+    * Example showing the pattern:
+    * {{{
+    * build[DocumentState, DocumentEvent](
+    *   // Default: any review state can be cancelled
+    *   all[InReview] via CancelReview to Draft,
+    *
+    *   // Override for specific state (if needed):
+    *   // (UnderReview via CancelReview to SomeOtherState) @@ Aspect.overriding,
+    * )
+    * }}}
     */
-  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] = validated[DocumentState, DocumentEvent] {
-    // ---- Draft transitions ----
-    _.when(Draft)
-      .on(SubmitForReview)
-      .goto(PendingReview)
+  val definition: Machine[DocumentState, DocumentEvent, Nothing] =
+    build[DocumentState, DocumentEvent](
+      // ===== Draft Phase =====
+      // Submit a draft for review
+      Draft via SubmitForReview to PendingReview,
 
-      // ---- when[InReview]: applies to PendingReview, UnderReview, ChangesRequested ----
+      // ===== Review Phase (Hierarchical) =====
       // Any state in the review phase can be cancelled, returning to Draft
-      .when[InReview]
-      .on(CancelReview)
-      .goto(Draft)
+      // This single line applies to: PendingReview, UnderReview, ChangesRequested
+      all[InReview] via CancelReview to Draft,
 
-      // ---- Review Phase transitions (individual leaf states) ----
-      // PendingReview: waiting for reviewer assignment
-      .when(PendingReview)
-      .on(AssignReviewer)
-      .goto(UnderReview)
+      // Individual review state transitions
+      PendingReview via AssignReviewer to UnderReview,
+      UnderReview via RequestChanges to ChangesRequested,
+      UnderReview via ApproveReview to PendingApproval,
+      ChangesRequested via ResubmitAfterChanges to PendingReview,
 
-      // UnderReview: reviewer working on it
-      .when(UnderReview)
-      .on(RequestChanges)
-      .goto(ChangesRequested)
-      .when(UnderReview)
-      .on(ApproveReview)
-      .goto(PendingApproval)
+      // ===== Approval Phase (Hierarchical) =====
+      // Any state in the approval phase can be abandoned
+      // This applies to: PendingApproval, Rejected
+      all[Approval] via Abandon to Cancelled,
 
-      // ChangesRequested: author making revisions
-      .when(ChangesRequested)
-      .on(ResubmitAfterChanges)
-      .goto(PendingReview)
+      // Individual approval state transitions
+      PendingApproval via ApprovePublication to Published,
+      PendingApproval via RejectPublication to Rejected,
+      Rejected via SubmitForReview to PendingReview,
 
-      // ---- when[Approval]: applies to PendingApproval, Rejected ----
-      // Any state in the approval phase can be abandoned, going to Cancelled
-      .when[Approval]
-      .on(Abandon)
-      .goto(Cancelled)
+      // ===== Final States =====
+      // Published documents can be archived
+      Published via Archive to Archived,
+    )
 
-      // ---- Approval Phase transitions (individual leaf states) ----
-      // PendingApproval: waiting for final sign-off
-      .when(PendingApproval)
-      .on(ApprovePublication)
-      .goto(Published)
-      .when(PendingApproval)
-      .on(RejectPublication)
-      .goto(Rejected)
-
-      // Rejected: can resubmit for review
-      .when(Rejected)
-      .on(SubmitForReview)
-      .goto(PendingReview)
-
-      // ---- Final State transitions ----
-      // Published can be archived
-      .when(Published)
-      .on(Archive)
-      .goto(Archived)
-  }
 end DocumentWorkflowFSM

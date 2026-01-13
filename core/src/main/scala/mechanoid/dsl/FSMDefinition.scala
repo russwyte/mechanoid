@@ -40,7 +40,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
   def eventNames: Map[Int, String] = eventEnum.caseNames
 
   /** Add a transition to the definition. */
-  private[dsl] def addTransition(
+  private[mechanoid] def addTransition(
       fromCaseHash: Int,
       event: Timed[E],
       transition: Transition[S, Timed[E], S],
@@ -53,7 +53,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
     )
 
   /** Add a transition with visualization metadata. */
-  private[dsl] def addTransitionWithMeta(
+  private[mechanoid] def addTransitionWithMeta(
       fromCaseHash: Int,
       event: Timed[E],
       transition: Transition[S, Timed[E], S],
@@ -67,7 +67,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
     )
 
   /** Add a transition using event hash directly (for multi-event builders). */
-  private[dsl] def addTransitionWithMetaByHash(
+  private[mechanoid] def addTransitionWithMetaByHash(
       fromCaseHash: Int,
       eventCaseHash: Int,
       transition: Transition[S, Timed[E], S],
@@ -81,7 +81,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
     )
 
   /** Update lifecycle for a state. */
-  private[dsl] def updateLifecycle(
+  private[mechanoid] def updateLifecycle(
       stateCaseHash: Int,
       f: StateLifecycle[S, Cmd] => StateLifecycle[S, Cmd],
   ): FSMDefinition[S, E, Cmd] =
@@ -95,7 +95,7 @@ final class FSMDefinition[S <: MState, E <: MEvent, Cmd] @publicInBinary private
   end updateLifecycle
 
   /** Set timeout for a state. */
-  private[dsl] def setStateTimeout(
+  private[mechanoid] def setStateTimeout(
       stateCaseHash: Int,
       timeout: Duration,
   ): FSMDefinition[S, E, Cmd] =

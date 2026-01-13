@@ -1,7 +1,6 @@
 package mechanoid
 
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
 
 object Mechanoid
 
@@ -20,11 +19,20 @@ export core.ActionFailedError
 export core.ProcessingTimeoutError
 export core.CaseHasher
 
-// Re-export DSL
-export dsl.FSMDefinition
-export dsl.TypedDSL
-export macros.TypedFSMValidation.validated
-export macros.TypedFSMValidation.validatedWithCommands
+// Re-export suite-style DSL
+export machine.Machine
+export machine.build
+export machine.all
+export machine.anyOf
+export machine.Aspect
+export machine.stay
+export machine.stop
+export machine.TransitionSpec as MachineTransitionSpec
+export machine.TimeoutSpec
+export machine.ViaBuilder
+export machine.AllMatcher
+export machine.AnyOfMatcher
+export machine.AnyOfEventMatcher
 
 // Re-export runtime
 export runtime.FSMRuntime
