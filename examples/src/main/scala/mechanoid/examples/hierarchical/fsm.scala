@@ -114,15 +114,15 @@ object DocumentWorkflowFSM:
     *
     * Note: `whenAny` transitions can be overridden by leaf-level transitions defined after them using `.override`.
     */
-  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] = build[DocumentState, DocumentEvent] {
+  val definition: FSMDefinition[DocumentState, DocumentEvent, Nothing] = validated[DocumentState, DocumentEvent] {
     // ---- Draft transitions ----
     _.when(Draft)
       .on(SubmitForReview)
       .goto(PendingReview)
 
-      // ---- whenAny[InReview]: applies to PendingReview, UnderReview, ChangesRequested ----
+      // ---- when[InReview]: applies to PendingReview, UnderReview, ChangesRequested ----
       // Any state in the review phase can be cancelled, returning to Draft
-      .whenAny[InReview]
+      .when[InReview]
       .on(CancelReview)
       .goto(Draft)
 
@@ -145,9 +145,9 @@ object DocumentWorkflowFSM:
       .on(ResubmitAfterChanges)
       .goto(PendingReview)
 
-      // ---- whenAny[Approval]: applies to PendingApproval, Rejected ----
+      // ---- when[Approval]: applies to PendingApproval, Rejected ----
       // Any state in the approval phase can be abandoned, going to Cancelled
-      .whenAny[Approval]
+      .when[Approval]
       .on(Abandon)
       .goto(Cancelled)
 

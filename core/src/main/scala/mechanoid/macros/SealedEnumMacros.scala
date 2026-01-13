@@ -180,9 +180,21 @@ object SealedEnumMacros:
   private def typeHashImpl[T: Type](hasher: Expr[CaseHasher])(using Quotes): Expr[Int] =
     import quotes.reflect.*
     val tpe         = TypeRepr.of[T]
-    val symbol      = tpe.typeSymbol
     val (hashFn, _) = detectHasher(hasher)
-    Expr(hashFn(symbol.fullName))
+
+    // For singleton types (like A.type), we need to get the underlying term's symbol
+    // This is especially important for Scala 3 enums where .type gives the parent enum type
+    val fullName = tpe.dealias match
+      case TermRef(_, _) =>
+        // This is a reference to a term (value) - use termSymbol for the actual case
+        val termSymbol = tpe.termSymbol
+        if termSymbol.exists then termSymbol.fullName
+        else tpe.typeSymbol.fullName
+      case _ =>
+        tpe.typeSymbol.fullName
+
+    Expr(hashFn(fullName))
+  end typeHashImpl
 
   /** Detect the hasher type from the expression and return a compile-time hash function.
     *

@@ -32,15 +32,15 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   import OrderState.*
   import OrderEvent.*
 
-  val orderDefinition = build[OrderState, OrderEvent] {
-    _.when(Pending)
-      .on(Pay)
+  val orderDefinition = validated[OrderState, OrderEvent] {
+    _.when[Pending.type]
+      .on[Pay.type]
       .goto(Paid)
-      .when(Paid)
-      .on(Ship)
+      .when[Paid.type]
+      .on[Ship.type]
       .goto(Shipped)
-      .when(Shipped)
-      .on(Deliver)
+      .when[Shipped.type]
+      .on[Deliver.type]
       .goto(Delivered)
   }
 
@@ -731,10 +731,8 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
         }
         // Try to recover with a DIFFERENT definition that doesn't have Ship transition
         // We create a definition that only has Pending -> Paid
-        restrictedDefinition = build[OrderState, OrderEvent] {
-          _.when(Pending)
-            .on(Pay)
-            .goto(Paid)
+        restrictedDefinition = validated[OrderState, OrderEvent] {
+          _.when[Pending.type].on[Pay.type].goto(Paid)
         }
         // No Ship transition!
         // This should fail because Ship event exists but no transition is defined

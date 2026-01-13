@@ -3,6 +3,7 @@ package mechanoid
 import zio.*
 import zio.test.*
 import scala.concurrent.duration.*
+import mechanoid.dsl.TypedDSL
 
 object FSMSpec extends ZIOSpecDefault:
 
@@ -45,11 +46,11 @@ object FSMSpec extends ZIOSpecDefault:
 
   def spec = suite("FSM Spec")(
     test("should start in initial state") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .build
 
       ZIO.scoped {
         for
@@ -59,11 +60,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should transition on valid event") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .build
 
       ZIO.scoped {
         for
@@ -77,17 +78,17 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should follow transition sequence") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-          .when(Green)
-          .on(Timer)
-          .goto(Yellow)
-          .when(Yellow)
-          .on(Timer)
-          .goto(Red)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .when[Green.type]
+        .on[Timer.type]
+        .goto(Yellow)
+        .when[Yellow.type]
+        .on[Timer.type]
+        .goto(Red)
+        .build
 
       ZIO.scoped {
         for
@@ -104,11 +105,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should stay in state when configured") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Emergency)
-          .stay
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Emergency.type]
+        .stay
+        .build
 
       ZIO.scoped {
         for
@@ -122,11 +123,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should fail on invalid transition") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .build
 
       ZIO.scoped {
         for
@@ -140,14 +141,14 @@ object FSMSpec extends ZIOSpecDefault:
     test("should execute entry action on initial state") {
       for
         entryRef <- Ref.make(false)
-        definition = build[TrafficLight, TrafficEvent] {
-          _.when(Red)
-            .on(Timer)
-            .goto(Green)
-            .onState(Red)
-            .onEntry(entryRef.set(true))
-            .done
-        }
+        definition = TypedDSL[TrafficLight, TrafficEvent]
+          .when[Red.type]
+          .on[Timer.type]
+          .goto(Green)
+          .onState[Red.type]
+          .onEntry(entryRef.set(true))
+          .done
+          .build
         _        <- ZIO.scoped(definition.build(Red))
         entryRan <- entryRef.get
       yield assertTrue(entryRan)
@@ -155,17 +156,17 @@ object FSMSpec extends ZIOSpecDefault:
     test("should execute entry and exit actions on transition") {
       for
         log <- Ref.make(List.empty[String])
-        definition = build[TrafficLight, TrafficEvent] {
-          _.when(Red)
-            .on(Timer)
-            .goto(Green)
-            .onState(Red)
-            .onExit(log.update(_ :+ "exit-red"))
-            .done
-            .onState(Green)
-            .onEntry(log.update(_ :+ "entry-green"))
-            .done
-        }
+        definition = TypedDSL[TrafficLight, TrafficEvent]
+          .when[Red.type]
+          .on[Timer.type]
+          .goto(Green)
+          .onState[Red.type]
+          .onExit(log.update(_ :+ "exit-red"))
+          .done
+          .onState[Green.type]
+          .onEntry(log.update(_ :+ "entry-green"))
+          .done
+          .build
         _ <- ZIO.scoped {
           for
             fsm <- definition.build(Red)
@@ -178,11 +179,11 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Stop tests
     test("should stop FSM and report not running") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .build
 
       ZIO.scoped {
         for
@@ -197,11 +198,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should return Stop result after FSM is stopped") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .build
 
       ZIO.scoped {
         for
@@ -214,11 +215,11 @@ object FSMSpec extends ZIOSpecDefault:
 
     // FSMState metadata tests
     test("should track state metadata") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .build
 
       ZIO.scoped {
         for
@@ -240,14 +241,14 @@ object FSMSpec extends ZIOSpecDefault:
     test("should run entry action when transitioning directly") {
       for
         enteredYellow <- Ref.make(false)
-        definition = build[TrafficLight, TrafficEvent] {
-          _.when(Red)
-            .on(Timer)
-            .goto(Yellow)
-            .onState(Yellow)
-            .onEntry(enteredYellow.set(true))
-            .done
-        }
+        definition = TypedDSL[TrafficLight, TrafficEvent]
+          .when[Red.type]
+          .on[Timer.type]
+          .goto(Yellow)
+          .onState[Yellow.type]
+          .onEntry(enteredYellow.set(true))
+          .done
+          .build
         result <- ZIO.scoped {
           for
             fsm     <- definition.build(Red)
@@ -264,15 +265,15 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Timeout tests - using live clock
     test("should trigger timeout event after duration") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-          .when(Red)
-          .onTimeout
-          .goto(Yellow)
-          .withTimeout(Red, 50.millis)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .when[Red.type]
+        .onTimeout
+        .goto(Yellow)
+        .withTimeout[Red.type](50.millis)
+        .build
 
       ZIO.scoped {
         for
@@ -288,15 +289,15 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should cancel timeout when transitioning to new state") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Timer)
-          .goto(Green)
-          .when(Red)
-          .onTimeout
-          .goto(Yellow)
-          .withTimeout(Red, 100.millis)
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Timer.type]
+        .goto(Green)
+        .when[Red.type]
+        .onTimeout
+        .goto(Yellow)
+        .withTimeout[Red.type](100.millis)
+        .build
 
       ZIO.scoped {
         for
@@ -312,11 +313,11 @@ object FSMSpec extends ZIOSpecDefault:
 
     // Stay does not add to history
     test("should not add to history on stay") {
-      val definition = build[TrafficLight, TrafficEvent] {
-        _.when(Red)
-          .on(Emergency)
-          .stay
-      }
+      val definition = TypedDSL[TrafficLight, TrafficEvent]
+        .when[Red.type]
+        .on[Emergency.type]
+        .stay
+        .build
 
       ZIO.scoped {
         for
@@ -331,17 +332,17 @@ object FSMSpec extends ZIOSpecDefault:
     // Sealed trait hierarchy tests
     test("should handle sealed trait hierarchy with case classes") {
       // Build FSM with transitions between different state types
-      val definition = build[DocumentState, DocumentEvent] {
-        _.when(Draft)
-          .on(SubmitForReview("reviewer1"))
-          .goto(UnderReview("reviewer1"))
-          .when(UnderReview("reviewer1"))
-          .on(ApproveDoc("manager"))
-          .goto(Approved("manager"))
-          .when(Approved("manager"))
-          .on(PublishDoc)
-          .goto(Published)
-      }
+      val definition = TypedDSL[DocumentState, DocumentEvent]
+        .when[Draft.type]
+        .on[SubmitForReview]
+        .goto(UnderReview("reviewer1"))
+        .when[UnderReview]
+        .on[ApproveDoc]
+        .goto(Approved("manager"))
+        .when[Approved]
+        .on[PublishDoc.type]
+        .goto(Published)
+        .build
 
       ZIO.scoped {
         for
@@ -365,20 +366,20 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionState.*
       import ConnectionEvent.*
 
-      val definition = build[ConnectionState, ConnectionEvent] {
-        _.when(Disconnected)
-          .on(Connect)
-          .goto(Connecting(1))
-          .when(Connecting(1))
-          .on(Success("session-123"))
-          .goto(Connected("session-123"))
-          .when(Connecting(1))
-          .on(Failure("timeout"))
-          .goto(Failed("timeout"))
-          .when(Connected("session-123"))
-          .on(Disconnect)
-          .goto(Disconnected)
-      }
+      val definition = TypedDSL[ConnectionState, ConnectionEvent]
+        .when[Disconnected.type]
+        .on[Connect.type]
+        .goto(Connecting(1))
+        .when[Connecting]
+        .on[Success]
+        .goto(Connected("session-123"))
+        .when[Connecting]
+        .on[Failure]
+        .goto(Failed("timeout"))
+        .when[Connected]
+        .on[Disconnect.type]
+        .goto(Disconnected)
+        .build
 
       ZIO.scoped {
         for
@@ -400,25 +401,25 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionState.*
       import ConnectionEvent.*
 
-      // Define transitions with "template" values - actual data doesn't matter for matching
-      val definition = build[ConnectionState, ConnectionEvent] {
-        _.when(Failed("")) // Will match ANY Failed(_)
-          .on(Connect)
-          .goto(Connecting(1))
-          .when(Connecting(0)) // Will match ANY Connecting(_)
-          .on(Failure(""))     // Will match ANY Failure(_) - events also use ordinal matching
-          .goto(Failed("retry"))
-          .when(Connected("")) // Will match ANY Connected(_)
-          .on(Disconnect)
-          .goto(Disconnected)
-      }
+      // Define transitions - the actual data in template values doesn't matter for matching
+      val definition = TypedDSL[ConnectionState, ConnectionEvent]
+        .when[Failed]
+        .on[Connect.type]
+        .goto(Connecting(1)) // Will match ANY Failed(_)
+        .when[Connecting]
+        .on[Failure]
+        .goto(Failed("retry")) // Will match ANY Connecting(_)
+        .when[Connected]
+        .on[Disconnect.type]
+        .goto(Disconnected) // Will match ANY Connected(_)
+        .build
 
       ZIO.scoped {
         for
           // Start in a Failed state with specific data
           fsm <- definition.build(Failed("initial timeout error"))
 
-          // Send Connect - should match the transition from Failed("") because both have ordinal 3
+          // Send Connect - should match the transition from Failed because both have same shape
           _      <- fsm.send(Connect)
           state1 <- fsm.currentState
 
@@ -426,7 +427,7 @@ object FSMSpec extends ZIOSpecDefault:
           _      <- fsm.send(Failure(""))
           state2 <- fsm.currentState
 
-          // Even though we defined transition from Connected(""), let's verify
+          // Even though we defined transition from Connected, let's verify
           // by starting fresh and reaching Connected with different data
           fsm2   <- definition.build(Connected("session-999"))
           _      <- fsm2.send(Disconnect)
@@ -434,7 +435,7 @@ object FSMSpec extends ZIOSpecDefault:
         yield assertTrue(
           state1 == Connecting(1),   // Transition worked even though we started with different Failed
           state2 == Failed("retry"), // Went to the specified target state
-          state3 == Disconnected,    // Connected("session-999") matched Connected("")
+          state3 == Disconnected,    // Connected("session-999") matched Connected
         )
       }
     },
@@ -446,22 +447,22 @@ object FSMSpec extends ZIOSpecDefault:
         actionLog <- Ref.make(List.empty[String])
 
         // Define entry/exit actions with template states - they match by shape
-        definition = build[ConnectionState, ConnectionEvent] {
-          _.when(Disconnected)
-            .on(Connect)
-            .goto(Connecting(1))
-            .when(Connecting(0)) // Template - matches any Connecting(_)
-            .on(Success(""))
-            .goto(Connected("session"))
-            // Actions defined with template values match ANY state of that shape
-            .onState(Connecting(999))
-            .onEntry(actionLog.update(_ :+ "entering-connecting"))
-            .onExit(actionLog.update(_ :+ "exiting-connecting"))
-            .done
-            .onState(Connected("template"))
-            .onEntry(actionLog.update(_ :+ "entering-connected"))
-            .done
-        }
+        definition = TypedDSL[ConnectionState, ConnectionEvent]
+          .when[Disconnected.type]
+          .on[Connect.type]
+          .goto(Connecting(1))
+          .when[Connecting]
+          .on[Success]
+          .goto(Connected("session"))
+          // Actions defined with parent type match ANY state of that shape
+          .onState[Connecting]
+          .onEntry(actionLog.update(_ :+ "entering-connecting"))
+          .onExit(actionLog.update(_ :+ "exiting-connecting"))
+          .done
+          .onState[Connected]
+          .onEntry(actionLog.update(_ :+ "entering-connected"))
+          .done
+          .build
 
         result <- ZIO.scoped {
           for
@@ -484,18 +485,18 @@ object FSMSpec extends ZIOSpecDefault:
       import ConnectionState.*
       import ConnectionEvent.*
 
-      // Define transitions with "template" event values
-      val definition = build[ConnectionState, ConnectionEvent] {
-        _.when(Disconnected)
-          .on(Connect) // Simple case object
-          .goto(Connecting(1))
-          .when(Connecting(0))
-          .on(Success("")) // Template: empty string
-          .goto(Connected("session-from-event"))
-          .when(Connecting(0))
-          .on(Failure("")) // Template: empty string
-          .goto(Failed("failure-happened"))
-      }
+      // Define transitions - type parameters match by shape
+      val definition = TypedDSL[ConnectionState, ConnectionEvent]
+        .when[Disconnected.type]
+        .on[Connect.type]
+        .goto(Connecting(1))
+        .when[Connecting]
+        .on[Success]
+        .goto(Connected("session-from-event"))
+        .when[Connecting]
+        .on[Failure]
+        .goto(Failed("failure-happened"))
+        .build
 
       ZIO.scoped {
         for
@@ -505,8 +506,8 @@ object FSMSpec extends ZIOSpecDefault:
           _      <- fsm.send(Connect)
           state1 <- fsm.currentState
 
-          // Send Success with DIFFERENT data than the template - should still match!
-          // This is the key test: Success("real-session-id-123") should match Success("")
+          // Send Success with DIFFERENT data than what might be expected - should still match!
+          // This is the key test: Success("real-session-id-123") should match Success
           _      <- fsm.send(Success("real-session-id-123"))
           state2 <- fsm.currentState
 
@@ -517,14 +518,14 @@ object FSMSpec extends ZIOSpecDefault:
         yield assertTrue(
           state1 == Connecting(1),
           state2 == Connected("session-from-event"), // Matched even though event had different data
-          state3 == Failed("failure-happened"),      // Matched Failure("network...") to Failure("")
+          state3 == Failed("failure-happened"),      // Matched Failure("network...") to Failure
         )
       }
     },
 
-    // whenAny tests - hierarchical state transitions
-    suite("whenAny - hierarchical transitions")(
-      test("whenAny applies to all leaf states under a parent") {
+    // when[Parent] tests - hierarchical state transitions
+    suite("when[Parent] - hierarchical transitions")(
+      test("when[Parent] applies to all leaf states under a parent") {
         // Define hierarchical states
         sealed trait HierState extends MState
         case object Active     extends HierState
@@ -538,18 +539,18 @@ object FSMSpec extends ZIOSpecDefault:
         case object Stop       extends HierEvent
         case object Resume     extends HierEvent
 
-        // whenAny[Inactive] should apply to both Paused and Stopped
-        val definition = build[HierState, HierEvent] {
-          _.when(Active)
-            .on(Pause)
-            .goto(Paused)
-            .when(Active)
-            .on(Stop)
-            .goto(Stopped)
-            .whenAny[Inactive]
-            .on(Activate)
-            .goto(Active) // Both Paused and Stopped can Activate -> Active
-        }
+        // when[Inactive] should apply to both Paused and Stopped
+        val definition = TypedDSL[HierState, HierEvent]
+          .when[Active.type]
+          .on[Pause.type]
+          .goto(Paused)
+          .when[Active.type]
+          .on[Stop.type]
+          .goto(Stopped)
+          .when[Inactive]
+          .on[Activate.type]
+          .goto(Active) // Both Paused and Stopped can Activate -> Active
+          .build
 
         ZIO.scoped {
           for
@@ -568,7 +569,7 @@ object FSMSpec extends ZIOSpecDefault:
           )
         }
       },
-      test("leaf-level transition overrides whenAny") {
+      test("leaf-level transition overrides when[Parent]") {
         sealed trait OverrideState extends MState
         case object Ready          extends OverrideState
         sealed trait Processing    extends OverrideState
@@ -582,18 +583,18 @@ object FSMSpec extends ZIOSpecDefault:
 
         // Default: any Processing state cancels to Ready
         // Override: Running cancels to Done (different behavior)
-        val definition = build[OverrideState, OverrideEvent] {
-          _.when(Ready)
-            .on(Start)
-            .goto(Running)
-            .whenAny[Processing]
-            .on(Cancel)
-            .goto(Ready) // Default for all Processing
-            .when(Running)
-            .on(Cancel)
-            .`override`
-            .goto(Done) // Override for Running specifically
-        }
+        val definition = TypedDSL[OverrideState, OverrideEvent]
+          .when[Ready.type]
+          .on[Start.type]
+          .goto(Running)
+          .when[Processing]
+          .on[Cancel.type]
+          .goto(Ready) // Default for all Processing
+          .when[Running.type]
+          .on[Cancel.type]
+          .`override`
+          .goto(Done) // Override for Running specifically
+          .build
 
         ZIO.scoped {
           for
@@ -608,11 +609,11 @@ object FSMSpec extends ZIOSpecDefault:
             state2 <- fsm2.currentState
           yield assertTrue(
             state1 == Done, // Override won
-            state2 == Ready, // Default from whenAny
+            state2 == Ready, // Default from when[Processing]
           )
         }
       },
-      test("whenAny works with stay") {
+      test("when[Parent] works with stay") {
         sealed trait StayState extends MState
         case object Idle       extends StayState
         sealed trait Busy      extends StayState
@@ -623,14 +624,14 @@ object FSMSpec extends ZIOSpecDefault:
         case object Ping       extends StayEvent
         case object Start      extends StayEvent
 
-        val definition = build[StayState, StayEvent] {
-          _.when(Idle)
-            .on(Start)
-            .goto(Working)
-            .whenAny[Busy]
-            .on(Ping)
-            .stay // All Busy states stay on Ping
-        }
+        val definition = TypedDSL[StayState, StayEvent]
+          .when[Idle.type]
+          .on[Start.type]
+          .goto(Working)
+          .when[Busy]
+          .on[Ping.type]
+          .stay // All Busy states stay on Ping
+          .build
 
         ZIO.scoped {
           for
@@ -643,7 +644,7 @@ object FSMSpec extends ZIOSpecDefault:
           )
         }
       },
-      test("whenAny works with stop") {
+      test("when[Parent] works with stop") {
         sealed trait StopState       extends MState
         case object Running          extends StopState
         sealed trait Error           extends StopState
@@ -654,14 +655,14 @@ object FSMSpec extends ZIOSpecDefault:
         case object Fail       extends StopEvent
         case object Shutdown   extends StopEvent
 
-        val definition = build[StopState, StopEvent] {
-          _.when(Running)
-            .on(Fail)
-            .goto(FatalError)
-            .whenAny[Error]
-            .on(Shutdown)
-            .stop // All Error states can shutdown
-        }
+        val definition = TypedDSL[StopState, StopEvent]
+          .when[Running.type]
+          .on[Fail.type]
+          .goto(FatalError)
+          .when[Error]
+          .on[Shutdown.type]
+          .stop // All Error states can shutdown
+          .build
 
         ZIO.scoped {
           for
@@ -674,7 +675,7 @@ object FSMSpec extends ZIOSpecDefault:
           )
         }
       },
-      test("whenAny with nested hierarchy") {
+      test("when[Parent] with nested hierarchy") {
         // Three-level hierarchy
         sealed trait DeepState extends MState
         case object Root       extends DeepState
@@ -688,15 +689,15 @@ object FSMSpec extends ZIOSpecDefault:
         case object Reset      extends DeepEvent
         case object GoDeep     extends DeepEvent
 
-        // whenAny[Level1] should hit Leaf1, Leaf2A, and Leaf2B
-        val definition = build[DeepState, DeepEvent] {
-          _.when(Root)
-            .on(GoDeep)
-            .goto(Leaf2A)
-            .whenAny[Level1]
-            .on(Reset)
-            .goto(Root) // All Level1 descendants (including Level2 leaves)
-        }
+        // when[Level1] should hit Leaf1, Leaf2A, and Leaf2B
+        val definition = TypedDSL[DeepState, DeepEvent]
+          .when[Root.type]
+          .on[GoDeep.type]
+          .goto(Leaf2A)
+          .when[Level1]
+          .on[Reset.type]
+          .goto(Root) // All Level1 descendants (including Level2 leaves)
+          .build
 
         ZIO.scoped {
           for
@@ -718,7 +719,7 @@ object FSMSpec extends ZIOSpecDefault:
           )
         }
       },
-      test("whenAny[T](states*) applies only to listed states with type safety") {
+      test("multiple when[] calls for explicit state list") {
         sealed trait SelectState extends MState
         case object Idle         extends SelectState
         sealed trait Active      extends SelectState
@@ -730,15 +731,20 @@ object FSMSpec extends ZIOSpecDefault:
         case object Cancel       extends SelectEvent
         case object Start        extends SelectEvent
 
-        // Only Running and Paused can cancel, NOT Blocked (even though it's also Active)
-        val definition = build[SelectState, SelectEvent] {
-          _.when(Idle)
-            .on(Start)
-            .goto(Running)
-            .whenAny[Active](Running, Paused) // Type-safe: must be Active subtypes
-            .on(Cancel)
-            .goto(Idle)
-        }
+        // Only Running and Paused can cancel, NOT Blocked
+        // Use multiple when[] calls to achieve the same as whenAny[Active](Running, Paused)
+        val definition = TypedDSL[SelectState, SelectEvent]
+          .when[Idle.type]
+          .on[Start.type]
+          .goto(Running)
+          .when[Running.type]
+          .on[Cancel.type]
+          .goto(Idle)
+          .when[Paused.type]
+          .on[Cancel.type]
+          .goto(Idle)
+          // Blocked has no Cancel transition
+          .build
 
         ZIO.scoped {
           for
@@ -762,50 +768,105 @@ object FSMSpec extends ZIOSpecDefault:
           )
         }
       },
-      test("whenStates applies to explicit list regardless of hierarchy") {
-        sealed trait MixedState extends MState
-        case object StateA      extends MixedState
-        sealed trait GroupB     extends MixedState
-        case object StateB1     extends GroupB
-        case object StateB2     extends GroupB
-        sealed trait GroupC     extends MixedState
-        case object StateC1     extends GroupC
-        case object StateC2     extends GroupC
+      test("on[Parent] applies to all events under parent type") {
+        sealed trait HierarchyEventState extends MState
+        case object Waiting              extends HierarchyEventState
+        case object Handling             extends HierarchyEventState
+        case object Cancelled            extends HierarchyEventState
 
-        sealed trait MixedEvent extends MEvent
-        case object Reset       extends MixedEvent
+        sealed trait HierarchyEvent extends MEvent
+        sealed trait UserAction     extends HierarchyEvent
+        case object Click           extends UserAction
+        case object Tap             extends UserAction
+        sealed trait SystemAction   extends HierarchyEvent
+        case object SystemCancel    extends SystemAction
 
-        // Mix states from different groups - not possible with whenAny[T]
-        val definition = build[MixedState, MixedEvent] {
-          _.whenStates(StateA, StateB1, StateC2) // From different hierarchy branches
-            .on(Reset)
-            .goto(StateA)
-        }
+        // on[UserAction] triggers Waiting -> Handling for any UserAction
+        val definition = TypedDSL[HierarchyEventState, HierarchyEvent]
+          .when[Waiting.type]
+          .on[UserAction]
+          .goto(Handling)
+          .when[Waiting.type]
+          .on[SystemCancel.type]
+          .goto(Cancelled)
+          .build
 
         ZIO.scoped {
           for
-            // StateA can reset
-            fsm1   <- definition.build(StateA)
-            _      <- fsm1.send(Reset)
+            // Click triggers transition
+            fsm1   <- definition.build(Waiting)
+            _      <- fsm1.send(Click)
             state1 <- fsm1.currentState
 
-            // StateB1 can reset
-            fsm2   <- definition.build(StateB1)
-            _      <- fsm2.send(Reset)
+            // Tap also triggers transition
+            fsm2   <- definition.build(Waiting)
+            _      <- fsm2.send(Tap)
             state2 <- fsm2.currentState
 
-            // StateC2 can reset
-            fsm3   <- definition.build(StateC2)
-            _      <- fsm3.send(Reset)
+            // SystemCancel goes to Cancelled
+            fsm3   <- definition.build(Waiting)
+            _      <- fsm3.send(SystemCancel)
+            state3 <- fsm3.currentState
+          yield assertTrue(
+            state1 == Handling,
+            state2 == Handling,
+            state3 == Cancelled,
+          )
+        }
+      },
+      test("when[Parent] combined with on[Parent] for cartesian product") {
+        sealed trait CartesianState extends MState
+        sealed trait Working        extends CartesianState
+        case object Task1           extends Working
+        case object Task2           extends Working
+        case object Stopped         extends CartesianState
+
+        sealed trait CartesianEvent extends MEvent
+        sealed trait StopSignal     extends CartesianEvent
+        case object Cancel          extends StopSignal
+        case object Abort           extends StopSignal
+        case object Complete        extends CartesianEvent
+
+        // All Working states respond to any StopSignal (Cancel or Abort)
+        val definition = TypedDSL[CartesianState, CartesianEvent]
+          .when[Working]
+          .on[StopSignal]
+          .goto(Stopped)
+          .when[Task1.type]
+          .on[Complete.type]
+          .goto(Stopped)
+          .build
+
+        ZIO.scoped {
+          for
+            // Task1 + Cancel
+            fsm1   <- definition.build(Task1)
+            _      <- fsm1.send(Cancel)
+            state1 <- fsm1.currentState
+
+            // Task1 + Abort
+            fsm2   <- definition.build(Task1)
+            _      <- fsm2.send(Abort)
+            state2 <- fsm2.currentState
+
+            // Task2 + Cancel
+            fsm3   <- definition.build(Task2)
+            _      <- fsm3.send(Cancel)
             state3 <- fsm3.currentState
 
-            // StateB2 cannot reset (not in list)
-            fsm4  <- definition.build(StateB2)
-            error <- fsm4.send(Reset).flip
+            // Task2 + Abort
+            fsm4   <- definition.build(Task2)
+            _      <- fsm4.send(Abort)
+            state4 <- fsm4.currentState
+
+            // Task2 + Complete not defined
+            fsm5  <- definition.build(Task2)
+            error <- fsm5.send(Complete).flip
           yield assertTrue(
-            state1 == StateA,
-            state2 == StateA,
-            state3 == StateA,
+            state1 == Stopped,
+            state2 == Stopped,
+            state3 == Stopped,
+            state4 == Stopped,
             error.isInstanceOf[InvalidTransitionError],
           )
         }
