@@ -19,7 +19,7 @@ import java.time.Instant
   * @param lastTransitionAt
   *   When the last state transition occurred
   */
-final case class FSMState[S <: MState](
+final case class FSMState[S](
     current: S,
     history: List[S] = Nil,
     stateData: Map[String, Any] = Map.empty,
@@ -51,7 +51,7 @@ end FSMState
 
 object FSMState:
   /** Create an initial FSM state. */
-  def initial[S <: MState](state: S): FSMState[S] =
+  def initial[S](state: S): FSMState[S] =
     val now = Instant.now()
     FSMState(
       current = state,

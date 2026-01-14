@@ -99,13 +99,13 @@ import scala.annotation.unused
   *
   * {{{
   * // Your implementation with managed resources
-  * class PostgresEventStore[Id, S <: MState, E <: MEvent](
+  * class PostgresEventStore[Id, S, E](
   *     pool: HikariTransactor[Task]
   * ) extends EventStore[Id, S, E]:
   *   // ... implementation
   *
   * object PostgresEventStore:
-  *   def layer[Id: Tag, S <: MState: Tag, E <: MEvent: Tag]
+  *   def layer[Id: Tag, S: Tag, E: Tag]
   *       : ZLayer[HikariTransactor[Task], Nothing, EventStore[Id, S, E]] =
   *     ZLayer.fromFunction(new PostgresEventStore[Id, S, E](_))
   *
@@ -124,11 +124,11 @@ import scala.annotation.unused
   *
   * ==Example PostgreSQL Implementation==
   * {{{
-  * class PostgresEventStore[Id, S <: MState, E <: MEvent](
+  * class PostgresEventStore[Id, S, E](
   *     xa: Transactor[Task]
   * ) extends EventStore[Id, S, E]:
   *
-  *   def append(id: Id, event: Timed[E], expectedSeqNr: Long) =
+  *   def append(id: Id, event: E, expectedSeqNr: Long) =
   *     sql"""
   *       INSERT INTO events (instance_id, seq_nr, event_data, timestamp)
   *       SELECT $$id, COALESCE(MAX(seq_nr), 0) + 1, $$event, NOW()
@@ -163,7 +163,7 @@ import scala.annotation.unused
   * @tparam E
   *   The event type (must extend MEvent)
   */
-trait EventStore[Id, S <: MState, E <: MEvent]:
+trait EventStore[Id, S, E]:
 
   /** Append an event with optimistic concurrency control.
     *
@@ -199,7 +199,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @param instanceId
     *   The FSM instance identifier
     * @param event
-    *   The event to persist (may be a Timeout marker)
+    *   The event to persist
     * @param expectedSeqNr
     *   The sequence number we expect to be current (0 for new instances)
     * @return
@@ -207,30 +207,9 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     */
   def append(
       instanceId: Id,
-      event: Timed[E],
-      expectedSeqNr: Long,
-  ): ZIO[Any, MechanoidError, Long]
-
-  /** Convenience method to append a user event without explicit wrapping.
-    *
-    * Equivalent to `append(instanceId, event.timed, expectedSeqNr)`.
-    */
-  final def appendEvent(
-      instanceId: Id,
       event: E,
       expectedSeqNr: Long,
-  ): ZIO[Any, MechanoidError, Long] =
-    append(instanceId, event.timed, expectedSeqNr)
-
-  /** Convenience method to append a timeout event.
-    *
-    * Equivalent to `append(instanceId, Timed.TimeoutEvent, expectedSeqNr)`.
-    */
-  final def appendTimeout(
-      instanceId: Id,
-      expectedSeqNr: Long,
-  ): ZIO[Any, MechanoidError, Long] =
-    append(instanceId, Timed.TimeoutEvent, expectedSeqNr)
+  ): ZIO[Any, MechanoidError, Long]
 
   /** Load all events for an FSM instance in sequence order.
     *
@@ -241,7 +220,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
     * @return
     *   Stream of stored events
     */
-  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]]
+  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, E]]
 
   /** Load events starting from a specific sequence number.
     *
@@ -257,7 +236,7 @@ trait EventStore[Id, S <: MState, E <: MEvent]:
   def loadEventsFrom(
       instanceId: Id,
       fromSequenceNr: Long,
-  ): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[Id, E]] =
     loadEvents(instanceId).filter(_.sequenceNr > fromSequenceNr)
 
   /** Get the latest snapshot for an FSM instance.

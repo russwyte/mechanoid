@@ -5,7 +5,7 @@ package mechanoid.core
   * @tparam S
   *   The state type
   */
-enum TransitionResult[+S <: MState]:
+enum TransitionResult[+S]:
   /** Stay in the current state without transitioning. */
   case Stay
 
@@ -26,9 +26,9 @@ end TransitionResult
 
 object TransitionResult:
   /** Convenience method to create a Stop result with a reason. */
-  def stop[S <: MState](reason: String): TransitionResult[S] =
+  def stop[S](reason: String): TransitionResult[S] =
     Stop(Some(reason))
 
   /** Convenience method to create a Stop result without a reason. */
-  def stop[S <: MState]: TransitionResult[S] =
+  def stop[S]: TransitionResult[S] =
     Stop(None)

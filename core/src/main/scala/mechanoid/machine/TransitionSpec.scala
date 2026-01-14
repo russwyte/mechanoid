@@ -7,17 +7,24 @@ import scala.concurrent.duration.Duration
   *
   * The type parameter represents the target state type for Goto transitions.
   */
-sealed trait Handler[+Target <: MState]
+sealed trait Handler[+Target]
 
 object Handler:
   /** Transition to a specific target state. */
-  case class Goto[+S <: MState](target: S) extends Handler[S]
+  case class Goto[+S](target: S) extends Handler[S]
 
   /** Stay in the current state. */
   case object Stay extends Handler[Nothing]
 
   /** Stop the FSM. */
   case class Stop(reason: Option[String]) extends Handler[Nothing]
+
+/** Type-safe holder for timeout event configuration.
+  *
+  * This preserves the event type while allowing storage in contravariant TransitionSpec. The existential type `?`
+  * allows safe storage while Machine can extract and properly type the events when building its lookup table.
+  */
+final case class TimeoutEventConfig[E](event: E, hash: Int)
 
 /** A single transition specification for the suite DSL.
   *
@@ -31,27 +38,44 @@ object Handler:
   * @tparam Cmd
   *   The command type (for transactional outbox pattern)
   */
-final case class TransitionSpec[-S <: MState, -E <: MEvent, +Cmd](
-    stateHashes: Set[Int],          // Expanded from sealed hierarchies
-    eventHashes: Set[Int],          // Expanded from sealed hierarchies
-    stateNames: List[String],       // For error messages
-    eventNames: List[String],       // For error messages
-    targetDesc: String,             // "-> Paid", "stay", "stop" - for error messages
-    isOverride: Boolean,            // If true, won't trigger duplicate error
-    handler: Handler[MState],       // Handler can go to any state
+final case class TransitionSpec[-S, -E, +Cmd](
+    stateHashes: Set[Int],           // Expanded from sealed hierarchies
+    eventHashes: Set[Int],           // Expanded from sealed hierarchies
+    stateNames: List[String],        // For error messages
+    eventNames: List[String],        // For error messages
+    targetDesc: String,              // "-> Paid", "stay", "stop" - for error messages
+    isOverride: Boolean,             // If true, won't trigger duplicate error
+    handler: Handler[Any],           // Handler can go to any state
     targetTimeout: Option[Duration], // If set, configure timeout on target state when entering
-)
+    targetTimeoutConfig: Option[TimeoutEventConfig[?]] = None, // Type-safe timeout event holder
+    preCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, sourceState) => commands
+    postCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, targetState) => commands
+):
+  /** Commands to emit BEFORE state change. Receives (event, sourceState). */
+  def emittingBefore[E1 <: E, S1 <: S, C](f: (E1, S1) => List[C]): TransitionSpec[S1, E1, C] =
+    copy(preCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
+      .asInstanceOf[TransitionSpec[S1, E1, C]]
+
+  /** Commands to emit AFTER state change. Receives (event, targetState). */
+  def emitting[E1 <: E, S1 <: S, C](f: (E1, S1) => List[C]): TransitionSpec[S1, E1, C] =
+    copy(postCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
+      .asInstanceOf[TransitionSpec[S1, E1, C]]
+
+  /** Configure timeout when entering target state. */
+  def withTimeout(duration: Duration): TransitionSpec[S, E, Cmd] =
+    copy(targetTimeout = Some(duration))
+end TransitionSpec
 
 object TransitionSpec:
   /** Create a goto transition spec. */
-  def goto[S <: MState](
+  def goto[S](
       stateHashes: Set[Int],
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
       target: S,
       timeout: Option[Duration] = None,
-  ): TransitionSpec[MState, MEvent, Nothing] =
+  ): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -61,25 +85,30 @@ object TransitionSpec:
       isOverride = false,
       handler = Handler.Goto(target),
       targetTimeout = timeout,
+      preCommandFactory = None,
+      postCommandFactory = None,
     )
 
-  /** Create a goto transition spec to a timed target. */
-  def gotoTimed[S <: MState](
+  /** Create a goto transition spec to a timed target with user-defined timeout event. */
+  def gotoTimed[S, TE](
       stateHashes: Set[Int],
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
-      target: TimedTarget[S],
-  ): TransitionSpec[MState, MEvent, Nothing] =
+      target: TimedTarget[S, TE],
+  )(using se: Finite[TE]): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
       stateNames = stateNames,
       eventNames = eventNames,
-      targetDesc = s"-> ${target.state.toString} @@ timeout(${target.duration})",
+      targetDesc = s"-> ${target.state.toString} @@ timeout(${target.duration}, ${target.timeoutEvent})",
       isOverride = false,
       handler = Handler.Goto(target.state),
       targetTimeout = Some(target.duration),
+      targetTimeoutConfig = Some(TimeoutEventConfig(target.timeoutEvent, se.caseHash(target.timeoutEvent))),
+      preCommandFactory = None,
+      postCommandFactory = None,
     )
 
   /** Create a stay transition spec. */
@@ -88,7 +117,7 @@ object TransitionSpec:
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
-  ): TransitionSpec[MState, MEvent, Nothing] =
+  ): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -98,6 +127,8 @@ object TransitionSpec:
       isOverride = false,
       handler = Handler.Stay,
       targetTimeout = None,
+      preCommandFactory = None,
+      postCommandFactory = None,
     )
 
   /** Create a stop transition spec. */
@@ -107,7 +138,7 @@ object TransitionSpec:
       stateNames: List[String],
       eventNames: List[String],
       reason: Option[String] = None,
-  ): TransitionSpec[MState, MEvent, Nothing] =
+  ): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -117,5 +148,7 @@ object TransitionSpec:
       isOverride = false,
       handler = Handler.Stop(reason),
       targetTimeout = None,
+      preCommandFactory = None,
+      postCommandFactory = None,
     )
 end TransitionSpec

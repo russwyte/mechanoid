@@ -3,47 +3,48 @@ package mechanoid
 import zio.*
 import zio.test.*
 import scala.concurrent.duration.*
-import mechanoid.core.Timeout
+// User-defined timeout events used instead of built-in Timeout
 import mechanoid.machine.*
 
 object FSMSpec extends ZIOSpecDefault:
 
   // Define states for a simple traffic light
-  enum TrafficLight extends MState:
+  enum TrafficLight derives Finite:
     case Red, Yellow, Green
 
   // Define events
-  enum TrafficEvent extends MEvent:
-    case Timer, Emergency
+  enum TrafficEvent derives Finite:
+    case Timer, Emergency, RedTimeout
 
   import TrafficLight.*
   import TrafficEvent.*
 
   // Complex state hierarchy with data-carrying states (for variance tests)
-  sealed trait DocumentState                 extends MState
+  sealed trait DocumentState derives Finite
   case object Draft                          extends DocumentState
   case class UnderReview(reviewerId: String) extends DocumentState
   case class Approved(approvedBy: String)    extends DocumentState
   case object Published                      extends DocumentState
 
-  sealed trait DocumentEvent                     extends MEvent
+  sealed trait DocumentEvent derives Finite
   case class SubmitForReview(reviewerId: String) extends DocumentEvent
   case class ApproveDoc(approvedBy: String)      extends DocumentEvent
   case object PublishDoc                         extends DocumentEvent
   case object Reject                             extends DocumentEvent
 
   // Enum with parameterized cases (Scala 3 feature)
-  enum ConnectionState extends MState:
+  enum ConnectionState derives Finite:
     case Disconnected
     case Connecting(attempt: Int)
     case Connected(sessionId: String)
     case Failed(reason: String)
 
-  enum ConnectionEvent extends MEvent:
+  enum ConnectionEvent derives Finite:
     case Connect
     case Success(sessionId: String)
     case Failure(reason: String)
     case Disconnect
+    case ConnectionTimeout
 
   def spec = suite("FSM Spec")(
     test("should start in initial state") {
@@ -69,7 +70,7 @@ object FSMSpec extends ZIOSpecDefault:
           result <- fsm.send(Timer)
           state  <- fsm.currentState
         yield assertTrue(
-          result == TransitionResult.Goto(Green),
+          result.result == TransitionResult.Goto(Green),
           state == Green,
         )
       }
@@ -106,7 +107,7 @@ object FSMSpec extends ZIOSpecDefault:
           result <- fsm.send(Emergency)
           state  <- fsm.currentState
         yield assertTrue(
-          result == TransitionResult.Stay,
+          result.result == TransitionResult.Stay,
           state == Red,
         )
       }
@@ -180,7 +181,7 @@ object FSMSpec extends ZIOSpecDefault:
           fsm    <- machine.start(Red)
           _      <- fsm.stop
           result <- fsm.send(Timer)
-        yield assertTrue(result.isInstanceOf[TransitionResult.Stop[?]])
+        yield assertTrue(result.result.isInstanceOf[TransitionResult.Stop[?]])
       }
     },
 
@@ -230,11 +231,11 @@ object FSMSpec extends ZIOSpecDefault:
     // Timeout tests - using live clock
     // Note: Timeouts are configured on transitions TO a state using TimedTarget
     test("should trigger timeout event after duration") {
-      val timedRed = Red @@ Aspect.timeout(50.millis)
+      val timedRed = Red @@ Aspect.timeout(50.millis, RedTimeout)
       val machine  = build[TrafficLight, TrafficEvent](
         Green via Timer to timedRed, // Entering Red starts 50ms timeout
         Red via Timer to Green,
-        Red via Timeout to Yellow,
+        Red via RedTimeout to Yellow, // Handle timeout with user-defined event
       )
 
       ZIO.scoped {
@@ -252,11 +253,11 @@ object FSMSpec extends ZIOSpecDefault:
       }
     },
     test("should cancel timeout when transitioning to new state") {
-      val timedRed = Red @@ Aspect.timeout(100.millis)
+      val timedRed = Red @@ Aspect.timeout(100.millis, RedTimeout)
       val machine  = build[TrafficLight, TrafficEvent](
         Green via Timer to timedRed, // Entering Red starts 100ms timeout
         Red via Timer to Green,
-        Red via Timeout to Yellow,
+        Red via RedTimeout to Yellow, // Handle timeout with user-defined event
       )
 
       ZIO.scoped {
@@ -371,14 +372,14 @@ object FSMSpec extends ZIOSpecDefault:
           )
         }
       },
-      test("state[T] via Timeout for parameterized states") {
+      test("state[T] via user-defined timeout for parameterized states") {
         import ConnectionState.*, ConnectionEvent.*
 
-        val timedConnecting = Connecting(0) @@ Aspect.timeout(50.millis)
+        val timedConnecting = Connecting(0) @@ Aspect.timeout(50.millis, ConnectionTimeout)
 
         val machine = build[ConnectionState, ConnectionEvent](
           Disconnected via Connect to timedConnecting,
-          state[Connecting] via Timeout to Disconnected, // Timeout from any Connecting
+          state[Connecting] via ConnectionTimeout to Disconnected, // Timeout handled by user event
           state[Connecting] via event[Success] to Connected("ok"),
         )
 
@@ -398,14 +399,14 @@ object FSMSpec extends ZIOSpecDefault:
       },
       test("event[T] with all[Parent] state matcher") {
         // Define hierarchical states with parameterized events
-        sealed trait TaskState extends MState
-        case object Idle       extends TaskState
-        sealed trait Running   extends TaskState
-        case object Step1      extends Running
-        case object Step2      extends Running
-        case object Completed  extends TaskState
+        sealed trait TaskState derives Finite
+        case object Idle      extends TaskState
+        sealed trait Running  extends TaskState
+        case object Step1     extends Running
+        case object Step2     extends Running
+        case object Completed extends TaskState
 
-        sealed trait TaskEvent            extends MEvent
+        sealed trait TaskEvent derives Finite
         case class Advance(data: String)  extends TaskEvent
         case class Finish(result: String) extends TaskEvent
         case object Reset                 extends TaskEvent
@@ -441,17 +442,17 @@ object FSMSpec extends ZIOSpecDefault:
     suite("all[Parent] - hierarchical transitions")(
       test("all[Parent] applies to all leaf states under a parent") {
         // Define hierarchical states
-        sealed trait HierState extends MState
-        case object Active     extends HierState
-        sealed trait Inactive  extends HierState
-        case object Paused     extends Inactive
-        case object Stopped    extends Inactive
+        sealed trait HierState derives Finite
+        case object Active    extends HierState
+        sealed trait Inactive extends HierState
+        case object Paused    extends Inactive
+        case object Stopped   extends Inactive
 
-        sealed trait HierEvent extends MEvent
-        case object Activate   extends HierEvent
-        case object Pause      extends HierEvent
-        case object Stop       extends HierEvent
-        case object Resume     extends HierEvent
+        sealed trait HierEvent derives Finite
+        case object Activate extends HierEvent
+        case object Pause    extends HierEvent
+        case object Stop     extends HierEvent
+        case object Resume   extends HierEvent
 
         // all[Inactive] should apply to both Paused and Stopped
         val machine = build[HierState, HierEvent](
@@ -478,16 +479,16 @@ object FSMSpec extends ZIOSpecDefault:
         }
       },
       test("leaf-level transition overrides all[Parent]") {
-        sealed trait OverrideState extends MState
-        case object Ready          extends OverrideState
-        sealed trait Processing    extends OverrideState
-        case object Running        extends Processing
-        case object Waiting        extends Processing
-        case object Done           extends OverrideState
+        sealed trait OverrideState derives Finite
+        case object Ready       extends OverrideState
+        sealed trait Processing extends OverrideState
+        case object Running     extends Processing
+        case object Waiting     extends Processing
+        case object Done        extends OverrideState
 
-        sealed trait OverrideEvent extends MEvent
-        case object Cancel         extends OverrideEvent
-        case object Start          extends OverrideEvent
+        sealed trait OverrideEvent derives Finite
+        case object Cancel extends OverrideEvent
+        case object Start  extends OverrideEvent
 
         // Default: any Processing state cancels to Ready
         // Override: Running cancels to Done (different behavior)
@@ -515,15 +516,15 @@ object FSMSpec extends ZIOSpecDefault:
         }
       },
       test("all[Parent] works with stay") {
-        sealed trait StayState extends MState
-        case object Idle       extends StayState
-        sealed trait Busy      extends StayState
-        case object Working    extends Busy
-        case object Blocked    extends Busy
+        sealed trait StayState derives Finite
+        case object Idle    extends StayState
+        sealed trait Busy   extends StayState
+        case object Working extends Busy
+        case object Blocked extends Busy
 
-        sealed trait StayEvent extends MEvent
-        case object Ping       extends StayEvent
-        case object Start      extends StayEvent
+        sealed trait StayEvent derives Finite
+        case object Ping  extends StayEvent
+        case object Start extends StayEvent
 
         val machine = build[StayState, StayEvent](
           Idle via Start to Working,
@@ -536,21 +537,21 @@ object FSMSpec extends ZIOSpecDefault:
             result <- fsm.send(Ping)
             state  <- fsm.currentState
           yield assertTrue(
-            result == TransitionResult.Stay,
+            result.result == TransitionResult.Stay,
             state == Working,
           )
         }
       },
       test("all[Parent] works with stop") {
-        sealed trait StopState       extends MState
+        sealed trait StopState derives Finite
         case object Running          extends StopState
         sealed trait Error           extends StopState
         case object RecoverableError extends Error
         case object FatalError       extends Error
 
-        sealed trait StopEvent extends MEvent
-        case object Fail       extends StopEvent
-        case object Shutdown   extends StopEvent
+        sealed trait StopEvent derives Finite
+        case object Fail     extends StopEvent
+        case object Shutdown extends StopEvent
 
         val machine = build[StopState, StopEvent](
           Running via Fail to FatalError,
@@ -563,24 +564,24 @@ object FSMSpec extends ZIOSpecDefault:
             result  <- fsm.send(Shutdown)
             running <- fsm.isRunning
           yield assertTrue(
-            result.isInstanceOf[TransitionResult.Stop[?]],
+            result.result.isInstanceOf[TransitionResult.Stop[?]],
             !running,
           )
         }
       },
       test("all[Parent] with nested hierarchy") {
         // Three-level hierarchy
-        sealed trait DeepState extends MState
-        case object Root       extends DeepState
-        sealed trait Level1    extends DeepState
-        sealed trait Level2    extends Level1
-        case object Leaf1      extends Level1
-        case object Leaf2A     extends Level2
-        case object Leaf2B     extends Level2
+        sealed trait DeepState derives Finite
+        case object Root    extends DeepState
+        sealed trait Level1 extends DeepState
+        sealed trait Level2 extends Level1
+        case object Leaf1   extends Level1
+        case object Leaf2A  extends Level2
+        case object Leaf2B  extends Level2
 
-        sealed trait DeepEvent extends MEvent
-        case object Reset      extends DeepEvent
-        case object GoDeep     extends DeepEvent
+        sealed trait DeepEvent derives Finite
+        case object Reset  extends DeepEvent
+        case object GoDeep extends DeepEvent
 
         // all[Level1] should hit Leaf1, Leaf2A, and Leaf2B
         val machine = build[DeepState, DeepEvent](
@@ -609,16 +610,16 @@ object FSMSpec extends ZIOSpecDefault:
         }
       },
       test("multiple explicit transitions for specific states") {
-        sealed trait SelectState extends MState
-        case object Idle         extends SelectState
-        sealed trait Active      extends SelectState
-        case object Running      extends Active
-        case object Paused       extends Active
-        case object Blocked      extends Active
+        sealed trait SelectState derives Finite
+        case object Idle    extends SelectState
+        sealed trait Active extends SelectState
+        case object Running extends Active
+        case object Paused  extends Active
+        case object Blocked extends Active
 
-        sealed trait SelectEvent extends MEvent
-        case object Cancel       extends SelectEvent
-        case object Start        extends SelectEvent
+        sealed trait SelectEvent derives Finite
+        case object Cancel extends SelectEvent
+        case object Start  extends SelectEvent
 
         // Only Running and Paused can cancel, NOT Blocked
         val machine = build[SelectState, SelectEvent](
@@ -651,17 +652,17 @@ object FSMSpec extends ZIOSpecDefault:
         }
       },
       test("all[Parent] for events applies to all events under parent type") {
-        sealed trait HierarchyEventState extends MState
-        case object Waiting              extends HierarchyEventState
-        case object Handling             extends HierarchyEventState
-        case object Cancelled            extends HierarchyEventState
+        sealed trait HierarchyEventState derives Finite
+        case object Waiting   extends HierarchyEventState
+        case object Handling  extends HierarchyEventState
+        case object Cancelled extends HierarchyEventState
 
-        sealed trait HierarchyEvent extends MEvent
-        sealed trait UserAction     extends HierarchyEvent
-        case object Click           extends UserAction
-        case object Tap             extends UserAction
-        sealed trait SystemAction   extends HierarchyEvent
-        case object SystemCancel    extends SystemAction
+        sealed trait HierarchyEvent derives Finite
+        sealed trait UserAction   extends HierarchyEvent
+        case object Click         extends UserAction
+        case object Tap           extends UserAction
+        sealed trait SystemAction extends HierarchyEvent
+        case object SystemCancel  extends SystemAction
 
         // all[UserAction] triggers Waiting -> Handling for any UserAction
         val machine = build[HierarchyEventState, HierarchyEvent](
@@ -693,17 +694,17 @@ object FSMSpec extends ZIOSpecDefault:
         }
       },
       test("all[Parent] combined with all events for cartesian product") {
-        sealed trait CartesianState extends MState
-        sealed trait Working        extends CartesianState
-        case object Task1           extends Working
-        case object Task2           extends Working
-        case object Stopped         extends CartesianState
+        sealed trait CartesianState derives Finite
+        sealed trait Working extends CartesianState
+        case object Task1    extends Working
+        case object Task2    extends Working
+        case object Stopped  extends CartesianState
 
-        sealed trait CartesianEvent extends MEvent
-        sealed trait StopSignal     extends CartesianEvent
-        case object Cancel          extends StopSignal
-        case object Abort           extends StopSignal
-        case object Complete        extends CartesianEvent
+        sealed trait CartesianEvent derives Finite
+        sealed trait StopSignal extends CartesianEvent
+        case object Cancel      extends StopSignal
+        case object Abort       extends StopSignal
+        case object Complete    extends CartesianEvent
 
         // All Working states respond to any StopSignal (Cancel or Abort)
         val machine = build[CartesianState, CartesianEvent](

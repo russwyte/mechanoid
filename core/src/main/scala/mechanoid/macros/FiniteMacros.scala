@@ -3,8 +3,8 @@ package mechanoid.macros
 import scala.quoted.*
 import mechanoid.core.CaseHasher
 
-/** Macro utilities for deriving SealedEnum instances with fully qualified names and hash-based identification. */
-object SealedEnumMacros:
+/** Macro utilities for deriving Finite instances with fully qualified names and hash-based identification. */
+object FiniteMacros:
 
   /** Case information extracted at compile time. */
   case class CaseInfo(simpleName: String, fullName: String, hash: Int)
@@ -38,7 +38,7 @@ object SealedEnumMacros:
 
     if !symbol.flags.is(Flags.Sealed) then
       report.errorAndAbort(
-        s"Type ${symbol.fullName} must be a sealed trait or enum for SealedEnum derivation"
+        s"Type ${symbol.fullName} must be a sealed trait or enum for Finite derivation"
       )
 
     // Recursively find all leaf cases (non-sealed case classes/objects)
@@ -370,4 +370,4 @@ object SealedEnumMacros:
     end if
   end generateCaseHashImpl
 
-end SealedEnumMacros
+end FiniteMacros

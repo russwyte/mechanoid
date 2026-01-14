@@ -1,7 +1,7 @@
 package mechanoid.visualization
 
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
+import mechanoid.machine.Machine
 import scala.concurrent.duration.Duration
 
 /** Generates GraphViz DOT syntax for FSM visualization. */
@@ -32,8 +32,8 @@ object GraphVizVisualizer:
     * }
     * ```
     */
-  def digraph[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def digraph[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       name: String = "FSM",
       initialState: Option[S] = None,
       config: Config = Config.default,
@@ -111,8 +111,8 @@ object GraphVizVisualizer:
 
   /** Generate a digraph with execution trace highlighting.
     */
-  def digraphWithTrace[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def digraphWithTrace[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       trace: ExecutionTrace[S, E],
       name: String = "FSM",
       config: Config = Config.default,
@@ -207,10 +207,10 @@ object GraphVizVisualizer:
     *
     * This creates a horizontal timeline with states and transitions.
     */
-  def timeline[S <: MState, E <: MEvent](
+  def timeline[S, E](
       trace: ExecutionTrace[S, E],
-      stateEnum: SealedEnum[S],
-      eventEnum: SealedEnum[E],
+      stateEnum: Finite[S],
+      eventEnum: Finite[E],
       name: String = "Timeline",
   ): String =
     val sb = StringBuilder()

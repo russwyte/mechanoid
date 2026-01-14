@@ -9,6 +9,11 @@ import mechanoid.persistence.*
   * When using durable timeouts, the [[TimeoutSweeper]] discovers expired timeouts and needs to fire them. This module
   * provides the callback that integrates with the event-sourcing model.
   *
+  * ==User-Defined Timeout Events==
+  *
+  * Timeouts now fire user-defined events rather than a built-in Timeout singleton. The sweeper must be configured with
+  * a way to determine which event to fire for each timeout.
+  *
   * ==Flow==
   *
   * {{{
@@ -18,10 +23,10 @@ import mechanoid.persistence.*
   * [makeCallback called with (instanceId, expectedState)]
   *       │
   *       ▼
-  * [Verify FSM is still in expected state (optional)]
+  * [Determine which event to fire from Machine configuration]
   *       │
   *       ▼
-  * [Append Timeout event to EventStore]
+  * [Append user's timeout event to EventStore]
   *       │
   *   ┌───┴───┐
   *   ▼       ▼
@@ -33,97 +38,95 @@ import mechanoid.persistence.*
   */
 object TimeoutFiring:
 
-  /** Create a callback for the sweeper to fire timeouts.
+  /** Create a callback for the sweeper to fire timeouts with a provided event resolver.
     *
-    * This callback appends a `Timeout` event to the EventStore with optimistic locking. If the FSM's state has changed
-    * concurrently (SequenceConflictError), the timeout is silently skipped - this is correct behavior because either:
-    *   - Another event already transitioned the FSM (timeout no longer needed)
-    *   - Another sweeper already fired this timeout
-    *
-    * ==State Verification==
-    *
-    * By default, this callback does NOT verify that the FSM is still in the expected state before firing. The FSM will
-    * simply reject the Timeout event if no transition is defined. Use [[makeVerifyingCallback]] if you want to verify
-    * first.
+    * The `resolveTimeoutEvent` function determines which event to fire based on the state name. This should typically
+    * look up the timeout event from the Machine's `timeoutEvents` map.
     *
     * @param eventStore
     *   The event store for this FSM type
+    * @param resolveTimeoutEvent
+    *   Given a state name, return the event to fire (or None to skip)
     * @return
     *   A callback suitable for [[TimeoutSweeper.make]]
     */
-  def makeCallback[Id, S <: MState, E <: MEvent](
-      eventStore: EventStore[Id, S, E]
+  def makeCallback[Id, S, E](
+      eventStore: EventStore[Id, S, E],
+      resolveTimeoutEvent: String => Option[E],
   ): (Id, String) => ZIO[Any, MechanoidError, Unit] =
-    (instanceId, _) =>
-      for
-        seqNr <- eventStore.highestSequenceNr(instanceId)
-        _     <- eventStore
-          .append(instanceId, Timed.TimeoutEvent, seqNr)
-          .catchSome { case _: SequenceConflictError =>
-            // State changed concurrently - timeout may no longer be relevant
-            // This is fine; the FSM has moved on
-            ZIO.logDebug(
-              s"Timeout for $instanceId skipped due to concurrent modification"
-            ) *>
-              ZIO.unit
-          }
-      yield ()
+    (instanceId, stateName) =>
+      resolveTimeoutEvent(stateName) match
+        case Some(timeoutEvent) =>
+          for
+            seqNr <- eventStore.highestSequenceNr(instanceId)
+            _     <- eventStore
+              .append(instanceId, timeoutEvent, seqNr)
+              .catchSome { case _: SequenceConflictError =>
+                // State changed concurrently - timeout may no longer be relevant
+                ZIO.logDebug(
+                  s"Timeout for $instanceId skipped due to concurrent modification"
+                ) *>
+                  ZIO.unit
+              }
+          yield ()
+        case None =>
+          // No timeout event configured for this state - skip
+          ZIO.logDebug(
+            s"Timeout for $instanceId skipped: no timeout event configured for state $stateName"
+          )
 
   /** Create a callback that verifies state before firing.
     *
-    * This variant checks that the FSM is still in the expected state before appending the Timeout event. This reduces
-    * unnecessary writes to the EventStore when the state has already changed.
-    *
-    * '''Note''': This requires loading events to determine current state, which adds latency. The simple
-    * [[makeCallback]] is usually sufficient.
+    * This variant checks that the FSM is still in the expected state before appending the timeout event.
     *
     * @param eventStore
     *   The event store for this FSM type
+    * @param resolveTimeoutEvent
+    *   Given a state name, return the event to fire (or None to skip)
     * @param getCurrentState
-    *   A function to determine the FSM's current state from events. Typically: load snapshot + replay events.
+    *   A function to determine the FSM's current state from events
     * @return
     *   A callback suitable for [[TimeoutSweeper.make]]
     */
-  def makeVerifyingCallback[Id, S <: MState, E <: MEvent](
+  def makeVerifyingCallback[Id, S, E](
       eventStore: EventStore[Id, S, E],
+      resolveTimeoutEvent: String => Option[E],
       getCurrentState: Id => ZIO[Any, MechanoidError, Option[S]],
   ): (Id, String) => ZIO[Any, MechanoidError, Unit] =
     (instanceId, expectedState) =>
-      for
-        currentStateOpt <- getCurrentState(instanceId)
-        _               <- currentStateOpt match
-          case Some(currentState) if currentState.toString == expectedState =>
-            // State matches - fire the timeout
-            for
-              seqNr <- eventStore.highestSequenceNr(instanceId)
-              _     <- eventStore
-                .append(instanceId, Timed.TimeoutEvent, seqNr)
-                .catchSome { case _: SequenceConflictError =>
-                  ZIO.logDebug(
-                    s"Timeout for $instanceId skipped due to concurrent modification"
-                  )
-                }
-            yield ()
+      resolveTimeoutEvent(expectedState) match
+        case Some(timeoutEvent) =>
+          for
+            currentStateOpt <- getCurrentState(instanceId)
+            _               <- currentStateOpt match
+              case Some(currentState) if currentState.toString == expectedState =>
+                // State matches - fire the timeout
+                for
+                  seqNr <- eventStore.highestSequenceNr(instanceId)
+                  _     <- eventStore
+                    .append(instanceId, timeoutEvent, seqNr)
+                    .catchSome { case _: SequenceConflictError =>
+                      ZIO.logDebug(
+                        s"Timeout for $instanceId skipped due to concurrent modification"
+                      )
+                    }
+                yield ()
 
-          case Some(currentState) =>
-            // State has changed - skip the timeout
-            ZIO.logDebug(
-              s"Timeout for $instanceId skipped: expected $expectedState but found $currentState"
-            )
+              case Some(currentState) =>
+                // State has changed - skip the timeout
+                ZIO.logDebug(
+                  s"Timeout for $instanceId skipped: expected $expectedState but found $currentState"
+                )
 
-          case None =>
-            // FSM doesn't exist - skip
-            ZIO.logDebug(
-              s"Timeout for $instanceId skipped: FSM not found"
-            )
-      yield ()
+              case None =>
+                // FSM doesn't exist - skip
+                ZIO.logDebug(
+                  s"Timeout for $instanceId skipped: FSM not found"
+                )
+          yield ()
 
-  /** Create a callback that uses a specific EventStore instance.
-    *
-    * This is a convenience method when you have the EventStore available directly rather than through ZIO environment.
-    */
-  def makeCallbackDirect[Id, S <: MState, E <: MEvent](
-      eventStore: EventStore[Id, S, E]
-  ): (Id, String) => ZIO[Any, MechanoidError, Unit] =
-    makeCallback(eventStore)
+        case None =>
+          ZIO.logDebug(
+            s"Timeout for $instanceId skipped: no timeout event configured for state $expectedState"
+          )
 end TimeoutFiring

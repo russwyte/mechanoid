@@ -2,7 +2,7 @@ package mechanoid.examples.petstore
 
 import zio.*
 import zio.json.*
-import mechanoid.core.{MState, MEvent, ActionFailedError}
+import mechanoid.Finite
 import mechanoid.machine.*
 
 // ============================================
@@ -10,7 +10,7 @@ import mechanoid.machine.*
 // ============================================
 
 /** Order lifecycle states - simple status indicators */
-enum OrderState extends MState derives JsonCodec:
+enum OrderState derives JsonCodec:
   case Created
   case PaymentProcessing
   case Paid
@@ -21,10 +21,8 @@ enum OrderState extends MState derives JsonCodec:
 
 /** Order lifecycle events with rich metadata.
   *
-  * Events carry meaningful data that can be used for:
-  *   - Audit trails and logging
-  *   - Command processing with real transaction details
-  *   - Debugging and visualization
+  * Events carry all context needed for command generation. This enables the FSM to declaratively emit commands using
+  * the `emitting` pattern without needing external lookups.
   *
   * The suite-style DSL uses `event[T]` to match on TYPE (shape), ignoring the parameter values. This allows the Machine
   * definition to be declarative while runtime events carry actual data.
@@ -32,64 +30,141 @@ enum OrderState extends MState derives JsonCodec:
   * Example:
   * {{{
   * // DSL matches ANY PaymentSucceeded by type
-  * PaymentProcessing via event[PaymentSucceeded] to Paid
+  * PaymentProcessing via event[PaymentSucceeded] to Paid emitting { case (e: PaymentSucceeded, _) =>
+  *   List(PetStoreCommand.RequestShipping(e.orderId, e.petName, e.customerName, e.customerAddress, e.correlationId))
+  * }
   *
   * // At runtime, send with actual transaction data
-  * fsm.send(PaymentSucceeded("TXN-12345"))
+  * fsm.send(PaymentSucceeded(orderId, txnId, customerId, customerName, ...))
   * }}}
   */
-enum OrderEvent extends MEvent derives JsonCodec:
-  /** Initiate payment with amount and payment method */
-  case InitiatePayment(amount: BigDecimal, method: String)
+enum OrderEvent derives JsonCodec:
+  /** Initiate payment - carries full order context for command generation */
+  case InitiatePayment(
+      orderId: Int,
+      customerId: String,
+      customerName: String,
+      customerEmail: String,
+      customerAddress: String,
+      petName: String,
+      amount: BigDecimal,
+      paymentMethod: String,
+      correlationId: String,
+      messageId: String,
+  )
 
-  /** Payment completed successfully with transaction ID */
-  case PaymentSucceeded(transactionId: String)
+  /** Payment completed - carries context for shipping/notification commands */
+  case PaymentSucceeded(
+      orderId: Int,
+      transactionId: String,
+      customerId: String,
+      customerName: String,
+      customerEmail: String,
+      customerAddress: String,
+      petName: String,
+      correlationId: String,
+      messageId: String,
+  )
 
   /** Payment failed with error reason */
-  case PaymentFailed(reason: String)
+  case PaymentFailed(orderId: Int, reason: String)
 
   /** Request shipping to an address */
-  case RequestShipping(address: String)
+  case RequestShipping(orderId: Int, address: String)
 
-  /** Shipment dispatched with tracking info */
-  case ShipmentDispatched(trackingId: String, carrier: String, eta: String)
+  /** Shipment dispatched - carries context for shipped notification */
+  case ShipmentDispatched(
+      orderId: Int,
+      trackingId: String,
+      carrier: String,
+      eta: String,
+      customerEmail: String,
+      customerName: String,
+      petName: String,
+      messageId: String,
+  )
 
   /** Delivery confirmed at a timestamp */
-  case DeliveryConfirmed(timestamp: String)
+  case DeliveryConfirmed(orderId: Int, timestamp: String)
 end OrderEvent
 
+/** Order FSM with declarative command emission.
+  *
+  * Commands are declared as part of the transition specification using `emitting`. The FSM runtime generates commands
+  * and returns them in TransitionOutcome. The caller is responsible for enqueuing commands to a command store.
+  *
+  * This pattern separates concerns:
+  *   - FSM defines WHAT commands to emit (declarative)
+  *   - Caller decides HOW to handle commands (enqueue, process, etc.)
+  *
+  * Note: The `emitting` lambda receives the parent event type (OrderEvent), so we pattern match to extract the specific
+  * event fields.
+  */
 object OrderFSM:
-  import OrderState.*, OrderEvent.*
+  import OrderState.*
+  import OrderEvent.{InitiatePayment, PaymentSucceeded, PaymentFailed, ShipmentDispatched, DeliveryConfirmed}
+  // Don't import OrderEvent.RequestShipping to avoid ambiguity with PetStoreCommand.RequestShipping
 
-  val machine: Machine[OrderState, OrderEvent, Nothing] =
+  val machine =
     build[OrderState, OrderEvent](
-      Created via event[InitiatePayment] to PaymentProcessing,
-      PaymentProcessing via event[PaymentSucceeded] to Paid,
+      // Created -> PaymentProcessing: emit ProcessPayment command
+      Created via event[InitiatePayment] to PaymentProcessing emitting {
+        case (e: InitiatePayment, _) =>
+          List(
+            PetStoreCommand.ProcessPayment(
+              orderId = e.orderId,
+              customerId = e.customerId,
+              customerName = e.customerName,
+              petName = e.petName,
+              amount = e.amount,
+              paymentMethod = e.paymentMethod,
+            )
+          )
+        case _ => Nil
+      },
+      // PaymentProcessing -> Paid: emit RequestShipping + SendNotification
+      PaymentProcessing via event[PaymentSucceeded] to Paid emitting {
+        case (e: PaymentSucceeded, _) =>
+          List(
+            PetStoreCommand.RequestShipping(
+              orderId = e.orderId,
+              petName = e.petName,
+              customerName = e.customerName,
+              customerAddress = e.customerAddress,
+              correlationId = e.correlationId,
+            ),
+            PetStoreCommand.SendNotification(
+              orderId = e.orderId,
+              customerEmail = e.customerEmail,
+              customerName = e.customerName,
+              petName = e.petName,
+              notificationType = "order_confirmed",
+              messageId = e.messageId,
+            ),
+          )
+        case _ => Nil
+      },
+      // PaymentProcessing -> Cancelled: no commands
       PaymentProcessing via event[PaymentFailed] to Cancelled,
-      Paid via event[RequestShipping] to ShippingRequested,
-      ShippingRequested via event[ShipmentDispatched] to Shipped,
+      // Paid -> ShippingRequested: no commands (shipping already requested)
+      Paid via event[OrderEvent.RequestShipping] to ShippingRequested,
+      // ShippingRequested -> Shipped: emit shipped notification
+      ShippingRequested via event[ShipmentDispatched] to Shipped emitting {
+        case (e: ShipmentDispatched, _) =>
+          List(
+            PetStoreCommand.SendNotification(
+              orderId = e.orderId,
+              customerEmail = e.customerEmail,
+              customerName = e.customerName,
+              petName = e.petName,
+              notificationType = "shipped",
+              messageId = s"${e.messageId}-shipped",
+            )
+          )
+        case _ => Nil
+      },
+      // Shipped -> Delivered: no commands
       Shipped via event[DeliveryConfirmed] to Delivered,
     )
-
-  /** Create an order FSM definition with entry actions.
-    *
-    * @param onPaymentProcessing
-    *   Action to run when entering PaymentProcessing state
-    * @param onPaid
-    *   Action to run when entering Paid state
-    * @param onShipped
-    *   Action to run when entering Shipped state
-    */
-  def definition(
-      onPaymentProcessing: ZIO[Any, Throwable, Unit],
-      onPaid: ZIO[Any, Throwable, Unit],
-      onShipped: ZIO[Any, Throwable, Unit],
-  ): Machine[OrderState, OrderEvent, Nothing] =
-    // Entry actions trigger side effects when entering specific states
-    machine
-      .withEntry(PaymentProcessing)(onPaymentProcessing.mapError(ActionFailedError(_)))
-      .withEntry(Paid)(onPaid.mapError(ActionFailedError(_)))
-      .withEntry(Shipped)(onShipped.mapError(ActionFailedError(_)))
-  end definition
 
 end OrderFSM

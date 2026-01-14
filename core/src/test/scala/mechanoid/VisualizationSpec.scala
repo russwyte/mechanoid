@@ -2,7 +2,7 @@ package mechanoid
 
 import zio.*
 import zio.test.*
-import mechanoid.core.SealedEnum
+import mechanoid.core.Finite
 import mechanoid.machine.*
 import mechanoid.visualization.*
 import java.time.Instant
@@ -10,13 +10,13 @@ import java.time.Instant
 object VisualizationSpec extends ZIOSpecDefault:
 
   // Simple test FSM
-  enum TestState extends MState:
+  enum TestState derives Finite:
     case Idle, Running, Completed, Failed
 
-  enum TestEvent extends MEvent:
+  enum TestEvent derives Finite:
     case Start, Finish, Error
 
-  // Use the new DSL and access .definition for visualization
+  // Use the new DSL - Machine is used directly for visualization
   val testMachine: Machine[TestState, TestEvent, Nothing] =
     import TestState.*, TestEvent.*
     build[TestState, TestEvent](
@@ -26,13 +26,13 @@ object VisualizationSpec extends ZIOSpecDefault:
     )
   end testMachine
 
-  // Access the underlying definition for visualization tests
-  val testFSM = testMachine.definition
+  // Machine is used directly for visualization
+  val testFSM = testMachine
 
   def spec = suite("Visualization")(
-    suite("SealedEnum name extraction")(
+    suite("Finite name extraction")(
       test("extracts state names correctly") {
-        val se = summon[SealedEnum[TestState]]
+        val se = summon[Finite[TestState]]
         assertTrue(
           se.caseNames.values.toSet == Set("Idle", "Running", "Completed", "Failed"),
           se.nameOf(TestState.Idle) == "Idle",
@@ -40,7 +40,7 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
       },
       test("extracts event names correctly") {
-        val ee = summon[SealedEnum[TestEvent]]
+        val ee = summon[Finite[TestEvent]]
         assertTrue(
           ee.caseNames.values.toSet == Set("Start", "Finish", "Error"),
           ee.nameOf(TestEvent.Start) == "Start",
@@ -48,7 +48,7 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
       },
       test("caseHash is stable and based on full name") {
-        val se = summon[SealedEnum[TestState]]
+        val se = summon[Finite[TestState]]
         // caseHash should be the hashCode of the fully qualified name
         val idleHash    = se.caseHash(TestState.Idle)
         val runningHash = se.caseHash(TestState.Running)
@@ -114,8 +114,8 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
         val seq = MermaidVisualizer.sequenceDiagram(
           trace,
-          summon[SealedEnum[TestState]],
-          summon[SealedEnum[TestEvent]],
+          summon[Finite[TestState]],
+          summon[Finite[TestEvent]],
         )
         assertTrue(
           seq.contains("sequenceDiagram"),
@@ -156,8 +156,8 @@ object VisualizationSpec extends ZIOSpecDefault:
         )
         val timeline = GraphVizVisualizer.timeline(
           trace,
-          summon[SealedEnum[TestState]],
-          summon[SealedEnum[TestEvent]],
+          summon[Finite[TestState]],
+          summon[Finite[TestEvent]],
         )
         assertTrue(
           timeline.contains("digraph Timeline"),
@@ -179,9 +179,9 @@ object VisualizationSpec extends ZIOSpecDefault:
         assertTrue(dot.contains("digraph FSM"))
       },
       test("ExecutionTrace has toMermaidSequenceDiagram extension") {
-        given SealedEnum[TestState] = summon
-        given SealedEnum[TestEvent] = summon
-        val trace                   = ExecutionTrace(
+        given Finite[TestState] = summon
+        given Finite[TestEvent] = summon
+        val trace               = ExecutionTrace(
           instanceId = "test-1",
           initialState = TestState.Idle,
           currentState = TestState.Running,

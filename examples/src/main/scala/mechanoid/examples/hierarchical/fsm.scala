@@ -2,7 +2,7 @@ package mechanoid.examples.hierarchical
 
 import zio.*
 import zio.json.*
-import mechanoid.core.{MState, MEvent}
+import mechanoid.Finite
 import mechanoid.machine.*
 
 // ============================================
@@ -43,7 +43,7 @@ import mechanoid.machine.*
   *
   * Leaf-level transitions can override parent-level ones using `@@ Aspect.overriding`.
   */
-sealed trait DocumentState extends MState derives JsonCodec
+sealed trait DocumentState derives JsonCodec
 
 // Initial state - document being drafted
 case object Draft extends DocumentState
@@ -84,7 +84,7 @@ case object Cancelled extends DocumentState
 // ============================================
 
 /** Events that drive document workflow transitions. */
-sealed trait DocumentEvent extends MEvent derives JsonCodec
+sealed trait DocumentEvent derives JsonCodec
 
 case object SubmitForReview      extends DocumentEvent
 case object AssignReviewer       extends DocumentEvent
@@ -128,7 +128,7 @@ object DocumentWorkflowFSM:
     * )
     * }}}
     */
-  val definition: Machine[DocumentState, DocumentEvent, Nothing] =
+  val definition =
     build[DocumentState, DocumentEvent](
       // ===== Draft Phase =====
       // Submit a draft for review

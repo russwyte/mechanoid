@@ -17,24 +17,24 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment(25.0,Visa ****4242)
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
     Note right of CQ: orderId=3<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>amount=25.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded(TXN-687055)
+    FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=3<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=dab79dd1-d4ac-4977-ab43-ed79a56cca4d
+    Note right of CQ: orderId=3<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=455b8025-ff5f-4a06-935f-dae7f020cebf
     CQ->>W: claim
     W->>CQ: ❌ Failed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=de6fcabd-d4cd-445a-8817-47c7a600f25a
+    Note right of CQ: orderId=3<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=16707884-10da-4db7-b8b8-943e9c85c9ed
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=de6fcabd-d4cd-445a-8817-47c7a600f25a<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=16707884-10da-4db7-b8b8-943e9c85c9ed<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Paid
@@ -46,9 +46,9 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-3
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment(25.0,Visa ****4242)
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded(TXN-687055)
+    FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
     Note over FSM: Current: Paid
 ```

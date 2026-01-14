@@ -23,15 +23,15 @@ import mechanoid.persistence.*
   * myProgram.provide(storeLayer)
   * }}}
   */
-final class InMemoryEventStore[Id, S <: MState, E <: MEvent] private (
-    eventsRef: Ref[Map[Id, Vector[StoredEvent[Id, Timed[E]]]]],
+final class InMemoryEventStore[Id, S, E] private (
+    eventsRef: Ref[Map[Id, Vector[StoredEvent[Id, E]]]],
     snapshotsRef: Ref[Map[Id, FSMSnapshot[Id, S]]],
     seqNrRef: Ref[Map[Id, Long]],
 ) extends EventStore[Id, S, E]:
 
   override def append(
       instanceId: Id,
-      event: Timed[E],
+      event: E,
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
     for
@@ -50,7 +50,7 @@ final class InMemoryEventStore[Id, S <: MState, E <: MEvent] private (
 
   override def loadEvents(
       instanceId: Id
-  ): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[Id, E]] =
     ZStream.unwrap(
       eventsRef.get.map(events => ZStream.fromIterable(events.getOrElse(instanceId, Vector.empty)))
     )
@@ -69,7 +69,7 @@ final class InMemoryEventStore[Id, S <: MState, E <: MEvent] private (
     seqNrRef.get.map(_.getOrElse(instanceId, 0L))
 
   /** Get all events for an instance (for testing/debugging). */
-  def getEvents(instanceId: Id): UIO[List[StoredEvent[Id, Timed[E]]]] =
+  def getEvents(instanceId: Id): UIO[List[StoredEvent[Id, E]]] =
     eventsRef.get.map(_.getOrElse(instanceId, Vector.empty).toList)
 
   /** Clear all data (for testing). */
@@ -80,9 +80,9 @@ end InMemoryEventStore
 object InMemoryEventStore:
 
   /** Create a new in-memory event store. */
-  def make[Id, S <: MState, E <: MEvent]: UIO[InMemoryEventStore[Id, S, E]] =
+  def make[Id, S, E]: UIO[InMemoryEventStore[Id, S, E]] =
     for
-      eventsRef    <- Ref.make(Map.empty[Id, Vector[StoredEvent[Id, Timed[E]]]])
+      eventsRef    <- Ref.make(Map.empty[Id, Vector[StoredEvent[Id, E]]])
       snapshotsRef <- Ref.make(Map.empty[Id, FSMSnapshot[Id, S]])
       seqNrRef     <- Ref.make(Map.empty[Id, Long])
     yield new InMemoryEventStore(eventsRef, snapshotsRef, seqNrRef)

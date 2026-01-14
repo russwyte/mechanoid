@@ -21,7 +21,7 @@ import java.time.Instant
   * @param timestamp
   *   When the snapshot was taken
   */
-final case class FSMSnapshot[Id, S <: MState](
+final case class FSMSnapshot[Id, S](
     instanceId: Id,
     state: S,
     sequenceNr: Long,

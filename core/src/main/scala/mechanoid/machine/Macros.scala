@@ -1,7 +1,7 @@
 package mechanoid.machine
 
-import scala.annotation.nowarn
 import scala.quoted.*
+import scala.util.NotGiven
 import mechanoid.core.*
 
 /** Macros for the suite-style DSL. */
@@ -49,10 +49,10 @@ object Macros:
   end allImpl
 
   /** Implementation of `anyOf` for states - computes hashes for given values at compile time. */
-  inline def anyOfStatesImpl[S <: MState](inline first: S, inline rest: S*): AnyOfMatcher[S] =
+  inline def anyOfStatesImpl[S](inline first: S, inline rest: S*): AnyOfMatcher[S] =
     ${ anyOfStatesImplMacro[S]('first, 'rest) }
 
-  def anyOfStatesImplMacro[S <: MState: Type](
+  def anyOfStatesImplMacro[S: Type](
       first: Expr[S],
       rest: Expr[Seq[S]],
   )(using Quotes): Expr[AnyOfMatcher[S]] =
@@ -76,10 +76,10 @@ object Macros:
   end anyOfStatesImplMacro
 
   /** Implementation of `anyOf` for events - computes hashes for given values at compile time. */
-  inline def anyOfEventsImpl[E <: MEvent](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
+  inline def anyOfEventsImpl[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
     ${ anyOfEventsImplMacro[E]('first, 'rest) }
 
-  def anyOfEventsImplMacro[E <: MEvent: Type](
+  def anyOfEventsImplMacro[E: Type](
       first: Expr[E],
       rest: Expr[Seq[E]],
   )(using Quotes): Expr[AnyOfEventMatcher[E]] =
@@ -100,10 +100,10 @@ object Macros:
   end anyOfEventsImplMacro
 
   /** Implementation of state `via` event - computes hashes at compile time from symbols. */
-  inline def stateViaEventImpl[S <: MState, E <: MEvent](inline state: S, inline event: E): ViaBuilder[S, E] =
+  inline def stateViaEventImpl[S, E](inline state: S, inline event: E): ViaBuilder[S, E] =
     ${ stateViaEventImplMacro[S, E]('state, 'event) }
 
-  def stateViaEventImplMacro[S <: MState: Type, E <: MEvent: Type](
+  def stateViaEventImplMacro[S: Type, E: Type](
       state: Expr[S],
       event: Expr[E],
   )(using Quotes): Expr[ViaBuilder[S, E]] =
@@ -172,7 +172,7 @@ object Macros:
   )
 
   /** Implementation of `build` macro - validates specs at COMPILE TIME. */
-  def buildImpl[S <: MState: Type, E <: MEvent: Type](
+  def buildImpl[S: Type, E: Type](
       specs: Expr[Seq[TransitionSpec[S, E, ?]]]
   )(using Quotes): Expr[Machine[S, E, Nothing]] =
     import quotes.reflect.*
@@ -423,8 +423,107 @@ object Macros:
     '{ Machine.fromSpecs[S, E, Nothing]($specs.toList.asInstanceOf[List[TransitionSpec[S, E, Nothing]]]) }
   end buildImpl
 
+  /** Implementation of `build` macro with inferred command type.
+    *
+    * This macro:
+    *   1. Extracts command types from `emitting` and `emittingBefore` calls
+    *   2. Computes the LUB (least upper bound) of all command types
+    *   3. Returns Machine[S, E, Cmd] with the inferred Cmd type
+    */
+  def buildWithInferredCmdImpl[S: Type, E: Type](
+      specs: Expr[Seq[TransitionSpec[S, E, ?]]]
+  )(using Quotes): Expr[Machine[S, E, ?]] =
+    import quotes.reflect.*
+
+    // Extract individual spec expressions from varargs
+    val specExprs: List[Expr[TransitionSpec[S, E, ?]]] = specs match
+      case Varargs(exprs) => exprs.toList
+      case other          =>
+        report.errorAndAbort(s"Expected varargs of TransitionSpec, got: ${other.show}")
+
+    // Extract command types from `emitting` and `emittingBefore` calls in a term
+    def extractCommandTypes(term: Term): List[TypeRepr] =
+      val cmdTypes = scala.collection.mutable.ListBuffer[TypeRepr]()
+
+      object CmdTypeFinder extends TreeAccumulator[Unit]:
+        def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+          tree match
+            // Match emitting[E1, S1, C](f) or emittingBefore[E1, S1, C](f) method calls
+            case Apply(TypeApply(Select(_, methodName), typeArgs), _)
+                if methodName == "emitting" || methodName == "emittingBefore" =>
+              if typeArgs.nonEmpty then
+                val lastTypeArg = typeArgs.last
+                val cmdType     = lastTypeArg.tpe
+                if !(cmdType =:= TypeRepr.of[Nothing]) && !cmdType.typeSymbol.isTypeParam then cmdTypes += cmdType
+              foldOverTree((), tree)(owner)
+
+            // Also check the function's return type for List[C] pattern
+            case Apply(Select(_, methodName), List(fnArg))
+                if methodName == "emitting" || methodName == "emittingBefore" =>
+              fnArg.tpe.widen match
+                case AppliedType(_, List(_, listType)) =>
+                  listType match
+                    case AppliedType(listSym, List(elemType))
+                        if listSym.typeSymbol.fullName == "scala.collection.immutable.List" =>
+                      if !(elemType =:= TypeRepr.of[Nothing]) && !elemType.typeSymbol.isTypeParam then
+                        cmdTypes += elemType
+                    case _ =>
+                case _ =>
+              foldOverTree((), tree)(owner)
+
+            case _ =>
+              foldOverTree((), tree)(owner)
+      end CmdTypeFinder
+
+      CmdTypeFinder.foldTree((), term)(Symbol.spliceOwner)
+      cmdTypes.toList
+    end extractCommandTypes
+
+    // Collect all command types from all specs
+    val allCmdTypes = specExprs.flatMap(expr => extractCommandTypes(expr.asTerm))
+
+    // Compute LUB (least upper bound / nearest common ancestor) of all command types
+    val inferredCmdType: TypeRepr =
+      if allCmdTypes.isEmpty then TypeRepr.of[Nothing]
+      else if allCmdTypes.size == 1 then allCmdTypes.head
+      else
+        // Find the nearest common ancestor by intersecting base classes
+        def baseClasses(tpe: TypeRepr): List[Symbol] = tpe.baseClasses
+        val baseClassLists                           = allCmdTypes.map(baseClasses)
+        val commonBases                              = baseClassLists.reduce { (a, b) =>
+          a.filter(sym => b.contains(sym))
+        }
+        val skipSymbols = Set("scala.Any", "scala.AnyRef", "scala.Matchable", "java.lang.Object")
+        val usefulBases = commonBases.filterNot(sym => skipSymbols.contains(sym.fullName))
+
+        if usefulBases.nonEmpty then usefulBases.head.typeRef
+        else if commonBases.nonEmpty then TypeRepr.of[Any]
+        else TypeRepr.of[Any]
+
+    // Summon the required instances
+    val stateEnumExpr = Expr
+      .summon[Finite[S]]
+      .getOrElse(
+        report.errorAndAbort(s"Cannot find Finite instance for state type")
+      )
+    val eventEnumExpr = Expr
+      .summon[Finite[E]]
+      .getOrElse(
+        report.errorAndAbort(s"Cannot find Finite instance for event type")
+      )
+
+    // Build with the inferred command type
+    inferredCmdType.asType match
+      case '[cmd] =>
+        '{
+          given Finite[S] = $stateEnumExpr
+          given Finite[E] = $eventEnumExpr
+          Machine.fromSpecs[S, E, cmd]($specs.toList.asInstanceOf[List[TransitionSpec[S, E, cmd]]])
+        }
+  end buildWithInferredCmdImpl
+
   /** Implementation of `event[T]` - creates a type-based event matcher. */
-  def eventMatcherImpl[E <: MEvent: Type](using Quotes): Expr[EventMatcher[E]] =
+  def eventMatcherImpl[E: Type](using Quotes): Expr[EventMatcher[E]] =
     import quotes.reflect.*
     val tpe  = TypeRepr.of[E]
     val sym  = tpe.typeSymbol
@@ -433,7 +532,7 @@ object Macros:
     '{ new EventMatcher[E](${ Expr(hash) }, ${ Expr(name) }) }
 
   /** Implementation of `state[T]` - creates a type-based state matcher. */
-  def stateMatcherImpl[S <: MState: Type](using Quotes): Expr[StateMatcher[S]] =
+  def stateMatcherImpl[S: Type](using Quotes): Expr[StateMatcher[S]] =
     import quotes.reflect.*
     val tpe  = TypeRepr.of[S]
     val sym  = tpe.typeSymbol
@@ -453,7 +552,7 @@ end Macros
   *
   * Usage:
   * {{{
-  * enum OrderEvent extends MEvent:
+  * enum OrderEvent derives Finite:
   *   case PaymentSucceeded(transactionId: String)
   *
   * build[State, OrderEvent](
@@ -461,7 +560,7 @@ end Macros
   * )
   * }}}
   */
-final class EventMatcher[E <: MEvent](val hash: Int, val name: String):
+final class EventMatcher[E](val hash: Int, val name: String) extends IsMatcher:
   override def toString: String = s"event[$name]"
 
 /** Matcher for a specific state type (including parameterized case classes).
@@ -470,16 +569,35 @@ final class EventMatcher[E <: MEvent](val hash: Int, val name: String):
   *
   * Usage:
   * {{{
-  * sealed trait ConnectionState extends MState
+  * sealed trait ConnectionState derives Finite
   * case class Connecting(attempt: Int) extends ConnectionState
   *
   * build[ConnectionState, Event](
-  *   state[Connecting] via Timeout to Disconnected,  // Matches any Connecting
+  *   state[Connecting] via Reset to Disconnected,  // Matches any Connecting(n)
   * )
   * }}}
   */
-final class StateMatcher[S <: MState](val hash: Int, val name: String):
+final class StateMatcher[S](val hash: Int, val name: String) extends IsMatcher:
   override def toString: String = s"state[$name]"
+
+  /** Start building a transition from a state type matcher. */
+  inline infix def via[E](inline event: E): ViaBuilder[S, E] =
+    val eventHash = Macros.computeHashFor(event)
+    val eventName = event.toString
+    new ViaBuilder[S, E](Set(hash), Set(eventHash), List(name), List(eventName))
+
+  /** Handle event matcher for parameterized case classes. */
+  infix def via[E](eventMatcher: EventMatcher[E]): ViaBuilder[S, E] =
+    new ViaBuilder[S, E](Set(hash), Set(eventMatcher.hash), List(name), List(eventMatcher.name))
+
+  /** Handle anyOf events. */
+  infix def viaAnyOf[E](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
+    new ViaBuilder[S, E](Set(hash), events.hashes, List(name), events.names)
+
+  /** Handle all events. */
+  infix def viaAll[E](events: AllMatcher[E]): ViaBuilder[S, E] =
+    new ViaBuilder[S, E](Set(hash), events.hashes, List(name), events.names)
+end StateMatcher
 
 // ============================================
 // Top-level DSL functions
@@ -489,7 +607,7 @@ final class StateMatcher[S <: MState](val hash: Int, val name: String):
   *
   * Usage: `all[ParentState] via Event to Target`
   */
-inline def all[T <: MState | MEvent]: AllMatcher[T] = ${ Macros.allImpl[T] }
+inline def all[T]: AllMatcher[T] = ${ Macros.allImpl[T] }
 
 /** Create a type-based event matcher for parameterized case classes.
   *
@@ -498,7 +616,7 @@ inline def all[T <: MState | MEvent]: AllMatcher[T] = ${ Macros.allImpl[T] }
   *
   * Usage:
   * {{{
-  * enum OrderEvent extends MEvent:
+  * enum OrderEvent derives Finite:
   *   case PaymentSucceeded(transactionId: String)
   *
   * build[State, OrderEvent](
@@ -509,7 +627,7 @@ inline def all[T <: MState | MEvent]: AllMatcher[T] = ${ Macros.allImpl[T] }
   * fsm.send(PaymentSucceeded("txn-12345"))  // Triggers the transition
   * }}}
   */
-inline def event[E <: MEvent]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
+inline def event[E]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
 
 /** Create a type-based state matcher for parameterized case classes.
   *
@@ -518,28 +636,28 @@ inline def event[E <: MEvent]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
   *
   * Usage:
   * {{{
-  * sealed trait ConnectionState extends MState
+  * sealed trait ConnectionState derives Finite
   * case class Connecting(attempt: Int) extends ConnectionState
   *
   * build[ConnectionState, Event](
-  *   state[Connecting] via Timeout to Disconnected,  // Matches any Connecting(n)
+  *   state[Connecting] via Reset to Disconnected,  // Matches any Connecting(n)
   * )
   * }}}
   */
-inline def state[S <: MState]: StateMatcher[S] = ${ Macros.stateMatcherImpl[S] }
+inline def state[S]: StateMatcher[S] = ${ Macros.stateMatcherImpl[S] }
 
 /** Match SPECIFIC state values (no .type needed!).
   *
   * Usage: `anyOf(ChildA, ChildB) via Event to Target`
   */
-inline def anyOf[S <: MState](inline first: S, inline rest: S*): AnyOfMatcher[S] =
+inline def anyOf[S](inline first: S, inline rest: S*): AnyOfMatcher[S] =
   Macros.anyOfStatesImpl(first, rest*)
 
 /** Match SPECIFIC event values (no .type needed!).
   *
-  * Usage: `State via anyOf(Click, Tap) to Target`
+  * Usage: `State via anyOfEvents(Click, Tap) to Target`
   */
-inline def anyOf[E <: MEvent](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
+inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
   Macros.anyOfEventsImpl(first, rest*)
 
 /** Build a Machine from transition specs with COMPILE-TIME duplicate detection.
@@ -559,35 +677,25 @@ inline def anyOf[E <: MEvent](inline first: E, inline rest: E*): AnyOfEventMatch
   * )
   * }}}
   */
-@nowarn("msg=unused implicit parameter")
-inline def build[S <: MState: SealedEnum, E <: MEvent: SealedEnum](
+transparent inline def build[S: Finite, E: Finite](
     inline specs: TransitionSpec[S, E, ?]*
-)(using SealedEnum[Timed[E]]): Machine[S, E, Nothing] =
-  ${ Macros.buildImpl[S, E]('specs) }
+): Machine[S, E, ?] =
+  ${ Macros.buildWithInferredCmdImpl[S, E]('specs) }
 
 // ============================================
 // Extension methods for infix syntax
 // ============================================
 
-/** Extension on MState values for `State via Event to Target` syntax. */
-extension [S <: MState](inline state: S)
+/** Extension on state values for `State via Event to Target` syntax. Uses NotGiven[S <:< IsMatcher] to exclude matcher
+  * types and avoid ambiguity.
+  */
+extension [S](inline state: S)(using NotGiven[S <:< IsMatcher])
   /** Start building a transition: `State via Event`. */
-  inline infix def via[E <: MEvent](inline event: E): ViaBuilder[S, E] =
+  inline infix def via[E](inline event: E): ViaBuilder[S, E] =
     Macros.stateViaEventImpl(state, event)
 
-  /** Handle Timeout event specifically (uses stable hash). */
-  inline infix def via(event: Timeout.type): ViaBuilder[S, Timeout.type] =
-    val stateHash = Macros.computeHashFor(state)
-    val stateName = state.toString
-    new ViaBuilder[S, Timeout.type](
-      Set(stateHash),
-      Set(Timeout.CaseHash),
-      List(stateName),
-      List("Timeout"),
-    )
-
   /** Handle anyOf events. */
-  inline infix def viaAnyOf[E <: MEvent](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
+  inline infix def viaAnyOf[E](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
     val stateHash = Macros.computeHashFor(state)
     val stateName = state.toString
     new ViaBuilder[S, E](
@@ -598,7 +706,7 @@ extension [S <: MState](inline state: S)
     )
 
   /** Handle all events. */
-  inline infix def viaAll[E <: MEvent](events: AllMatcher[E]): ViaBuilder[S, E] =
+  inline infix def viaAll[E](events: AllMatcher[E]): ViaBuilder[S, E] =
     val stateHash = Macros.computeHashFor(state)
     val stateName = state.toString
     new ViaBuilder[S, E](
@@ -609,10 +717,10 @@ extension [S <: MState](inline state: S)
     )
 
   /** Alias for `via` using >> operator. */
-  inline def >>[E <: MEvent](inline event: E): ViaBuilder[S, E] = via(event)
+  inline def >>[E](inline event: E): ViaBuilder[S, E] = via(event)
 
   /** Handle event matcher for parameterized case classes. */
-  inline infix def via[E <: MEvent](matcher: EventMatcher[E]): ViaBuilder[S, E] =
+  inline infix def via[E](matcher: EventMatcher[E]): ViaBuilder[S, E] =
     val stateHash = Macros.computeHashFor(state)
     val stateName = state.toString
     new ViaBuilder[S, E](
@@ -626,158 +734,17 @@ extension [S <: MState](inline state: S)
     *
     * Usage:
     * {{{
-    * val timedWaiting = Waiting @@ timeout(30.seconds)
+    * val timedWaiting = Waiting @@ timeout(30.seconds, TimeoutEvent)
     * Idle via Start to timedWaiting  // Timer starts when entering Waiting
     * }}}
     */
-  inline def @@(aspect: Aspect.timeout): TimedTarget[S] =
-    TimedTarget(state, aspect.duration)
-end extension
-
-/** Extension on StateMatcher for `state[T] via Event to Target` syntax. */
-extension [S <: MState](matcher: StateMatcher[S])
-  /** Start building a transition from a state type matcher. */
-  inline infix def via[E <: MEvent](inline event: E): ViaBuilder[S, E] =
-    val eventHash = Macros.computeHashFor(event)
-    val eventName = event.toString
-    new ViaBuilder[S, E](
-      Set(matcher.hash),
-      Set(eventHash),
-      List(matcher.name),
-      List(eventName),
-    )
-
-  /** Handle Timeout event specifically (uses stable hash). */
-  infix def via(event: Timeout.type): ViaBuilder[S, Timeout.type] =
-    new ViaBuilder[S, Timeout.type](
-      Set(matcher.hash),
-      Set(Timeout.CaseHash),
-      List(matcher.name),
-      List("Timeout"),
-    )
-
-  /** Handle event matcher for parameterized case classes. */
-  infix def via[E <: MEvent](eventMatcher: EventMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      Set(matcher.hash),
-      Set(eventMatcher.hash),
-      List(matcher.name),
-      List(eventMatcher.name),
-    )
-
-  /** Handle anyOf events. */
-  infix def viaAnyOf[E <: MEvent](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      Set(matcher.hash),
-      events.hashes,
-      List(matcher.name),
-      events.names,
-    )
-
-  /** Handle all events. */
-  infix def viaAll[E <: MEvent](events: AllMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      Set(matcher.hash),
-      events.hashes,
-      List(matcher.name),
-      events.names,
-    )
-end extension
-
-/** Extension on AllMatcher for `all[Parent] via Event to Target` syntax. */
-extension [S <: MState](matcher: AllMatcher[S])
-  /** Start building a transition from all matched states. */
-  inline infix def via[E <: MEvent](inline event: E): ViaBuilder[S, E] =
-    val eventHash = Macros.computeHashFor(event)
-    val eventName = event.toString
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      Set(eventHash),
-      matcher.names,
-      List(eventName),
-    )
-
-  /** Handle Timeout event specifically (uses stable hash). */
-  infix def via(event: Timeout.type): ViaBuilder[S, Timeout.type] =
-    new ViaBuilder[S, Timeout.type](
-      matcher.hashes,
-      Set(Timeout.CaseHash),
-      matcher.names,
-      List("Timeout"),
-    )
-
-  /** Handle event matcher for parameterized case classes. */
-  infix def via[E <: MEvent](eventMatcher: EventMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      Set(eventMatcher.hash),
-      matcher.names,
-      List(eventMatcher.name),
-    )
-
-  /** Handle anyOf events. */
-  infix def viaAnyOf[E <: MEvent](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      events.hashes,
-      matcher.names,
-      events.names,
-    )
-
-  /** Handle all events. */
-  infix def viaAll[E <: MEvent](events: AllMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      events.hashes,
-      matcher.names,
-      events.names,
-    )
-end extension
-
-/** Extension on AnyOfMatcher for `anyOf(A, B) via Event to Target` syntax. */
-extension [S <: MState](matcher: AnyOfMatcher[S])
-  /** Start building a transition from specific states. */
-  inline infix def via[E <: MEvent](inline event: E): ViaBuilder[S, E] =
-    val eventHash = Macros.computeHashFor(event)
-    val eventName = event.toString
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      Set(eventHash),
-      matcher.names,
-      List(eventName),
-    )
-
-  /** Handle Timeout event specifically (uses stable hash). */
-  infix def via(event: Timeout.type): ViaBuilder[S, Timeout.type] =
-    new ViaBuilder[S, Timeout.type](
-      matcher.hashes,
-      Set(Timeout.CaseHash),
-      matcher.names,
-      List("Timeout"),
-    )
-
-  /** Handle event matcher for parameterized case classes. */
-  infix def via[E <: MEvent](eventMatcher: EventMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      Set(eventMatcher.hash),
-      matcher.names,
-      List(eventMatcher.name),
-    )
-
-  /** Handle anyOf events. */
-  infix def viaAnyOf[E <: MEvent](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
-    new ViaBuilder[S, E](
-      matcher.hashes,
-      events.hashes,
-      matcher.names,
-      events.names,
-    )
+  inline def @@[E](aspect: Aspect.timeout[E]): TimedTarget[S, E] =
+    TimedTarget(state, aspect.duration, aspect.event)
 end extension
 
 /** Extension on TransitionSpec for @@ aspect application. */
-extension [S <: MState, E <: MEvent, Cmd](spec: TransitionSpec[S, E, Cmd])
+extension [S, E, Cmd](spec: TransitionSpec[S, E, Cmd])
   /** Apply an aspect to this transition spec. */
   def @@(aspect: Aspect): TransitionSpec[S, E, Cmd] = aspect match
-    case Aspect.overriding => spec.copy(isOverride = true)
-    case _: Aspect.timeout => spec // timeout aspect doesn't apply to transitions
+    case Aspect.overriding    => spec.copy(isOverride = true)
+    case _: Aspect.timeout[?] => spec // timeout aspect doesn't apply to transitions

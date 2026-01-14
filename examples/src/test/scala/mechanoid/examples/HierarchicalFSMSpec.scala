@@ -2,22 +2,22 @@ package mechanoid.examples.test.scala.mechanoid.examples
 
 import zio.*
 import zio.test.*
-import mechanoid.core.{MState, SealedEnum}
+import mechanoid.core.Finite
 import mechanoid.examples.hierarchical.*
 
 /** Tests for hierarchical state organization using nested sealed traits.
   *
   * These tests demonstrate:
-  *   - SealedEnum discovering all leaf cases in a hierarchy
+  *   - Finite discovering all leaf cases in a hierarchy
   *   - The new suite-style DSL with `all[Parent]` for group transitions
   *   - Using `Machine.start()` to run FSM instances
   */
 object HierarchicalFSMSpec extends ZIOSpecDefault:
 
   def spec = suite("Hierarchical FSM")(
-    suite("SealedEnum with nested sealed traits")(
+    suite("Finite with nested sealed traits")(
       test("discovers all leaf cases recursively") {
-        val se    = summon[SealedEnum[DocumentState]]
+        val se    = summon[Finite[DocumentState]]
         val names = se.caseInfos.map(_.simpleName).toSet
         assertTrue(
           // Should find all leaf states
@@ -35,7 +35,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
         )
       },
       test("excludes parent sealed traits from cases") {
-        val se    = summon[SealedEnum[DocumentState]]
+        val se    = summon[Finite[DocumentState]]
         val names = se.caseInfos.map(_.simpleName).toSet
         assertTrue(
           // Parent traits should NOT be in the case list
@@ -44,7 +44,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
         )
       },
       test("caseHash works for all leaf states") {
-        val se     = summon[SealedEnum[DocumentState]]
+        val se     = summon[Finite[DocumentState]]
         val hashes = List(
           se.caseHash(Draft),
           se.caseHash(PendingReview),
@@ -64,7 +64,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
         )
       },
       test("nameOf works for nested states") {
-        val se = summon[SealedEnum[DocumentState]]
+        val se = summon[Finite[DocumentState]]
         assertTrue(
           se.nameOf(PendingReview) == "PendingReview",
           se.nameOf(UnderReview) == "UnderReview",
@@ -226,7 +226,7 @@ object HierarchicalFSMSpec extends ZIOSpecDefault:
         }
       },
       test("hierarchyInfo contains correct parent-to-leaf mappings") {
-        val se        = summon[SealedEnum[DocumentState]]
+        val se        = summon[Finite[DocumentState]]
         val hierarchy = se.hierarchyInfo.parentToLeaves
 
         // Get the hash of InReview parent

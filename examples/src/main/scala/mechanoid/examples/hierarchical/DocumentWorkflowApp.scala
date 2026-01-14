@@ -66,7 +66,7 @@ object DocumentWorkflowApp extends ZIOAppDefault:
       // Generate and display the state diagram
       _ <- Console.printLine("Mermaid State Diagram:")
       _ <- Console.printLine("```mermaid")
-      _ <- Console.printLine(DocumentWorkflowFSM.definition.definition.toMermaidStateDiagram)
+      _ <- Console.printLine(DocumentWorkflowFSM.definition.toMermaidStateDiagram)
       _ <- Console.printLine("```")
       _ <- Console.printLine("")
 

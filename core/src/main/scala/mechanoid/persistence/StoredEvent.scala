@@ -20,7 +20,7 @@ import java.time.Instant
   * @param timestamp
   *   When the event was persisted
   */
-final case class StoredEvent[Id, E <: MEvent](
+final case class StoredEvent[Id, E](
     instanceId: Id,
     sequenceNr: Long,
     event: E,

@@ -1,13 +1,13 @@
 package mechanoid
 
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
+import mechanoid.machine.Machine
 
 /** Visualization extensions and utilities for FSM definitions and execution traces. */
 package object visualization:
 
-  /** Extension methods for visualizing FSM definitions. */
-  extension [S <: MState, E <: MEvent, Cmd](fsm: FSMDefinition[S, E, Cmd])
+  /** Extension methods for visualizing Machine definitions. */
+  extension [S, E, Cmd](fsm: Machine[S, E, Cmd])
 
     /** Generate a Mermaid state diagram. */
     def toMermaidStateDiagram(initialState: Option[S] = None): String =
@@ -39,13 +39,13 @@ package object visualization:
   end extension
 
   /** Extension methods for visualizing execution traces. */
-  extension [S <: MState, E <: MEvent](trace: ExecutionTrace[S, E])
+  extension [S, E](trace: ExecutionTrace[S, E])
 
     /** Generate a Mermaid sequence diagram. */
-    def toMermaidSequenceDiagram(using stateEnum: SealedEnum[S], eventEnum: SealedEnum[E]): String =
+    def toMermaidSequenceDiagram(using stateEnum: Finite[S], eventEnum: Finite[E]): String =
       MermaidVisualizer.sequenceDiagram(trace, stateEnum, eventEnum)
 
     /** Generate a GraphViz timeline. */
-    def toGraphVizTimeline(using stateEnum: SealedEnum[S], eventEnum: SealedEnum[E]): String =
+    def toGraphVizTimeline(using stateEnum: Finite[S], eventEnum: Finite[E]): String =
       GraphVizVisualizer.timeline(trace, stateEnum, eventEnum)
 end visualization

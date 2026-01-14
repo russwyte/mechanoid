@@ -14,7 +14,7 @@ package mechanoid.core
   * Example:
   * {{{
   * // Default (automatic)
-  * enum MyState extends MState:
+  * enum MyState derives Finite:
   *   case Idle, Running
   *
   * // Murmur3 (explicit, only if needed for collision resolution)

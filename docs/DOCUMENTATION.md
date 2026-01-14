@@ -1269,8 +1269,8 @@ def generateVisualizations[S <: MState, E <: MEvent, R, Err](
 // Generate trace visualization after FSM execution
 def generateTraceVisualization[S <: MState, E <: MEvent](
     trace: ExecutionTrace[S, E],
-    stateEnum: SealedEnum[S],
-    eventEnum: SealedEnum[E],
+    stateEnum: Finite[S],
+    eventEnum: Finite[E],
     outputPath: String
 ): ZIO[Any, Throwable, Unit] =
   val traceMd = s"""# Execution Trace: ${trace.instanceId}

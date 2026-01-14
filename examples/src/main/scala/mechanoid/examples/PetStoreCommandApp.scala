@@ -189,7 +189,7 @@ object PetStoreCommandApp extends ZIOAppDefault:
             )
         }
 
-        fsmRuntime <- FSMRuntime(orderId, machine.definition, OrderState.Created)
+        fsmRuntime <- FSMRuntime(orderId, machine, OrderState.Created)
           .provideSomeLayer[Scope](storeLayer)
 
         // ═══════════════════════════════════════════════════════════
@@ -203,9 +203,22 @@ object PetStoreCommandApp extends ZIOAppDefault:
         // ═══════════════════════════════════════════════════════════
         // Phase 2: Initiate Payment (FSM transition + command enqueue)
         // ═══════════════════════════════════════════════════════════
-        _      <- section("Phase 2: Initiate Payment")
-        _      <- fsm(s"Sending event: ${Yellow}InitiatePayment($$99.99, Visa)$Reset")
-        _      <- fsmRuntime.send(OrderEvent.InitiatePayment(BigDecimal(99.99), "Visa"))
+        _ <- section("Phase 2: Initiate Payment")
+        _ <- fsm(s"Sending event: ${Yellow}InitiatePayment($$99.99, Visa)$Reset")
+        _ <- fsmRuntime.send(
+          OrderEvent.InitiatePayment(
+            orderId = orderId,
+            customerId = "cust-001",
+            customerName = "Alice",
+            customerEmail = "alice@example.com",
+            customerAddress = "123 Main St",
+            petName = "Buddy the Golden Retriever",
+            amount = BigDecimal(99.99),
+            paymentMethod = "Visa",
+            correlationId = s"corr-$orderId",
+            messageId = s"msg-$orderId-init",
+          )
+        )
         state1 <- fsmRuntime.currentState
         _      <- fsm(s"Transitioned: ${Cyan}Created$Reset → ${Yellow}$state1$Reset")
         _      <- showQueueStatus(commandStore)
@@ -223,9 +236,21 @@ object PetStoreCommandApp extends ZIOAppDefault:
         // ═══════════════════════════════════════════════════════════
         // Phase 4: Payment success event (triggers more commands)
         // ═══════════════════════════════════════════════════════════
-        _      <- section("Phase 4: Payment Result → FSM")
-        _      <- fsm(s"Sending event: ${Green}PaymentSucceeded($txnId)$Reset")
-        _      <- fsmRuntime.send(OrderEvent.PaymentSucceeded(txnId))
+        _ <- section("Phase 4: Payment Result → FSM")
+        _ <- fsm(s"Sending event: ${Green}PaymentSucceeded($txnId)$Reset")
+        _ <- fsmRuntime.send(
+          OrderEvent.PaymentSucceeded(
+            orderId = orderId,
+            transactionId = txnId,
+            customerId = "cust-001",
+            customerName = "Alice",
+            customerEmail = "alice@example.com",
+            customerAddress = "123 Main St",
+            petName = "Buddy the Golden Retriever",
+            correlationId = s"corr-$orderId",
+            messageId = s"msg-$orderId-paid",
+          )
+        )
         state2 <- fsmRuntime.currentState
         _      <- fsm(s"Transitioned: ${Yellow}PaymentProcessing$Reset → ${Green}$state2$Reset")
         _      <- showQueueStatus(commandStore)
@@ -245,7 +270,7 @@ object PetStoreCommandApp extends ZIOAppDefault:
         // ═══════════════════════════════════════════════════════════
         _      <- section("Phase 6: Request Shipping → FSM")
         _      <- fsm(s"Sending event: ${Yellow}RequestShipping(123 Main St)$Reset")
-        _      <- fsmRuntime.send(OrderEvent.RequestShipping("123 Main St"))
+        _      <- fsmRuntime.send(OrderEvent.RequestShipping(orderId, "123 Main St"))
         state3 <- fsmRuntime.currentState
         _      <- fsm(s"Transitioned: Paid → ${Yellow}$state3$Reset")
         _      <- showQueueStatus(commandStore)
@@ -256,8 +281,19 @@ object PetStoreCommandApp extends ZIOAppDefault:
         // ═══════════════════════════════════════════════════════════
         _ <- section("Phase 7: Shipment Dispatched → FSM")
         trackingId = "TRACK-12345"
-        _      <- fsm(s"Sending event: ${Green}ShipmentDispatched($trackingId)$Reset")
-        _      <- fsmRuntime.send(OrderEvent.ShipmentDispatched(trackingId, "FastShip", "2 days"))
+        _ <- fsm(s"Sending event: ${Green}ShipmentDispatched($trackingId)$Reset")
+        _ <- fsmRuntime.send(
+          OrderEvent.ShipmentDispatched(
+            orderId = orderId,
+            trackingId = trackingId,
+            carrier = "FastShip",
+            eta = "2 days",
+            customerEmail = "alice@example.com",
+            customerName = "Alice",
+            petName = "Buddy the Golden Retriever",
+            messageId = s"msg-$orderId-shipped",
+          )
+        )
         state4 <- fsmRuntime.currentState
         _      <- fsm(s"Transitioned: ShippingRequested → ${Green}$state4$Reset")
         _      <- showQueueStatus(commandStore)
@@ -291,9 +327,7 @@ object PetStoreCommandApp extends ZIOAppDefault:
       yield ()
     }
 
-    program.catchAll { error =>
-      printLine(s"Error: $error").orDie
-    }
+    program
   end run
 
 end PetStoreCommandApp

@@ -2,16 +2,18 @@ package mechanoid.machine
 
 import zio.*
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
 import mechanoid.runtime.FSMRuntime
 import mechanoid.visualization.{TransitionMeta, TransitionKind}
+import scala.concurrent.duration.Duration
 
 /** A finite state machine definition using the suite-style DSL.
   *
-  * Machine is a friendlier wrapper around FSMDefinition that:
-  *   - Stores transition specs for compile-time validation
-  *   - Converts to FSMDefinition for runtime execution
-  *   - Supports composition via the `build` macro
+  * Machine holds all runtime data for an FSM:
+  *   - Transitions map (state hash, event hash) → action
+  *   - State lifecycles (entry/exit actions)
+  *   - State timeouts
+  *   - Command factories for the transactional outbox pattern
+  *   - Visualization metadata
   *
   * @tparam S
   *   The state type (must extend MState and be sealed)
@@ -20,13 +22,22 @@ import mechanoid.visualization.{TransitionMeta, TransitionKind}
   * @tparam Cmd
   *   The command type for transactional outbox pattern (use Nothing for FSMs without commands)
   */
-final class Machine[S <: MState, E <: MEvent, Cmd] private[machine] (
+final class Machine[S, E, Cmd] private[machine] (
+    // Runtime data - events are just E now (no Timed wrapper)
+    private[mechanoid] val transitions: Map[(Int, Int), Transition[S, E, S]],
+    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, Cmd]],
+    private[mechanoid] val timeouts: Map[Int, Duration],
+    private[mechanoid] val timeoutEvents: Map[Int, E], // state hash -> event to fire on timeout
+    private[mechanoid] val transitionMeta: List[TransitionMeta],
+    // Command factories for transactional outbox pattern
+    private[mechanoid] val preCommandFactories: Map[(Int, Int), (Any, Any) => List[Any]],
+    private[mechanoid] val postCommandFactories: Map[(Int, Int), (Any, Any) => List[Any]],
+    // Spec data for compile-time validation and introspection
     private[machine] val specs: List[TransitionSpec[S, E, Cmd]],
-    private[machine] val timeoutSpecs: List[TimeoutSpec[S]],
-    private[machine] val underlying: FSMDefinition[S, E, Cmd],
+    private[machine] val timeoutSpecs: List[TimeoutSpec[S, E]],
 )(using
-    private[machine] val stateEnum: SealedEnum[S],
-    private[machine] val eventEnum: SealedEnum[Timed[E]],
+    private[mechanoid] val stateEnum: Finite[S],
+    private[mechanoid] val eventEnum: Finite[E], // Just E, no Timed wrapper
 ):
 
   /** Apply an aspect to ALL transition specs in this machine.
@@ -36,23 +47,27 @@ final class Machine[S <: MState, E <: MEvent, Cmd] private[machine] (
   def @@(aspect: Aspect): Machine[S, E, Cmd] = aspect match
     case Aspect.overriding =>
       val newSpecs = specs.map(_.copy(isOverride = true))
-      new Machine(newSpecs, timeoutSpecs, underlying)
-    case _: Aspect.timeout =>
+      new Machine(
+        transitions,
+        lifecycles,
+        timeouts,
+        timeoutEvents,
+        transitionMeta,
+        preCommandFactories,
+        postCommandFactories,
+        newSpecs,
+        timeoutSpecs,
+      )
+    case _: Aspect.timeout[?] =>
       // timeout aspect doesn't apply to machines (only individual states)
       this
-
-  /** Get the underlying FSMDefinition for visualization or advanced use. */
-  def definition: FSMDefinition[S, E, Cmd] = underlying
 
   /** Build and start the FSM runtime with the given initial state.
     *
     * Creates an in-memory FSM runtime suitable for testing or single-process use.
     */
   def start(initial: S): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E, Cmd]] =
-    underlying.build(initial)
-
-  /** Get transition metadata for visualization. */
-  def transitionMeta: List[TransitionMeta] = underlying.transitionMeta
+    FSMRuntime.make(this, initial)
 
   /** Get state names for visualization (caseHash -> name). */
   def stateNames: Map[Int, String] = stateEnum.caseNames
@@ -73,12 +88,8 @@ final class Machine[S <: MState, E <: MEvent, Cmd] private[machine] (
     * }}}
     */
   def withEntry(state: S)(action: ZIO[Any, MechanoidError, Unit]): Machine[S, E, Cmd] =
-    val stateHash     = stateEnum.caseHash(state)
-    val newDefinition = underlying.updateLifecycle(
-      stateHash,
-      lc => lc.copy(onEntry = Some(action)),
-    )
-    new Machine(specs, timeoutSpecs, newDefinition)
+    val stateHash = stateEnum.caseHash(state)
+    updateLifecycle(stateHash, lc => lc.copy(onEntry = Some(action)))
 
   /** Add an exit action for a state.
     *
@@ -93,12 +104,8 @@ final class Machine[S <: MState, E <: MEvent, Cmd] private[machine] (
     * }}}
     */
   def withExit(state: S)(action: ZIO[Any, MechanoidError, Unit]): Machine[S, E, Cmd] =
-    val stateHash     = stateEnum.caseHash(state)
-    val newDefinition = underlying.updateLifecycle(
-      stateHash,
-      lc => lc.copy(onExit = Some(action)),
-    )
-    new Machine(specs, timeoutSpecs, newDefinition)
+    val stateHash = stateEnum.caseHash(state)
+    updateLifecycle(stateHash, lc => lc.copy(onExit = Some(action)))
 
   /** Add both entry and exit actions for a state.
     *
@@ -108,8 +115,8 @@ final class Machine[S <: MState, E <: MEvent, Cmd] private[machine] (
       onEntry: Option[ZIO[Any, MechanoidError, Unit]] = None,
       onExit: Option[ZIO[Any, MechanoidError, Unit]] = None,
   ): Machine[S, E, Cmd] =
-    val stateHash     = stateEnum.caseHash(state)
-    val newDefinition = underlying.updateLifecycle(
+    val stateHash = stateEnum.caseHash(state)
+    updateLifecycle(
       stateHash,
       lc =>
         lc.copy(
@@ -117,41 +124,103 @@ final class Machine[S <: MState, E <: MEvent, Cmd] private[machine] (
           onExit = onExit.orElse(lc.onExit),
         ),
     )
-    new Machine(specs, timeoutSpecs, newDefinition)
   end withLifecycle
+
+  // ============================================
+  // Internal mutation methods (for building)
+  // ============================================
+
+  /** Add a transition using event hash directly (for multi-event builders). */
+  private[mechanoid] def addTransitionWithMetaByHash(
+      fromCaseHash: Int,
+      eventCaseHash: Int,
+      transition: Transition[S, E, S],
+      meta: TransitionMeta,
+  ): Machine[S, E, Cmd] =
+    new Machine(
+      transitions + ((fromCaseHash, eventCaseHash) -> transition),
+      lifecycles,
+      timeouts,
+      timeoutEvents,
+      transitionMeta :+ meta,
+      preCommandFactories,
+      postCommandFactories,
+      specs,
+      timeoutSpecs,
+    )
+
+  /** Update lifecycle for a state. */
+  private[mechanoid] def updateLifecycle(
+      stateCaseHash: Int,
+      f: StateLifecycle[S, Cmd] => StateLifecycle[S, Cmd],
+  ): Machine[S, E, Cmd] =
+    val current = lifecycles.getOrElse(stateCaseHash, StateLifecycle.empty[S, Cmd])
+    new Machine(
+      transitions,
+      lifecycles + (stateCaseHash -> f(current)),
+      timeouts,
+      timeoutEvents,
+      transitionMeta,
+      preCommandFactories,
+      postCommandFactories,
+      specs,
+      timeoutSpecs,
+    )
+  end updateLifecycle
+
+  /** Set timeout for a state. */
+  private[mechanoid] def setStateTimeout(
+      stateCaseHash: Int,
+      timeout: Duration,
+  ): Machine[S, E, Cmd] =
+    new Machine(
+      transitions,
+      lifecycles,
+      timeouts + (stateCaseHash -> timeout),
+      timeoutEvents,
+      transitionMeta,
+      preCommandFactories,
+      postCommandFactories,
+      specs,
+      timeoutSpecs,
+    )
 end Machine
 
 object Machine:
 
   /** Create a Machine from validated specs.
     *
-    * This is called by the `build` macro after validation. It converts TransitionSpecs to an FSMDefinition.
+    * This is called by the `build` macro after validation. It converts TransitionSpecs to runtime data.
     */
-  private[machine] def fromSpecs[S <: MState: SealedEnum, E <: MEvent: SealedEnum, Cmd](
+  private[machine] def fromSpecs[S: Finite, E: Finite, Cmd](
       specs: List[TransitionSpec[S, E, Cmd]],
-      timeoutSpecs: List[TimeoutSpec[S]] = Nil,
-  )(using SealedEnum[Timed[E]]): Machine[S, E, Cmd] =
-    // Build the FSMDefinition from specs
-    var definition = FSMDefinition[S, E].asInstanceOf[FSMDefinition[S, E, Cmd]]
+      timeoutSpecs: List[TimeoutSpec[S, E]] = Nil,
+  ): Machine[S, E, Cmd] =
+    var transitions          = Map.empty[(Int, Int), Transition[S, E, S]]
+    var transitionMetaList   = List.empty[TransitionMeta]
+    var stateTimeouts        = Map.empty[Int, Duration]
+    var stateTimeoutEvents   = Map.empty[Int, E] // state hash -> event to fire on timeout
+    var preCommandFactories  = Map.empty[(Int, Int), (Any, Any) => List[Any]]
+    var postCommandFactories = Map.empty[(Int, Int), (Any, Any) => List[Any]]
 
-    val stateEnumInstance = summon[SealedEnum[S]]
+    val stateEnumInstance = summon[Finite[S]]
 
-    // Convert each TransitionSpec to a Transition in FSMDefinition
+    // Convert each TransitionSpec to runtime data
     for spec <- specs do
       val transition = spec.handler match
         case Handler.Goto(target) =>
           val targetState = target.asInstanceOf[S]
-          Transition[S, Timed[E], S](
+          Transition[S, E, S](
             (_, _) => ZIO.succeed(TransitionResult.Goto(targetState)),
             None,
           )
         case Handler.Stay =>
-          Transition[S, Timed[E], S](
+          Transition[S, E, S](
             (_, _) => ZIO.succeed(TransitionResult.Stay),
             None,
           )
         case Handler.Stop(reason) =>
-          Transition[S, Timed[E], S](
+          Transition[S, E, S](
             (_, _) => ZIO.succeed(TransitionResult.Stop(reason)),
             None,
           )
@@ -173,33 +242,56 @@ object Machine:
         eventHash <- spec.eventHashes
       do
         val meta = TransitionMeta(stateHash, eventHash, targetHash, kind)
-        definition = definition.addTransitionWithMetaByHash(stateHash, eventHash, transition, meta)
+        transitions = transitions + ((stateHash, eventHash) -> transition)
+        transitionMetaList = transitionMetaList :+ meta
+
+        // Extract command factories
+        spec.preCommandFactory.foreach { f =>
+          preCommandFactories = preCommandFactories + ((stateHash, eventHash) -> f)
+        }
+        spec.postCommandFactory.foreach { f =>
+          postCommandFactories = postCommandFactories + ((stateHash, eventHash) -> f)
+        }
+      end for
 
       // Configure timeout on target state if specified via TimedTarget
       (spec.targetTimeout, spec.handler) match
         case (Some(duration), Handler.Goto(target)) =>
           val targetStateHash = stateEnumInstance.caseHash(target.asInstanceOf[S])
-          definition = definition.setStateTimeout(targetStateHash, duration)
+          stateTimeouts = stateTimeouts + (targetStateHash -> duration)
+          // Store the user-defined timeout event if provided
+          // Safe cast: the event was created in TransitionSpec.gotoTimed with type TE <: E
+          spec.targetTimeoutConfig.foreach { config =>
+            stateTimeoutEvents = stateTimeoutEvents + (targetStateHash -> config.event.asInstanceOf[E])
+          }
         case _ => // No timeout or not a goto transition
+      end match
     end for
 
-    // Convert TimeoutSpecs to state timeouts in FSMDefinition (legacy support)
-    // Note: This just sets the timeout duration. The actual transition on timeout
-    // is defined via normal transition rules: `State via Timeout to Target`
+    // Convert TimeoutSpecs to state timeouts (legacy support)
     for timeoutSpec <- timeoutSpecs do
       for stateHash <- timeoutSpec.stateHashes do
-        definition = definition.setStateTimeout(stateHash, timeoutSpec.duration)
+        stateTimeouts = stateTimeouts + (stateHash           -> timeoutSpec.duration)
+        stateTimeoutEvents = stateTimeoutEvents + (stateHash -> timeoutSpec.eventInstance)
 
-    new Machine(specs, timeoutSpecs, definition)
+    new Machine(
+      transitions,
+      Map.empty,
+      stateTimeouts,
+      stateTimeoutEvents,
+      transitionMetaList,
+      preCommandFactories,
+      postCommandFactories,
+      specs,
+      timeoutSpecs,
+    )
   end fromSpecs
 
   /** Create an empty Machine. */
-  def empty[S <: MState: SealedEnum, E <: MEvent: SealedEnum](using SealedEnum[Timed[E]]): Machine[S, E, Nothing] =
-    new Machine(Nil, Nil, FSMDefinition[S, E])
+  def empty[S: Finite, E: Finite]: Machine[S, E, Nothing] =
+    new Machine(Map.empty, Map.empty, Map.empty, Map.empty, Nil, Map.empty, Map.empty, Nil, Nil)
 
   /** Create an empty Machine with commands. */
-  def emptyWithCommands[S <: MState: SealedEnum, E <: MEvent: SealedEnum, Cmd](using
-      SealedEnum[Timed[E]]
-  ): Machine[S, E, Cmd] =
-    new Machine(Nil, Nil, FSMDefinition.withCommands[S, E, Cmd])
+  def emptyWithCommands[S: Finite, E: Finite, Cmd]: Machine[S, E, Cmd] =
+    new Machine(Map.empty, Map.empty, Map.empty, Map.empty, Nil, Map.empty, Map.empty, Nil, Nil)
 end Machine

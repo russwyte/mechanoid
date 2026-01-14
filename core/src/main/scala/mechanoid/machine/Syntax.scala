@@ -26,6 +26,10 @@ final case class StopReason(reason: String)
 // Matcher types for hierarchical matching
 // ============================================
 
+/** Marker trait for matcher types. Used with NotGiven to exclude matchers from the plain state extension.
+  */
+trait IsMatcher
+
 /** Matcher for all children of a sealed parent type.
   *
   * Created by `all[Parent]` macro. Contains pre-computed hashes of all leaf children.
@@ -35,7 +39,25 @@ final case class StopReason(reason: String)
 final class AllMatcher[T](
     val hashes: Set[Int],
     val names: List[String],
-)
+) extends IsMatcher:
+  /** Start building a transition from all matched states. */
+  inline infix def via[E](inline event: E): ViaBuilder[T, E] =
+    val eventHash = Macros.computeHashFor(event)
+    val eventName = event.toString
+    new ViaBuilder[T, E](hashes, Set(eventHash), names, List(eventName))
+
+  /** Handle event matcher for parameterized case classes. */
+  infix def via[E](eventMatcher: EventMatcher[E]): ViaBuilder[T, E] =
+    new ViaBuilder[T, E](hashes, Set(eventMatcher.hash), names, List(eventMatcher.name))
+
+  /** Handle anyOf events. */
+  infix def viaAnyOf[E](events: AnyOfEventMatcher[E]): ViaBuilder[T, E] =
+    new ViaBuilder[T, E](hashes, events.hashes, names, events.names)
+
+  /** Handle all events. */
+  infix def viaAll[E](events: AllMatcher[E]): ViaBuilder[T, E] =
+    new ViaBuilder[T, E](hashes, events.hashes, names, events.names)
+end AllMatcher
 
 /** Matcher for specific state values.
   *
@@ -43,11 +65,25 @@ final class AllMatcher[T](
   *
   * Usage: `anyOf(ChildA, ChildB) via Event to Target`
   */
-final class AnyOfMatcher[S <: MState](
+final class AnyOfMatcher[S](
     val values: Seq[S],
     val hashes: Set[Int],
     val names: List[String],
-)
+) extends IsMatcher:
+  /** Start building a transition from specific states. */
+  inline infix def via[E](inline event: E): ViaBuilder[S, E] =
+    val eventHash = Macros.computeHashFor(event)
+    val eventName = event.toString
+    new ViaBuilder[S, E](hashes, Set(eventHash), names, List(eventName))
+
+  /** Handle event matcher for parameterized case classes. */
+  infix def via[E](eventMatcher: EventMatcher[E]): ViaBuilder[S, E] =
+    new ViaBuilder[S, E](hashes, Set(eventMatcher.hash), names, List(eventMatcher.name))
+
+  /** Handle anyOf events. */
+  infix def viaAnyOf[E](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
+    new ViaBuilder[S, E](hashes, events.hashes, names, events.names)
+end AnyOfMatcher
 
 /** Matcher for specific event values.
   *
@@ -55,7 +91,7 @@ final class AnyOfMatcher[S <: MState](
   *
   * Usage: `State via anyOf(Click, Tap) to Target`
   */
-final class AnyOfEventMatcher[E <: MEvent](
+final class AnyOfEventMatcher[E](
     val values: Seq[E],
     val hashes: Set[Int],
     val names: List[String],
@@ -69,39 +105,39 @@ final class AnyOfEventMatcher[E <: MEvent](
   *
   * Contains pre-computed state and event hashes for efficient duplicate detection.
   */
-final class ViaBuilder[S <: MState, E <: MEvent](
+final class ViaBuilder[S, E](
     val stateHashes: Set[Int],
     val eventHashes: Set[Int],
     val stateNames: List[String],
     val eventNames: List[String],
 ):
   /** Transition to a target state. */
-  inline infix def to[S2 <: MState](target: S2): TransitionSpec[MState, MEvent, Nothing] =
+  inline infix def to[S2](target: S2): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec.goto(stateHashes, eventHashes, stateNames, eventNames, target)
 
   /** Transition to a timed target state (starts timeout timer on entry).
     *
     * Usage:
     * {{{
-    * val timedWaiting = Waiting @@ timeout(30.seconds)
+    * val timedWaiting = Waiting @@ timeout(30.seconds, TimeoutEvent)
     * Idle via Start to timedWaiting
     * }}}
     */
-  inline infix def to[S2 <: MState](target: TimedTarget[S2]): TransitionSpec[MState, MEvent, Nothing] =
+  inline infix def to[S2, TE](target: TimedTarget[S2, TE])(using Finite[TE]): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec.gotoTimed(stateHashes, eventHashes, stateNames, eventNames, target)
 
   /** Alias for `to` using >> operator. */
-  inline def >>[S2 <: MState](target: S2): TransitionSpec[MState, MEvent, Nothing] = to(target)
+  inline def >>[S2](target: S2): TransitionSpec[Any, Any, Nothing] = to(target)
 
   /** Stay in the current state. */
-  infix def to(terminal: stay.type): TransitionSpec[MState, MEvent, Nothing] =
+  infix def to(terminal: stay.type): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec.stay(stateHashes, eventHashes, stateNames, eventNames)
 
   /** Stop the FSM. */
-  infix def to(terminal: stop.type): TransitionSpec[MState, MEvent, Nothing] =
+  infix def to(terminal: stop.type): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec.stop(stateHashes, eventHashes, stateNames, eventNames)
 
   /** Stop the FSM with a reason. */
-  infix def to(terminal: StopReason): TransitionSpec[MState, MEvent, Nothing] =
+  infix def to(terminal: StopReason): TransitionSpec[Any, Any, Nothing] =
     TransitionSpec.stop(stateHashes, eventHashes, stateNames, eventNames, Some(terminal.reason))
 end ViaBuilder

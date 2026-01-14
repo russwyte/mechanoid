@@ -11,9 +11,6 @@ stateDiagram-v2
     ShippingRequested --> Shipped: ShipmentDispatched
     Paid --> ShippingRequested: RequestShipping
     Created --> PaymentProcessing: InitiatePayment
-    note left of PaymentProcessing : [ProcessPayment]
-    note left of Paid : [RequestShipping, SendNotification]
-    note left of Shipped : [SendNotification]
 ```
 
 ## FSM + Commands Flowchart
@@ -65,12 +62,12 @@ digraph FSM {
     node [shape=ellipse, fontsize=12];
     edge [fontsize=10];
 
-    Shipped [label="Shipped\n[entry]"];
-    PaymentProcessing [label="PaymentProcessing\n[entry]"];
+    Shipped [label="Shipped"];
+    PaymentProcessing [label="PaymentProcessing"];
     ShippingRequested [label="ShippingRequested"];
     Delivered [label="Delivered"];
     Cancelled [label="Cancelled"];
-    Paid [label="Paid\n[entry]"];
+    Paid [label="Paid"];
     Created [label="Created"];
     __start__ [shape=point, width=0.2];
     __start__ -> Created;

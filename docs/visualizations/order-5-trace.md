@@ -1,10 +1,9 @@
 # Order 5 Execution Trace
 
-**Final State:** Paid
+**Final State:** Cancelled
 
 ## Command Summary
 
-- Completed: 3
 - Failed: 1
 
 ## FSM + Commands Sequence Diagram
@@ -17,27 +16,15 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment(25.0,Visa ****4242)
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=5<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>amount=25.0<br/>paymentMethod={redacted}
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded(TXN-691369)
-    Note over FSM: Paid
-    FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=5<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=9f91a25d-8f5d-4718-b011-a30238841de9
+    Note right of CQ: orderId=5<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ❌ Failed
-    FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=903fdd43-ef20-4bb9-9cd3-d178a741f8f2
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=903fdd43-ef20-4bb9-9cd3-d178a741f8f2<br/>delivered=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    Note over FSM: Current: Paid
+    FSM->>FSM: PaymentFailed(5,FraudCheckFailed)
+    Note over FSM: Cancelled
+    Note over FSM: Current: Cancelled
 ```
 
 ## FSM-Only Sequence Diagram
@@ -46,11 +33,11 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-5
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment(25.0,Visa ****4242)
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded(TXN-691369)
-    Note over FSM: Paid
-    Note over FSM: Current: Paid
+    FSM->>FSM: PaymentFailed(5,FraudCheckFailed)
+    Note over FSM: Cancelled
+    Note over FSM: Current: Cancelled
 ```
 
 ## Flowchart with Commands
@@ -94,6 +81,6 @@ flowchart TB
 
     style Created fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style PaymentProcessing fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Paid fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Paid fill:#90EE90,stroke:#228B22,stroke-width:4px
+    style Cancelled fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
+    style Cancelled fill:#90EE90,stroke:#228B22,stroke-width:4px
 ```

@@ -8,21 +8,21 @@ import scala.concurrent.duration.Duration
 object MachineSpec extends ZIOSpecDefault:
 
   // Simple test types
-  enum TestState extends MState:
+  enum TestState derives Finite:
     case A, B, C
 
-  enum TestEvent extends MEvent:
-    case E1, E2
+  enum TestEvent derives Finite:
+    case E1, E2, Timeout
 
   // Hierarchical types for testing all[]/anyOf()
-  sealed trait ParentState extends MState
-  case object ChildA       extends ParentState
-  case object ChildB       extends ParentState
-  case object ChildC       extends ParentState
+  sealed trait ParentState derives Finite
+  case object ChildA extends ParentState
+  case object ChildB extends ParentState
+  case object ChildC extends ParentState
 
-  sealed trait InputEvent extends MEvent
-  case object Click       extends InputEvent
-  case object Tap         extends InputEvent
+  sealed trait InputEvent derives Finite
+  case object Click extends InputEvent
+  case object Tap   extends InputEvent
 
   import TestState.*, TestEvent.*
 
@@ -112,8 +112,8 @@ object MachineSpec extends ZIOSpecDefault:
           spec.eventHashes.size == 1,
         )
       },
-      test("anyOf() for events") {
-        val eventMatcher = anyOf(Click, Tap)
+      test("anyOfEvents() for events") {
+        val eventMatcher = anyOfEvents(Click, Tap)
         val spec         = ChildA viaAnyOf eventMatcher to ChildB
 
         assertTrue(
@@ -132,29 +132,32 @@ object MachineSpec extends ZIOSpecDefault:
       },
     ),
     suite("timeout")(
-      test("timeout aspect creates TimedTarget") {
-        val timedTarget = A @@ Aspect.timeout(Duration.fromNanos(30000000000L)) // 30 seconds
+      test("timeout aspect creates TimedTarget with user-defined event") {
+        val timedTarget = A @@ Aspect.timeout(Duration.fromNanos(30000000000L), Timeout) // 30 seconds
 
         assertTrue(
           timedTarget.state == A,
           timedTarget.duration.toSeconds == 30,
+          timedTarget.timeoutEvent == Timeout,
         )
       },
-      test("via Timeout uses stable hash") {
+      test("via user-defined timeout event uses stable hash") {
         val spec = A via Timeout to B
 
         assertTrue(
-          spec.eventHashes.contains(Timeout.CaseHash),
+          spec.eventHashes.nonEmpty,
           spec.eventNames.contains("Timeout"),
         )
       },
-      test("transition to TimedTarget includes timeout duration") {
-        val timedB = B @@ Aspect.timeout(Duration.fromNanos(60000000000L)) // 1 minute
+      test("transition to TimedTarget includes timeout duration and event") {
+        val timedB = B @@ Aspect.timeout(Duration.fromNanos(60000000000L), Timeout) // 1 minute
         val spec   = A via E1 to timedB
 
         assertTrue(
           spec.targetTimeout.isDefined,
           spec.targetTimeout.get.toMinutes == 1L,
+          spec.targetTimeoutConfig.isDefined,
+          spec.targetTimeoutConfig.get.event == Timeout,
         )
       },
     ),
@@ -181,7 +184,7 @@ object MachineSpec extends ZIOSpecDefault:
 
         assertTrue(
           machine.specs.size == 2,
-          machine.definition != null,
+          machine.transitions.nonEmpty,
         )
       },
       test("machine can start FSM runtime") {
@@ -191,6 +194,62 @@ object MachineSpec extends ZIOSpecDefault:
         )
 
         val machine = Machine.fromSpecs[TestState, TestEvent, Nothing](specs)
+
+        ZIO.scoped {
+          for
+            fsm   <- machine.start(A)
+            _     <- fsm.send(E1)
+            state <- fsm.currentState
+          yield assertTrue(state == B)
+        }
+      },
+    ),
+    suite("immutable transition expressions")(
+      test("transitions can be stored in vals and reused") {
+        // Store transitions in vals
+        val transition1 = A via E1 to B
+        val transition2 = B via E1 to C
+
+        // Use them in build
+        val machine = build[TestState, TestEvent](
+          transition1,
+          transition2,
+        )
+
+        ZIO.scoped {
+          for
+            fsm   <- machine.start(A)
+            _     <- fsm.send(E1)
+            _     <- fsm.send(E1)
+            state <- fsm.currentState
+          yield assertTrue(state == C)
+        }
+      },
+      test("timed target can be stored in val and reused") {
+        // Store timed target in val
+        val timedB = B @@ Aspect.timeout(Duration.fromNanos(30000000000L), Timeout) // 30 seconds
+
+        // Use in transition
+        val toTimedB = A via E1 to timedB
+        val fromB    = B via Timeout to C
+
+        val machine = build[TestState, TestEvent](
+          toTimedB,
+          fromB,
+        )
+
+        assertTrue(
+          machine.timeouts.nonEmpty,
+          machine.specs.size == 2,
+        )
+      },
+      test("mixed inline and stored transitions") {
+        val storedTransition = A via E1 to B
+
+        val machine = build[TestState, TestEvent](
+          storedTransition, // Stored
+          B via E1 to C,    // Inline
+        )
 
         ZIO.scoped {
           for

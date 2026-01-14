@@ -1,7 +1,7 @@
 package mechanoid.visualization
 
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
+import mechanoid.machine.Machine
 import mechanoid.persistence.command.*
 import scala.concurrent.duration.Duration
 
@@ -18,8 +18,8 @@ object MermaidVisualizer:
     *     Processing --> Completed: FinishEvent
     * ```
     */
-  def stateDiagram[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def stateDiagram[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       initialState: Option[S] = None,
   ): String =
     val sb = StringBuilder()
@@ -86,10 +86,10 @@ object MermaidVisualizer:
     * Note: For parameterized events, the full representation with actual runtime values is shown (e.g.,
     * `PaymentSucceeded(TXN-123)` instead of just `PaymentSucceeded`).
     */
-  def sequenceDiagram[S <: MState, E <: MEvent](
+  def sequenceDiagram[S, E](
       trace: ExecutionTrace[S, E],
-      stateEnum: SealedEnum[S],
-      eventEnum: SealedEnum[E],
+      stateEnum: Finite[S],
+      eventEnum: Finite[E],
   ): String =
     val sb = StringBuilder()
     sb.append("sequenceDiagram\n")
@@ -162,8 +162,8 @@ object MermaidVisualizer:
     *     style Completed fill:#90EE90
     * ```
     */
-  def flowchart[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def flowchart[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =
     val sb = StringBuilder()
@@ -266,8 +266,8 @@ object MermaidVisualizer:
     *
     * Shows which commands are triggered when entering each state.
     */
-  def stateDiagramWithCommands[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def stateDiagramWithCommands[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       stateCommands: Map[Int, List[String]], // stateCaseHash -> command type names
       initialState: Option[S] = None,
   ): String =
@@ -336,10 +336,10 @@ object MermaidVisualizer:
     * Shows FSM state transitions alongside command execution. For parameterized events, shows full representation with
     * actual runtime values.
     */
-  def sequenceDiagramWithCommands[S <: MState, E <: MEvent, Id, Cmd](
+  def sequenceDiagramWithCommands[S, E, Id, Cmd](
       trace: ExecutionTrace[S, E],
-      stateEnum: SealedEnum[S],
-      eventEnum: SealedEnum[E],
+      stateEnum: Finite[S],
+      eventEnum: Finite[E],
       commands: List[PendingCommand[Id, Cmd]],
       commandName: Cmd => String,
   ): String =
@@ -426,8 +426,8 @@ object MermaidVisualizer:
     *
     * Shows states in one lane and commands in another, with connections.
     */
-  def flowchartWithCommands[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def flowchartWithCommands[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       stateCommands: Map[Int, List[String]], // stateCaseHash -> command type names
       trace: Option[ExecutionTrace[S, E]] = None,
   ): String =
