@@ -1017,7 +1017,63 @@ object Macros:
     )
 
     // Extract hash info from a term (either inline expr or val definition)
+    // This version includes DSL string parsing for inline transitions
     def extractHashInfo(term: Term): Option[SpecHashInfo] =
+      // Helper to extract state/event names from raw DSL form using the show string
+      // The DSL show string looks like:
+      // "mechanoid.machine.Macros$package.via[...TestState](TestState.A)(NotGiven)[...TestEvent](TestEvent.E1).to[...](TestState.B)"
+      // Key insight: state/event VALUES are in parentheses AFTER type params in brackets
+      def extractFromDslShowString(showStr: String): Option[SpecHashInfo] =
+        // Pattern to find arguments in parentheses that look like qualified enum cases
+        // e.g., "(TestState.A)" or "(mechanoid.machine.MachineSpec.TestState.A)"
+        // We want the LAST segment before the closing paren that looks like TypeName.CaseName
+        val argInParensPattern   = """\(([^()]+)\)""".r
+        val qualifiedCasePattern = """(\w+(?:\.\w+)*)\.([A-Z][A-Za-z0-9_]*)$""".r
+
+        // Extract all parenthesized arguments
+        val allArgs = argInParensPattern.findAllMatchIn(showStr).map(_.group(1)).toList
+
+        // Filter to only those that look like qualified enum cases (not NotGiven, not type params)
+        val qualifiedArgs = allArgs.flatMap { arg =>
+          qualifiedCasePattern.findFirstMatchIn(arg.trim).map { m =>
+            (m.group(1), m.group(2), s"${m.group(1)}.${m.group(2)}")
+          }
+        }
+
+        // The pattern is: state value, then event value, then target value
+        // Filter out items that look like type names (contain "State" or "Event" as the case name itself)
+        val valueArgs = qualifiedArgs.filterNot { case (_, caseName, _) =>
+          caseName == "NotGiven" || caseName.endsWith("$")
+        }
+
+        if valueArgs.size < 2 then None
+        else
+          val (statePrefix, stateName, stateFullName) = valueArgs.head
+          // Find the event - it should be from a different type (TestEvent vs TestState)
+          val eventOpt = valueArgs.tail.find { case (prefix, _, _) =>
+            // Event should have "Event" in its prefix or be different from state prefix
+            prefix.contains("Event") || !prefix.contains(statePrefix.split('.').lastOption.getOrElse(""))
+          }
+
+          eventOpt match
+            case Some((_, eventName, eventFullName)) =>
+              // Find target if present (usually the last one)
+              val targetOpt = valueArgs.lastOption.filter { case (prefix, _, _) =>
+                prefix.contains("State") || prefix == statePrefix.split('.').init.mkString(".")
+              }
+              val targetDesc = targetOpt.map { case (_, name, _) => s"-> $name" }.getOrElse("?")
+
+              val stateHash = stateFullName.hashCode
+              val eventHash = eventFullName.hashCode
+
+              Some(
+                SpecHashInfo(Set(stateHash), Set(eventHash), List(stateName), List(eventName), targetDesc, false, "?")
+              )
+            case None => None
+          end match
+        end if
+      end extractFromDslShowString
+
       object HashFinder extends TreeAccumulator[Option[SpecHashInfo]]:
         def foldTree(found: Option[SpecHashInfo], tree: Tree)(owner: Symbol): Option[SpecHashInfo] =
           found.orElse {
@@ -1077,7 +1133,15 @@ object Macros:
         case Inlined(_, _, inner) => extractTargetName(inner.asInstanceOf[Term])
         case _                    => "?"
 
-      HashFinder.foldTree(None, term)(Symbol.spliceOwner)
+      // First try the AST-based extraction
+      val astResult = HashFinder.foldTree(None, term)(Symbol.spliceOwner)
+
+      // If AST extraction fails (e.g., for raw DSL form), try string-based extraction
+      astResult.orElse {
+        val showStr = term.show
+        if showStr.contains(".via") then extractFromDslShowString(showStr)
+        else None
+      }
     end extractHashInfo
 
     // For val references, try to get the definition tree
@@ -1123,15 +1187,23 @@ object Macros:
       end match
     end getSpecInfo
 
-    // Extract info from all specs
+    // Note: Compile-time duplicate detection across machine composition is not possible due to
+    // cyclic macro dependencies. When we try to look up a machine val's definition via sym.tree,
+    // and that machine was created with build(), the compiler needs to expand that build() first,
+    // creating a cycle. Runtime detection in Machine.fromSpecs handles this case.
+
+    // Extract info from all inline specs
     val specInfos = specTerms.zipWithIndex.map { case (term, idx) =>
       (getSpecInfo(term, idx), idx)
     }
 
+    // Only inline specs are validated at compile time
+    val allSpecInfos: List[(SpecHashInfo, Int)] = specInfos
+
     // Build registry: (stateHash, eventHash) -> List[(SpecHashInfo, index)]
     val registry = scala.collection.mutable.Map[(Int, Int), List[(SpecHashInfo, Int)]]()
 
-    for (info, idx) <- specInfos do
+    for (info, idx) <- allSpecInfos do
       for
         stateHash <- info.stateHashes
         eventHash <- info.eventHashes
@@ -1430,16 +1502,53 @@ inline def event[E]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
   */
 inline def state[S]: StateMatcher[S] = ${ Macros.stateMatcherImpl[S] }
 
-/** Match SPECIFIC state values (no .type needed!).
+/** Match multiple specific state values in a single transition.
   *
-  * Usage: `anyOf(ChildA, ChildB) via Event to Target`
+  * Use this when you want a transition to apply to several specific states but not all states in a sealed hierarchy.
+  * This is different from `all[Parent]` which matches all subtypes of a sealed type.
+  *
+  * @example
+  *   {{{
+  * // Handle same event from multiple specific states
+  * anyOf(Draft, InReview, Approved) via Cancel to Cancelled
+  *
+  * // More readable than separate transitions:
+  * // Draft via Cancel to Cancelled,
+  * // InReview via Cancel to Cancelled,
+  * // Approved via Cancel to Cancelled,
+  *   }}}
+  *
+  * @param first
+  *   The first state to match
+  * @param rest
+  *   Additional states to match
+  * @return
+  *   A matcher that expands to all specified states at compile time
   */
 inline def anyOf[S](inline first: S, inline rest: S*): AnyOfMatcher[S] =
   Macros.anyOfStatesImpl(first, rest*)
 
-/** Match SPECIFIC event values (no .type needed!).
+/** Match multiple specific event values in a single transition.
   *
-  * Usage: `State via anyOfEvents(Click, Tap) to Target`
+  * Use this when you want multiple events to trigger the same transition. The events are expanded at compile time.
+  *
+  * @example
+  *   {{{
+  * // Multiple events trigger same transition
+  * Idle via anyOfEvents(Click, Tap, KeyPress) to Active
+  *
+  * // More readable than separate transitions:
+  * // Idle via Click to Active,
+  * // Idle via Tap to Active,
+  * // Idle via KeyPress to Active,
+  *   }}}
+  *
+  * @param first
+  *   The first event to match
+  * @param rest
+  *   Additional events to match
+  * @return
+  *   A matcher that expands to all specified events at compile time
   */
 inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
   Macros.anyOfEventsImpl(first, rest*)

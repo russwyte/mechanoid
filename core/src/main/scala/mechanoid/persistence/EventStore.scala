@@ -159,9 +159,9 @@ import scala.annotation.unused
   * @tparam Id
   *   The FSM instance identifier type (e.g., UUID, String, Long)
   * @tparam S
-  *   The state type (must extend MState)
+  *   The state type (sealed enum or sealed trait)
   * @tparam E
-  *   The event type (must extend MEvent)
+  *   The event type (sealed enum or sealed trait)
   */
 trait EventStore[Id, S, E]:
 

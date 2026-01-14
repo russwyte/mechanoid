@@ -51,12 +51,45 @@ final case class TransitionSpec[+S, +E, +Cmd](
     preCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, sourceState) => commands
     postCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, targetState) => commands
 ):
-  /** Commands to emit BEFORE state change. Receives (event, sourceState). */
+  /** Commands to emit BEFORE state change. Receives (event, sourceState).
+    *
+    * Use this for commands that must be generated before the state transition occurs. The function receives the
+    * triggering event and the current (source) state.
+    *
+    * @example
+    *   {{{
+    * val spec = A via E1 to B emittingBefore { (event, state) =>
+    *   List(LogTransition(state, event))
+    * }
+    *   }}}
+    *
+    * @param f
+    *   Function that generates commands from (event, sourceState)
+    * @return
+    *   A new TransitionSpec with the pre-command factory configured
+    */
   infix def emittingBefore[C](f: (E, S) => List[C]): TransitionSpec[S, E, C] =
     copy(preCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
       .asInstanceOf[TransitionSpec[S, E, C]]
 
-  /** Commands to emit AFTER state change. Receives (event, targetState). */
+  /** Commands to emit AFTER state change. Receives (event, targetState).
+    *
+    * Use this for commands that should be generated after the state transition occurs. The function receives the
+    * triggering event and the new (target) state. This is the most common pattern for generating notifications or side
+    * effects based on state changes.
+    *
+    * @example
+    *   {{{
+    * val spec = Created via Pay to Paid emitting { (event, state) =>
+    *   List(SendNotification(s"Order is now $state"))
+    * }
+    *   }}}
+    *
+    * @param f
+    *   Function that generates commands from (event, targetState)
+    * @return
+    *   A new TransitionSpec with the post-command factory configured
+    */
   infix def emitting[C](f: (E, S) => List[C]): TransitionSpec[S, E, C] =
     copy(postCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
       .asInstanceOf[TransitionSpec[S, E, C]]

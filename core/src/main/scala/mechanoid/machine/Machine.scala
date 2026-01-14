@@ -16,9 +16,9 @@ import scala.concurrent.duration.Duration
   *   - Visualization metadata
   *
   * @tparam S
-  *   The state type (must extend MState and be sealed)
+  *   The state type (sealed enum or sealed trait - Finite typeclass derived automatically)
   * @tparam E
-  *   The event type (must extend MEvent and be sealed)
+  *   The event type (sealed enum or sealed trait - Finite typeclass derived automatically)
   * @tparam Cmd
   *   The command type for transactional outbox pattern (use Nothing for FSMs without commands)
   */
@@ -217,6 +217,17 @@ object Machine:
     val stateEnumInstance = summon[Finite[S]]
     val eventEnumInstance = summon[Finite[E]]
 
+    // First pass: collect all state/event pairs that have any override marker
+    // If ANY spec for a given pair has override, all duplicates for that pair are allowed
+    val overridePairs: Set[(Int, Int)] = specs.flatMap { spec =>
+      if spec.isOverride then
+        for
+          stateHash <- spec.stateHashes
+          eventHash <- spec.eventHashes
+        yield (stateHash, eventHash)
+      else Set.empty[(Int, Int)]
+    }.toSet
+
     // Convert each TransitionSpec to runtime data
     for (spec, specIdx) <- specs.zipWithIndex do
       val transition = spec.handler match
@@ -256,9 +267,11 @@ object Machine:
         val key = (stateHash, eventHash)
 
         // Check for duplicates
+        // Allow if: (1) this spec has override, OR (2) any spec for this pair has override
+        val hasOverride = spec.isOverride || overridePairs.contains(key)
         seenTransitions.get(key) match
-          case Some((firstIdx, firstDesc)) if !spec.isOverride =>
-            // Duplicate without override - error
+          case Some((firstIdx, firstDesc)) if !hasOverride =>
+            // Duplicate without any override - error
             val stateName = stateEnumInstance.caseNames.getOrElse(stateHash, s"state#$stateHash")
             val eventName = eventEnumInstance.caseNames.getOrElse(eventHash, s"event#$eventHash")
             throw new IllegalArgumentException(
@@ -270,7 +283,7 @@ object Machine:
                  |  To override, use: @@ Aspect.overriding""".stripMargin
             )
           case _ =>
-            // Either no duplicate, or duplicate with override - allow it
+            // Either no duplicate, or has override somewhere - allow it
             ()
         end match
 

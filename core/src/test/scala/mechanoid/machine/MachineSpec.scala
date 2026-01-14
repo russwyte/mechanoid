@@ -896,7 +896,7 @@ object MachineSpec extends ZIOSpecDefault:
       },
       test("buildAll with machines - last in flattened list wins") {
         val machine1 = build[TestState, TestEvent](A via E1 to B)
-        val machine2 = build[TestState, TestEvent]((A via E1 to C) @@ Aspect.overriding)
+        val machine2 = build[TestState, TestEvent]((A via E1 to C))
 
         val combined = buildAll[TestState, TestEvent]:
           include:
@@ -905,12 +905,28 @@ object MachineSpec extends ZIOSpecDefault:
             machine2                           // Last
           (A via E1 to A) @@ Aspect.overriding // Even later
 
+        // Without override, this should fail at construction time
+        // (wrap in ZIO.attempt to verify the failure)
+        val combinedShouldFailResult = ZIO.attempt {
+          buildAll[TestState, TestEvent]:
+            include:
+              machine1
+            include:
+              machine2
+        }
+
         ZIO.scoped {
           for
+            // Verify the override version works
             fsm   <- combined.start(A)
             _     <- fsm.send(E1)
             state <- fsm.currentState
-          yield assertTrue(state == A) // Inline override is last
+            // Verify the non-override version fails
+            shouldFailError <- combinedShouldFailResult.flip
+          yield assertTrue(
+            state == A, // Inline override is last
+            shouldFailError.getMessage.contains("Duplicate transition"),
+          )
         }
       },
     ),
@@ -926,8 +942,9 @@ object MachineSpec extends ZIOSpecDefault:
       test("build allows duplicate val with override - emits info message") {
         // This compiles successfully and emits:
         // [mechanoid] Override info: A via E1: B -> B
-        val t1      = A via E1 to B
-        val machine = build(t1, t1 @@ Aspect.overriding)
+        val t1       = A via E1 to B
+        val machine  = build(t1, t1 @@ Aspect.overriding)
+        val machine2 = build(t1)
 
         // Both specs are present (runtime handles the override semantics)
         assertTrue(machine.specs.size == 2)
