@@ -1,30 +1,37 @@
 package mechanoid.core
 
 import scala.annotation.{implicitNotFound, nowarn}
-import mechanoid.macros.SealedEnumMacros
-import mechanoid.macros.SealedEnumMacros.{CaseInfo, HierarchyInfo}
+import mechanoid.macros.FiniteMacros
+import mechanoid.macros.FiniteMacros.{CaseInfo, HierarchyInfo}
 
-/** Type class that proves a type is a sealed enum or sealed trait.
+/** Type class that proves a type is a finite (sealed) set of cases.
   *
   * This provides compile-time verification that state and event types are closed hierarchies, which is required for
-  * hash-based matching in FSM definitions.
+  * hash-based matching in FSM definitions. The name "Finite" connects to "Finite State Machine" - your states and
+  * events must be finite, enumerable sets.
   *
   * Each case is identified by its `caseHash` - a hash of the fully qualified name. This provides stable identity that
   * doesn't depend on declaration order and avoids conflicts with Scala 3 enum's built-in `ordinal` method.
   *
   * Supports nested sealed traits - all leaf cases (non-sealed case classes/objects) are discovered recursively.
   *
-  * This is an internal type - users should not interact with it directly. SealedEnum instances are automatically
-  * derived for MState and MEvent subtypes.
+  * Usage:
+  * {{{
+  * enum MyState derives Finite:
+  *   case Idle, Running, Stopped
+  *
+  * enum MyEvent derives Finite:
+  *   case Start, Stop, Pause
+  * }}}
   */
 @implicitNotFound(
-  "Type ${T} must be a sealed trait or enum.\n" +
+  "Type ${T} must be a sealed trait or enum with `derives Finite`.\n" +
     "Mechanoid requires compile-time knowledge of all cases for hash-based matching.\n" +
     "Make sure your type is declared as:\n" +
-    "  - 'enum MyType extends MState/MEvent' (recommended), or\n" +
-    "  - 'sealed trait MyType extends MState/MEvent' with subtypes (can be nested)"
+    "  - 'enum MyType derives Finite' (recommended), or\n" +
+    "  - 'sealed trait MyType' with subtypes and a given Finite instance"
 )
-private[mechanoid] trait SealedEnum[T]:
+trait Finite[T]:
   /** Extract the caseHash (hash of fully qualified name) from an instance.
     *
     * This provides stable identification that doesn't depend on declaration order.
@@ -48,7 +55,7 @@ private[mechanoid] trait SealedEnum[T]:
 
   /** Get hierarchy information mapping parent types to their leaf descendants.
     *
-    * This enables `whenAny[ParentState]` to expand to transitions for all leaf states under that parent.
+    * This enables `all[ParentState]` to expand to transitions for all leaf states under that parent.
     */
   def hierarchyInfo: HierarchyInfo
 
@@ -58,10 +65,10 @@ private[mechanoid] trait SealedEnum[T]:
     */
   def leafHashesFor(parentHash: Int): Set[Int] =
     hierarchyInfo.parentToLeaves.getOrElse(parentHash, Set.empty)
-end SealedEnum
+end Finite
 
-private[mechanoid] object SealedEnum:
-  /** Automatically derive SealedEnum for any sealed type using macros.
+object Finite:
+  /** Automatically derive Finite for any sealed type using macros.
     *
     * This derivation:
     *   - Recursively finds all leaf cases (including nested sealed traits)
@@ -70,29 +77,38 @@ private[mechanoid] object SealedEnum:
     *   - Detects hash collisions at compile time (results in compilation error)
     *   - Generates pattern-matching code for caseHash lookups
     *
-    * This is used internally by MState.sealedEnum and MEvent.sealedEnum givens. Users don't interact with this
-    * directly.
+    * Usage:
+    * {{{
+    * enum MyState derives Finite:
+    *   case Idle, Running
+    * }}}
     */
-  inline given derived[T]: SealedEnum[T] =
+  inline given derived[T]: Finite[T] =
     deriveWithHasher[T](CaseHasher.Default)
 
-  /** Derive a SealedEnum with a specific hasher.
+  /** Derive a Finite instance with a specific hasher.
     *
-    * This is used internally by MState.deriveWithHasher and MEvent.deriveWithHasher. Users don't interact with this
-    * directly.
+    * Use this when the default hasher produces collisions (the compiler will tell you):
+    * {{{
+    * enum MyState derives Finite:
+    *   case Idle, Running
+    *
+    * object MyState:
+    *   given Finite[MyState] = Finite.deriveWithHasher[MyState](CaseHasher.Murmur3)
+    * }}}
     */
   @nowarn("msg=New anonymous class definition will be duplicated")
-  inline def deriveWithHasher[T](inline hasher: CaseHasher): SealedEnum[T] =
-    new SealedEnum[T]:
-      val caseInfos: Array[CaseInfo] = SealedEnumMacros.extractCaseInfo[T](hasher)
+  inline def deriveWithHasher[T](inline hasher: CaseHasher): Finite[T] =
+    new Finite[T]:
+      val caseInfos: Array[CaseInfo] = FiniteMacros.extractCaseInfo[T](hasher)
 
       val caseNames: Map[Int, String] = caseInfos.map(ci => ci.hash -> ci.simpleName).toMap
 
-      val hierarchyInfo: HierarchyInfo = SealedEnumMacros.extractHierarchyInfo[T](hasher)
+      val hierarchyInfo: HierarchyInfo = FiniteMacros.extractHierarchyInfo[T](hasher)
 
       // Use macro-generated pattern matching for caseHash
       // This works with nested sealed traits (Mirror.ordinal only works with direct children)
-      private val hashFn: T => Int = SealedEnumMacros.generateCaseHash[T](hasher)
+      private val hashFn: T => Int = FiniteMacros.generateCaseHash[T](hasher)
 
       def caseHash(value: T): Int = hashFn(value)
-end SealedEnum
+end Finite

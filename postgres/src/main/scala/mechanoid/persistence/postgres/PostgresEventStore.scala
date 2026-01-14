@@ -17,10 +17,10 @@ import scala.annotation.unused
   * ==Usage==
   * {{{
   * // Define your types with JsonCodec
-  * enum MyState extends MState derives JsonCodec:
+  * enum MyState derives Finite, JsonCodec:
   *   case Idle, Running, Done
   *
-  * enum MyEvent extends MEvent derives JsonCodec:
+  * enum MyEvent derives Finite, JsonCodec:
   *   case Started(id: String)
   *   case Completed
   *
@@ -36,33 +36,19 @@ import scala.annotation.unused
   * @tparam E
   *   Event type with a JsonCodec instance
   */
-class PostgresEventStore[S <: MState: JsonCodec, E <: MEvent: JsonCodec](
+class PostgresEventStore[S: JsonCodec, E: JsonCodec](
     transactor: Transactor
 ) extends EventStore[String, S, E]:
 
   @unused private val events    = Table[EventRow]
   @unused private val snapshots = Table[SnapshotRow]
 
-  // Internal wrapper for events to distinguish Timeout from regular events in JSON storage
-  // - Regular events: {"event": <encoded event>}
-  // - Timeout: {"timeout": true}
-  private case class EventWrapper(event: Option[E], timeout: Option[Boolean])
-  private object EventWrapper:
-    given JsonEncoder[EventWrapper] = JsonEncoder.derived
-    given JsonDecoder[EventWrapper] = JsonDecoder.derived
+  // Events are now encoded directly - no wrapper needed since user-defined timeout events
+  // are just regular events in the E enum
+  private def encodeEvent(event: E): String = event.toJson
 
-  private def encodeEvent(event: Timed[E]): String = event match
-    case Timed.TimeoutEvent =>
-      EventWrapper(None, Some(true)).toJson
-    case ue: Timed.UserEvent[?] =>
-      EventWrapper(Some(ue.event.asInstanceOf[E]), None).toJson
-
-  private def decodeEvent(json: String): Either[Throwable, Timed[E]] =
-    json.fromJson[EventWrapper] match
-      case Right(EventWrapper(_, Some(true))) => Right(Timed.TimeoutEvent)
-      case Right(EventWrapper(Some(e), _))    => Right(Timed.UserEvent(e))
-      case Right(_)                           => Left(new RuntimeException(s"Invalid event wrapper: $json"))
-      case Left(err)                          => Left(new RuntimeException(err))
+  private def decodeEvent(json: String): Either[Throwable, E] =
+    json.fromJson[E].left.map(err => new RuntimeException(err))
 
   private def encodeState(state: S): String = state.toJson
 
@@ -71,7 +57,7 @@ class PostgresEventStore[S <: MState: JsonCodec, E <: MEvent: JsonCodec](
 
   override def append(
       instanceId: String,
-      event: Timed[E],
+      event: E,
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
     val eventJson = encodeEvent(event)
@@ -114,7 +100,7 @@ class PostgresEventStore[S <: MState: JsonCodec, E <: MEvent: JsonCodec](
       }
   end append
 
-  override def loadEvents(instanceId: String): ZStream[Any, MechanoidError, StoredEvent[String, Timed[E]]] =
+  override def loadEvents(instanceId: String): ZStream[Any, MechanoidError, StoredEvent[String, E]] =
     ZStream.fromIterableZIO {
       transactor
         .run {
@@ -134,7 +120,7 @@ class PostgresEventStore[S <: MState: JsonCodec, E <: MEvent: JsonCodec](
   override def loadEventsFrom(
       instanceId: String,
       fromSequenceNr: Long,
-  ): ZStream[Any, MechanoidError, StoredEvent[String, Timed[E]]] =
+  ): ZStream[Any, MechanoidError, StoredEvent[String, E]] =
     ZStream.fromIterableZIO {
       transactor
         .run {
@@ -222,7 +208,7 @@ class PostgresEventStore[S <: MState: JsonCodec, E <: MEvent: JsonCodec](
       .map(_.getOrElse(0L))
       .mapError(PersistenceError(_))
 
-  private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, Timed[E]]] =
+  private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, E]] =
     ZIO
       .fromEither(decodeEvent(row.eventData))
       .mapError(e => new RuntimeException(s"Failed to decode event: ${e.getMessage}", e))
@@ -243,16 +229,15 @@ object PostgresEventStore:
     * `derives JsonCodec`:
     *
     * {{{
-    * enum MyState extends MState derives JsonCodec:
+    * enum MyState derives Finite derives JsonCodec:
     *   case Idle, Running
     *
-    * enum MyEvent extends MEvent derives JsonCodec:
+    * enum MyEvent derives Finite derives JsonCodec:
     *   case Start, Stop
     *
     * val storeLayer = PostgresEventStore.layer[MyState, MyEvent]
     * }}}
     */
-  def layer[S <: MState: Tag: JsonCodec, E <: MEvent: Tag: JsonCodec]
-      : ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
+  def layer[S: Tag: JsonCodec, E: Tag: JsonCodec]: ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
     ZLayer.fromFunction((xa: Transactor) => new PostgresEventStore[S, E](xa))
 end PostgresEventStore

@@ -1,6 +1,5 @@
 package mechanoid.typelevel
 
-import mechanoid.core.*
 import scala.annotation.implicitNotFound
 
 /** Type class witnessing that a transition from state S via event E is valid.
@@ -17,25 +16,21 @@ import scala.annotation.implicitNotFound
   "No valid transition defined from state ${S} via event ${E}. " +
     "Define a given ValidTransition[${S}, ${E}] to allow this transition."
 )
-trait ValidTransition[S <: MState, E <: MEvent]:
+trait ValidTransition[S, E]:
   /** The target state type after the transition. */
-  type Target <: MState
+  type Target
 
 object ValidTransition:
   /** Create a ValidTransition instance with a specified target state. */
-  def apply[S <: MState, E <: MEvent, T <: MState]: ValidTransition[S, E] { type Target = T } =
+  def apply[S, E, T]: ValidTransition[S, E] { type Target = T } =
     new ValidTransition[S, E]:
       type Target = T
 
   /** Auxiliary type for specifying target state. */
-  type Aux[S <: MState, E <: MEvent, T <: MState] = ValidTransition[S, E] { type Target = T }
+  type Aux[S, E, T] = ValidTransition[S, E] { type Target = T }
 
   /** Create a transition that allows going to any state. */
-  def any[S <: MState, E <: MEvent]: ValidTransition[S, E] =
+  def any[S, E]: ValidTransition[S, E] =
     new ValidTransition[S, E]:
-      type Target = MState
-
-  /** Derive a ValidTransition for timeout events from any state. */
-  inline given timeoutFromAny[S <: MState]: ValidTransition[S, Timeout.type] =
-    ValidTransition.any[S, Timeout.type]
+      type Target = Any
 end ValidTransition

@@ -4,7 +4,7 @@ import zio.*
 import zio.test.*
 import zio.json.*
 import saferis.Transactor
-import mechanoid.core.Timed
+import mechanoid.machine.*
 import mechanoid.persistence.*
 import mechanoid.persistence.postgres.PostgresEventStore
 import mechanoid.runtime.FSMRuntime
@@ -23,26 +23,23 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   // Test Domain
   // ============================================
 
-  enum OrderState extends MState derives JsonCodec:
+  enum OrderState derives JsonCodec:
     case Pending, Paid, Shipped, Delivered
 
-  enum OrderEvent extends MEvent derives JsonCodec:
+  enum OrderEvent derives JsonCodec:
     case Pay, Ship, Deliver
 
   import OrderState.*
   import OrderEvent.*
 
-  val orderDefinition = validated[OrderState, OrderEvent] {
-    _.when[Pending.type]
-      .on[Pay.type]
-      .goto(Paid)
-      .when[Paid.type]
-      .on[Ship.type]
-      .goto(Shipped)
-      .when[Shipped.type]
-      .on[Deliver.type]
-      .goto(Delivered)
-  }
+  val orderMachine = build[OrderState, OrderEvent](
+    Pending via Pay to Paid,
+    Paid via Ship to Shipped,
+    Shipped via Deliver to Delivered,
+  )
+
+  // Machine is used directly for FSMRuntime
+  val orderDefinition = orderMachine
 
   /** Generate a unique instance ID for test isolation. */
   def uniqueId(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
@@ -102,7 +99,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
         result._1 == Paid,
         result._2 == 1L,
         events.length == 1,
-        events.head.event == Timed.UserEvent(Pay),
+        events.head.event == Pay,
       )
       end for
     },
@@ -550,7 +547,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           result  <- fsm.send(Pay)
         yield assertTrue(
           !running,
-          result == TransitionResult.Stop(Some("FSM stopped")),
+          result.result == TransitionResult.Stop(Some("FSM stopped")),
         )
       }
     },
@@ -670,8 +667,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           case Left(e: InvalidTransitionError) =>
             assertTrue(
               e.currentState == Pending,
-              // Event is wrapped in Timed.UserEvent
-              e.event == Timed.UserEvent(Ship),
+              e.event == Ship,
             )
           case _ => assertTrue(false)
       }
@@ -688,8 +684,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           case Left(e: InvalidTransitionError) =>
             assertTrue(
               e.currentState == Paid,
-              // Event is wrapped in Timed.UserEvent
-              e.event == Timed.UserEvent(Deliver),
+              e.event == Deliver,
             )
           case _ => assertTrue(false)
       }
@@ -729,11 +724,12 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
             _   <- fsm.send(Ship)
           yield ()
         }
-        // Try to recover with a DIFFERENT definition that doesn't have Ship transition
-        // We create a definition that only has Pending -> Paid
-        restrictedDefinition = validated[OrderState, OrderEvent] {
-          _.when[Pending.type].on[Pay.type].goto(Paid)
-        }
+        // Try to recover with a DIFFERENT machine that doesn't have Ship transition
+        // We create a machine that only has Pending -> Paid
+        restrictedMachine = build[OrderState, OrderEvent](
+          Pending via Pay to Paid
+        )
+        restrictedDefinition = restrictedMachine
         // No Ship transition!
         // This should fail because Ship event exists but no transition is defined
         result <- ZIO.scoped {
@@ -814,9 +810,9 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
       for
         store <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
         // Manually append to store to simulate concurrent access
-        _ <- store.append(id, Timed.UserEvent(Pay), 0)
+        _ <- store.append(id, Pay, 0)
         // Try to append with same expected sequence (conflict)
-        result <- store.append(id, Timed.UserEvent(Ship), 0).either
+        result <- store.append(id, Ship, 0).either
       yield result match
         case Left(e: SequenceConflictError) =>
           // PostgreSQL store detects conflict

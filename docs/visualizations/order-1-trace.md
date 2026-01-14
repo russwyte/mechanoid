@@ -16,36 +16,36 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=1<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>amount=150.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=1<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=1<br/>petName=Whiskers<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=6af53de1-d7c1-4785-adb6-5a0e32c203c3
+    Note right of CQ: orderId=1<br/>petName=Hoppy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=148df28b-dfc2-4908-8463-32bc0ea6534d
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>notificationType=order_confirmed<br/>messageId=bb8e9bf3-e064-4c36-a942-6589e2d7a4d4
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=order_confirmed<br/>messageId=882de6b8-a8e9-4406-be82-f51b151d06fc
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    FSM->>FSM: RequestShipping
+    FSM->>FSM: RequestShipping(1,123 Main St, Springfield)
     Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
+    FSM->>FSM: ShipmentDispatched(...)
     Note over FSM: Shipped
+    FSM->>CQ: enqueue(NotificationCallback)
+    Note right of CQ: messageId=882de6b8-a8e9-4406-be82-f51b151d06fc<br/>delivered=true<br/>error=None
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=6af53de1-d7c1-4785-adb6-5a0e32c203c3<br/>trackingNumber=TRACK-799082<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=3 business days<br/>success=true<br/>error=None
+    Note right of CQ: correlationId=148df28b-dfc2-4908-8463-32bc0ea6534d<br/>trackingNumber=TRACK-75310<br/>carrier=AnimalCare Logistics<br/>estimatedDelivery=2 business days<br/>success=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>notificationType=shipped<br/>messageId=bb8e9bf3-e064-4c36-a942-6589e2d7a4d4-shipped
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=bb8e9bf3-e064-4c36-a942-6589e2d7a4d4-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=shipped<br/>messageId=882de6b8-a8e9-4406-be82-f51b151d06fc-shipped
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Shipped
@@ -57,13 +57,13 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-1
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
-    FSM->>FSM: RequestShipping
+    FSM->>FSM: RequestShipping(1,123 Main St, Springfield)
     Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
+    FSM->>FSM: ShipmentDispatched(...)
     Note over FSM: Shipped
     Note over FSM: Current: Shipped
 ```

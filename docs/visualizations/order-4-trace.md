@@ -16,13 +16,13 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=4<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>amount=25.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=4<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ❌ Failed
-    FSM->>FSM: PaymentFailed
+    FSM->>FSM: PaymentFailed(4,CardDeclined(Generic decline))
     Note over FSM: Cancelled
     Note over FSM: Current: Cancelled
 ```
@@ -33,9 +33,9 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-4
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentFailed
+    FSM->>FSM: PaymentFailed(4,CardDeclined(Generic decline))
     Note over FSM: Cancelled
     Note over FSM: Current: Cancelled
 ```

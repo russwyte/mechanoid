@@ -1,7 +1,7 @@
 package mechanoid.visualization
 
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
+import mechanoid.machine.Machine
 import scala.concurrent.duration.Duration
 
 /** Generates GraphViz DOT syntax for FSM visualization. */
@@ -32,8 +32,8 @@ object GraphVizVisualizer:
     * }
     * ```
     */
-  def digraph[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def digraph[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       name: String = "FSM",
       initialState: Option[S] = None,
       config: Config = Config.default,
@@ -111,8 +111,8 @@ object GraphVizVisualizer:
 
   /** Generate a digraph with execution trace highlighting.
     */
-  def digraphWithTrace[S <: MState, E <: MEvent, Cmd](
-      fsm: FSMDefinition[S, E, Cmd],
+  def digraphWithTrace[S, E, Cmd](
+      fsm: Machine[S, E, Cmd],
       trace: ExecutionTrace[S, E],
       name: String = "FSM",
       config: Config = Config.default,
@@ -207,10 +207,10 @@ object GraphVizVisualizer:
     *
     * This creates a horizontal timeline with states and transitions.
     */
-  def timeline[S <: MState, E <: MEvent](
+  def timeline[S, E](
       trace: ExecutionTrace[S, E],
-      stateEnum: SealedEnum[S],
-      eventEnum: SealedEnum[E],
+      stateEnum: Finite[S],
+      @scala.annotation.nowarn("msg=unused") eventEnum: Finite[E],
       name: String = "Timeline",
   ): String =
     val sb = StringBuilder()
@@ -232,14 +232,14 @@ object GraphVizVisualizer:
 
     sb.append("\n")
 
-    // Create edges with event labels
+    // Create edges with event labels - show full event representation for parameterized types
     trace.steps.zipWithIndex.foreach { case (step, idx) =>
-      val fromNode  = s"s$idx"
-      val toNode    = s"s${idx + 1}"
-      val eventName =
+      val fromNode   = s"s$idx"
+      val toNode     = s"s${idx + 1}"
+      val eventLabel =
         if step.isTimeout then "Timeout"
-        else eventEnum.nameOf(step.event)
-      sb.append(s"    $fromNode -> $toNode [label=\"$eventName\"];\n")
+        else formatEventLabel(step.event)
+      sb.append(s"    $fromNode -> $toNode [label=\"$eventLabel\"];\n")
     }
 
     sb.append("}\n")
@@ -251,4 +251,25 @@ object GraphVizVisualizer:
     else if d.toSeconds < 60 then s"${d.toSeconds}s"
     else if d.toMinutes < 60 then s"${d.toMinutes}m"
     else s"${d.toHours}h"
+
+  /** Format an event for DOT label display.
+    *
+    * Shows full representation for parameterized events, escaping special chars. Truncates very long values for
+    * readability.
+    */
+  private def formatEventLabel[E](event: E): String =
+    val full    = event.toString
+    val escaped = full
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+      .replace("\n", "\\n")
+
+    // Truncate long parameter values for readability
+    if escaped.length > 50 then
+      val parenIdx = escaped.indexOf('(')
+      if parenIdx > 0 then s"${escaped.substring(0, parenIdx)}(...)"
+      else escaped.take(47) + "..."
+    else escaped
+  end formatEventLabel
+
 end GraphVizVisualizer

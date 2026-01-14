@@ -12,8 +12,10 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [FSM State Container](#fsm-state-container)
 - [Defining FSMs](#defining-fsms)
   - [Basic Definition](#basic-definition)
+  - [The buildAll Block Syntax](#the-buildall-block-syntax)
   - [Entry and Exit Actions](#entry-and-exit-actions)
   - [Timeouts](#timeouts)
+  - [Machine Composition](#machine-composition)
 - [Running FSMs](#running-fsms)
   - [Simple Runtime](#simple-runtime)
   - [Persistent Runtime](#persistent-runtime)
@@ -36,13 +38,12 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [Lock Configuration](#lock-configuration)
   - [Node Failure Resilience](#node-failure-resilience)
   - [Combining Features](#combining-features)
-- [Command Queue](#command-queue)
-  - [The Side Effect Problem](#the-side-effect-problem)
+- [Command Pattern](#command-pattern)
+  - [Declarative Commands with emitting](#declarative-commands-with-emitting)
   - [Transactional Outbox Pattern](#transactional-outbox-pattern)
   - [CommandStore Interface](#commandstore-interface)
   - [CommandWorker](#commandworker)
   - [Retry Policies](#retry-policies)
-  - [Integration with FSM](#integration-with-fsm)
 - [Visualization](#visualization)
   - [Overview](#visualization-overview)
   - [MermaidVisualizer](#mermaidvisualizer)
@@ -62,6 +63,8 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 Mechanoid provides a declarative DSL for defining finite state machines with:
 
 - **Type-safe states and events** using Scala 3 enums
+- **Ergonomic infix syntax** - `State via Event to Target`
+- **Composable machines** - build reusable FSM fragments and combine them
 - **Effectful transitions** via ZIO
 - **Optional persistence** through event sourcing
 - **Durable timeouts** that survive node failures
@@ -71,28 +74,28 @@ Mechanoid provides a declarative DSL for defining finite state machines with:
 import mechanoid.*
 import zio.*
 
-// Define states and events
-enum OrderState extends MState:
+// Define states and events as plain enums
+enum OrderState:
   case Pending, Paid, Shipped, Delivered
 
-enum OrderEvent extends MEvent:
+enum OrderEvent:
   case Pay, Ship, Deliver
 
-// Build FSM definition with compile-time validation
-val orderFSM = build[OrderState, OrderEvent] {
-  _.when(Pending).on(Pay).goto(Paid)
-    .when(Paid).on(Ship).goto(Shipped)
-    .when(Shipped).on(Deliver).goto(Delivered)
-}
+// Build FSM with clean infix syntax
+val orderMachine = build(
+  Pending via Pay to Paid,
+  Paid via Ship to Shipped,
+  Shipped via Deliver to Delivered,
+)
 
 // Run the FSM
 val program = ZIO.scoped {
   for
-    runtime <- orderFSM.build(Pending)
-    _   <- runtime.send(Pay)
-    _   <- runtime.send(Ship)
-    s   <- runtime.currentState
-  yield s // Shipped
+    fsm   <- orderMachine.start(Pending)
+    _     <- fsm.send(Pay)
+    _     <- fsm.send(Ship)
+    state <- fsm.currentState
+  yield state // Shipped
 }
 ```
 
@@ -102,30 +105,30 @@ val program = ZIO.scoped {
 
 ### States
 
-States represent the possible conditions of your FSM. Define them by extending `MState`:
+States represent the possible conditions of your FSM. Define them as plain Scala 3 enums:
 
 ```scala
-enum TrafficLight extends MState:
+enum TrafficLight:
   case Red, Yellow, Green
 ```
 
 States can also carry data (rich states):
 
 ```scala
-enum OrderState extends MState:
+enum OrderState:
   case Pending
   case Paid(transactionId: String)
   case Failed(reason: String)
 ```
 
-When defining transitions, the state's "shape" (which case it is) is used for matching, not the exact value. This means `.when(Failed(""))` will match ANY `Failed(_)` state.
+When defining transitions, the state's "shape" (which case it is) is used for matching, not the exact value. This means a transition from `Failed` will match ANY `Failed(_)` state.
 
 #### Hierarchical States
 
-For complex domains, you can organize related states using nested sealed traits:
+For complex domains, organize related states using sealed traits:
 
 ```scala
-sealed trait OrderState extends MState
+sealed trait OrderState
 
 case object Created extends OrderState
 
@@ -139,55 +142,48 @@ case object Completed extends OrderState
 
 Benefits:
 - **Code organization** - Related states are grouped together
-- **Type safety** - Can pattern match on parent traits (e.g., `case _: Processing =>`)
-- **IDE navigation** - Jump to parent trait to see all related states
-
-**Important:** Transitions use leaf states only. Parent traits (`Processing`) are for organization - you cannot use them in `.when()`. The macro automatically discovers all leaf cases recursively.
+- **Group transitions** - Use `all[Processing]` to define transitions for all processing states at once
+- **Type safety** - Can pattern match on parent traits
 
 #### Multi-State Transitions
 
-For transitions that apply to multiple states, use `whenAny` or `whenStates`:
+Use `all[T]` to define transitions that apply to all subtypes of a sealed type:
 
 ```scala
-// Apply to all leaf states under a parent type
-.whenAny[Processing].on(Cancel).goto(Cancelled)
-
-// Apply to specific states under a parent type
-.whenAny[Processing](ValidatingPayment, ChargingCard).on(Pause).goto(Paused)
-
-// Apply to specific states (not based on hierarchy)
-.whenStates(Created, Completed).on(Archive).goto(Archived)
+// All Processing states can be cancelled
+all[Processing] via Cancel to Cancelled
 ```
 
-Use `whenStates` when the states don't share a common parent but should have the same transition.
+Use `anyOf(...)` for specific states that don't share a common parent:
+
+```scala
+// These specific states can be archived
+anyOf(Created, Completed) via Archive to Archived
+```
 
 ### Events
 
-Events trigger transitions between states. Define them by extending `MEvent`:
+Events trigger transitions between states. Define them as plain enums:
 
 ```scala
-enum TrafficEvent extends MEvent:
+enum TrafficEvent:
   case Timer, EmergencyOverride
 ```
-
-**Timeouts:**
-
-Timeout events are handled internally by the runtime. When a state's timeout expires, a timeout transition is automatically triggered if one is defined. You don't need to define or handle timeout events explicitly - just use `.onTimeout` in your FSM definition.
 
 **Events with data:**
 
 ```scala
-enum PaymentEvent extends MEvent:
+enum PaymentEvent:
   case Pay(amount: BigDecimal)
   case Refund(orderId: String, amount: BigDecimal)
 ```
 
 **Event hierarchies:**
 
-Like states, events can be organized into hierarchies using sealed traits:
+Like states, events can be organized hierarchically:
 
 ```scala
-sealed trait UserEvent extends MEvent
+sealed trait UserEvent
 sealed trait InputEvent extends UserEvent
 case object Click extends InputEvent
 case object Tap extends InputEvent
@@ -196,49 +192,33 @@ case object Swipe extends InputEvent
 
 #### Multi-Event Transitions
 
-For transitions that are triggered by multiple events, use `onAny` or `onEvents`:
+Use `event[T]` to match events by type (useful for events with data):
 
 ```scala
-// Apply to all leaf events under a parent type
-.when(Idle).onAny[InputEvent].goto(Processing)
-
-// Apply to specific events under a parent type
-.when(Idle).onAny[InputEvent](Click, Tap).goto(Processing)
-
-// Apply to specific events (not based on hierarchy)
-.when(Active).onEvents(Pause, Stop).goto(Paused)
+// Match any Pay event, regardless of amount
+Pending via event[Pay] to Processing
 ```
 
-Use `onEvents` when the events don't share a common parent but should trigger the same transition.
-
-**Combining multi-state and multi-event:**
-
-You can combine `whenAny`/`whenStates` with `onAny`/`onEvents` to create transitions for the cartesian product of states and events:
+Use `anyOfEvents(...)` for specific events:
 
 ```scala
-// All Working states respond to Cancel OR Abort
-.whenAny[Working].onEvents(Cancel, Abort).goto(Stopped)
-
-// All Processing states respond to any UserInput
-.whenAny[Processing].onAny[UserInput].goto(Idle)
+// Multiple events trigger same transition
+Idle via anyOfEvents(Click, Tap, Swipe) to Active
 ```
 
 ### Transitions
 
-A transition defines what happens when an event is received in a specific state:
+Transitions define what happens when an event is received in a specific state. Use the clean infix syntax:
 
 ```scala
 // Simple transition: Pending + Pay -> Paid
-.when(Pending).on(Pay).goto(Paid)
+Pending via Pay to Paid
 
 // Stay in current state
-.when(Pending).on(Heartbeat).stay
+Pending via Heartbeat to stay
 
 // Stop the FSM
-.when(Failed).on(Shutdown).stop
-
-// Multiple events trigger the same transition
-.when(Active).onEvents(Pause, Suspend).goto(Paused)
+Failed via Shutdown to stop
 ```
 
 **TransitionResult** represents the outcome:
@@ -271,24 +251,25 @@ fsm.state.map { s =>
 
 ### Basic Definition
 
-Use the `build` macro to create FSM definitions with compile-time validation:
+Use the `build` function to create FSM definitions with clean infix syntax:
 
 ```scala
 import mechanoid.*
 
-val definition = build[MyState, MyEvent] {
-  _.when(State1).on(Event1).goto(State2)
-    .when(State1).on(Event2).stay
-    .when(State2).on(Event3).goto(State3)
-}
+val machine = build(
+  State1 via Event1 to State2,
+  State1 via Event2 to stay,
+  State2 via Event3 to State3,
+)
 ```
 
-All FSM definitions share the same type: `FSMDefinition[S, E, Cmd]`. The third type parameter `Cmd` represents commands that can be enqueued for side effect execution:
+Type parameters are inferred from the transitions. If you need to specify them explicitly:
 
-- `build[S, E] { ... }` - FSM without commands, with compile-time validation (recommended)
-- `build[S, E, Cmd] { ... }` - FSM with commands, with compile-time validation (recommended)
-- `FSMDefinition[S, E]` - Direct construction without validation
-- `FSMDefinition.withCommands[S, E, Cmd]` - Direct construction with commands
+```scala
+val machine = build[MyState, MyEvent](
+  State1 via Event1 to State2,
+)
+```
 
 **Compile-time Validation:**
 
@@ -296,59 +277,229 @@ The `build` macro detects duplicate transitions at compile time:
 
 ```scala
 // This will fail at compile time:
-val bad = build[MyState, MyEvent] {
-  _.when(State1).on(Event1).goto(State2)
-    .when(State1).on(Event1).goto(State3)  // Error: Duplicate transition
-}
+val bad = build(
+  State1 via Event1 to State2,
+  State1 via Event1 to State3,  // Error: Duplicate transition
+)
 ```
 
-To intentionally override a transition (e.g., after `whenAny`), use `.override`:
+To intentionally override a transition (e.g., after using `all[T]`), use `@@ Aspect.overriding`:
 
 ```scala
-val definition = build[MyState, MyEvent] {
-  _.whenAny[Parent].on(Cancel).goto(Draft)
-    .when(SpecificState).on(Cancel).override.goto(Special)  // OK - intentional override
-}
+val machine = build(
+  all[Processing] via Cancel to Cancelled,
+  (SpecialState via Cancel to Special) @@ Aspect.overriding,  // Intentional override
+)
 ```
 
-The library uses unified error types—all errors are represented as `MechanoidError`.
+When overrides are detected, the compiler emits informational messages showing which transitions are being overridden.
+
+### The buildAll Block Syntax
+
+For more complex definitions with local helper values, use `buildAll`:
+
+```scala
+val machine = buildAll[OrderState, OrderEvent]:
+  // Local helper vals at the top
+  val buildPaymentCommand: (OrderEvent, OrderState) => List[Command] = { (event, _) =>
+    event match
+      case e: InitiatePayment => List(ProcessPayment(e.orderId, e.amount))
+      case _ => Nil
+  }
+
+  // Transitions use the helpers
+  Created via event[InitiatePayment] to PaymentProcessing emitting buildPaymentCommand
+  PaymentProcessing via event[PaymentSucceeded] to Paid
+  PaymentProcessing via event[PaymentFailed] to Cancelled
+```
+
+The `buildAll` block allows mixing val definitions with transition expressions. The vals are available for use in emitting functions and other parts of the definition.
+
+**Important:** When including val references to `Machine` or `TransitionSpec` in a `buildAll` block, use the `include()` wrapper to avoid compiler warnings:
+
+```scala
+val baseMachine = build(...)
+
+val fullMachine = buildAll[OrderState, OrderEvent]:
+  include(baseMachine)  // Use include() for val references
+  AdditionalState via Event to Target
+```
 
 ### Entry and Exit Actions
 
-Define actions that run when entering or leaving a state:
+Define actions that run when entering or leaving a state using the `withEntry` and `withExit` methods on `Machine`:
 
 ```scala
-val definition = build[State, Event] {
-  _.when(Active).on(Deactivate).goto(Inactive)
-    .onState(Active)
-      .onEntry(ZIO.logInfo("Entered Active state"))
-      .onExit(ZIO.logInfo("Leaving Active state"))
-      .done
-}
-```
-
-Action names are automatically extracted at compile time for visualization purposes. If you want custom descriptions, use `onEntryWithDescription` or `onExitWithDescription`:
-
-```scala
-.onState(Active)
-  .onEntryWithDescription(myComplexAction, "Initialize active state resources")
-  .done
+val machine = build(
+  Idle via Start to Running,
+  Running via Stop to Idle,
+).withEntry(Running)(ZIO.logInfo("Entered Running state"))
+ .withExit(Running)(ZIO.logInfo("Exiting Running state"))
 ```
 
 ### Timeouts
 
-Schedule automatic timeout events:
+Mechanoid provides a flexible timeout strategy where you define your own timeout events. This gives you complete control over timeout handling and enables powerful patterns.
+
+#### Basic Timeout Usage
 
 ```scala
 import scala.concurrent.duration.*
 
-val definition = build[State, Event] {
-  _.when(WaitingForPayment).onTimeout.goto(Cancelled)
-    .withTimeout(WaitingForPayment, 30.minutes)
-}
+enum OrderEvent:
+  case Pay, PaymentTimeout  // User-defined timeout event
+
+// Create a timed target - when entering this state, a timeout is scheduled
+val timedWaiting = WaitingForPayment @@ timeout(30.minutes, PaymentTimeout)
+
+val machine = build(
+  Created via Pay to timedWaiting,           // Enter timed state
+  WaitingForPayment via PaymentTimeout to Cancelled,  // Handle timeout
+  WaitingForPayment via Paid to Confirmed,   // Or complete before timeout
+)
 ```
 
-When the FSM enters `WaitingForPayment`, a timer starts. If no other event arrives within 30 minutes, a `Timeout` event is automatically sent.
+The `@@ timeout(duration, event)` syntax creates a `TimedTarget` that:
+1. Schedules a timeout when the FSM enters the state
+2. Fires the specified event when the timeout expires
+3. Cancels the timeout if another event is processed first
+
+#### Multiple Timeout Events
+
+A key feature is that **different states can use different timeout events**. This enables rich timeout handling:
+
+```scala
+enum OrderState:
+  case Created, PaymentPending, ShipmentPending, Delivered
+
+enum OrderEvent:
+  case Pay, Ship, Deliver
+  case PaymentTimeout     // Fired after 30 minutes in PaymentPending
+  case ShipmentTimeout    // Fired after 7 days in ShipmentPending
+
+val timedPayment = PaymentPending @@ timeout(30.minutes, PaymentTimeout)
+val timedShipment = ShipmentPending @@ timeout(7.days, ShipmentTimeout)
+
+val machine = build(
+  Created via Pay to timedPayment,
+  PaymentPending via PaymentTimeout to Cancelled,      // Cancel if payment times out
+  PaymentPending via Confirm to timedShipment,
+  ShipmentPending via ShipmentTimeout to Refunded,     // Refund if shipment times out
+  ShipmentPending via Ship to Delivered,
+)
+```
+
+#### Timeout Events with Data
+
+Since timeout events are regular events in your enum, they can carry data:
+
+```scala
+enum SessionEvent:
+  case Action(userId: String)
+  case IdleTimeout(lastActivity: Instant)  // Carries the last activity time
+  case AbsoluteTimeout(sessionStart: Instant)  // Carries session start time
+
+// Different timeouts with different data
+val idleTimedSession = Active @@ timeout(15.minutes, IdleTimeout(Instant.now()))
+val absoluteTimedSession = Active @@ timeout(8.hours, AbsoluteTimeout(Instant.now()))
+```
+
+#### Different Outcomes for Same State
+
+You can have multiple timeout types affecting the same state with different outcomes:
+
+```scala
+enum AuctionState:
+  case Bidding, Extended, Sold, Expired
+
+enum AuctionEvent:
+  case Bid(amount: BigDecimal)
+  case ExtensionTimeout   // Short timeout - extends auction on late bids
+  case FinalTimeout       // Long timeout - auction ends
+
+// Start with extension timeout (5 minutes)
+val biddingWithExtension = Bidding @@ timeout(5.minutes, ExtensionTimeout)
+
+// After extension, use final timeout (1 minute)
+val extendedBidding = Extended @@ timeout(1.minute, FinalTimeout)
+
+val machine = build(
+  Pending via StartAuction to biddingWithExtension,
+
+  // Late bid extends the auction
+  Bidding via event[Bid] to biddingWithExtension,  // Reset 5-minute timer
+  Bidding via ExtensionTimeout to extendedBidding, // Move to final phase
+
+  // Final phase
+  Extended via event[Bid] to extendedBidding,      // Reset 1-minute timer
+  Extended via FinalTimeout to Sold,               // Auction ends
+)
+```
+
+#### Why User-Defined Timeout Events?
+
+This design provides several advantages over a built-in `Timeout` singleton:
+
+1. **Type safety** - Different timeouts are distinct types, preventing mix-ups
+2. **Rich handling** - Each timeout can trigger different transitions and commands
+3. **Data carrying** - Timeout events can include context (timestamps, reason codes)
+4. **Clear intent** - Reading `PaymentTimeout` is clearer than `Timeout`
+5. **Event sourcing** - All timeout events are persisted like regular events
+
+### Machine Composition
+
+Machines can be composed by including them in other `build` or `buildAll` calls:
+
+```scala
+// Reusable behaviors
+val cancelableBehaviors = build(
+  all[InReview] via CancelReview to Draft,
+  all[Approval] via Abandon to Cancelled,
+)
+
+// Compose with specific transitions
+val fullWorkflow = buildAll[DocumentState, DocumentEvent]:
+  include(cancelableBehaviors)  // Include all transitions from base machine
+
+  Draft via SubmitForReview to PendingReview
+  PendingReview via AssignReviewer to UnderReview
+```
+
+**Duplicate Detection:**
+
+Mechanoid detects duplicate transitions (same state + event combination) at different stages depending on what can be analyzed at compile time:
+
+| Scenario | Detection | When |
+|----------|-----------|------|
+| Inline specs (`A via E to B`) | **Compile time** | Macro can inspect AST |
+| Same val used twice (`build(t1, t1)`) | **Compile time** | Symbol tracking |
+| Machine composition (`build(baseMachine, ...)`) | **Runtime** | Macro cannot see inside opaque Machine values |
+
+**Why runtime for machines?** The `build` macro receives `baseMachine` as an opaque expression - it cannot inspect its contents. Runtime detection happens immediately at machine construction (not when events are sent), so you'll get a clear error at application startup:
+
+```scala
+// Compile-time detection for inline specs
+val machine = build(
+  A via E1 to B,
+  A via E1 to C,  // Compile ERROR: duplicate transition
+)
+
+// Compile-time detection for same val reference
+val t1 = A via E1 to B
+build(t1, t1)  // Compile ERROR: val 't1' used twice
+
+// Runtime detection for machine composition
+val extended = build(
+  baseMachine,
+  SpecificState via Cancel to Special,  // Throws IllegalArgumentException at construction
+)                                        // if baseMachine already has this transition
+
+// Use @@ Aspect.overriding to allow intentional overrides
+val extended = build(
+  baseMachine,
+  (SpecificState via Cancel to Special) @@ Aspect.overriding,  // OK: intentional override
+)
+```
 
 ---
 
@@ -357,18 +508,18 @@ When the FSM enters `WaitingForPayment`, a timer starts. If no other event arriv
 Mechanoid provides a unified `FSMRuntime[Id, S, E, Cmd]` interface for all FSM execution scenarios. The runtime has four type parameters:
 
 - `Id` - The instance identifier type (`Unit` for simple FSMs, or a custom type like `String` or `UUID` for persistent FSMs)
-- `S` - The state type (must extend `MState`)
-- `E` - The event type (must extend `MEvent`)
+- `S` - The state type (sealed enum or sealed trait)
+- `E` - The event type (sealed enum or sealed trait)
 - `Cmd` - The command type (`Nothing` for FSMs without commands)
 
 ### Simple Runtime
 
-For simple, single-instance FSMs without persistence, use `definition.build(initialState)`:
+For simple, single-instance FSMs without persistence, use `machine.start(initialState)`:
 
 ```scala
 val program = ZIO.scoped {
   for
-    fsm <- definition.build(initialState)  // Returns FSMRuntime[Unit, S, E, Cmd]
+    fsm <- machine.start(initialState)  // Returns FSMRuntime[Unit, S, E, Cmd]
     // Use the FSM...
   yield result
 }
@@ -385,7 +536,7 @@ import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime(orderId, definition, initialState)  // Returns FSMRuntime[String, S, E, Cmd]
+    fsm <- FSMRuntime(orderId, machine, initialState)  // Returns FSMRuntime[String, S, E, Cmd]
     // Use the FSM...
   yield result
 }.provide(eventStoreLayer)
@@ -397,12 +548,16 @@ The persistent runtime requires an `EventStore` in the environment and uses the 
 
 ```scala
 for
-  result <- fsm.send(MyEvent)
-yield result match
+  outcome <- fsm.send(MyEvent)
+yield outcome.result match
   case TransitionResult.Goto(newState) => s"Transitioned to $newState"
   case TransitionResult.Stay           => "Stayed in current state"
   case TransitionResult.Stop(reason)   => s"Stopped: $reason"
 ```
+
+The `TransitionOutcome` also includes any commands generated:
+- `outcome.preCommands` - Commands generated before state change
+- `outcome.postCommands` - Commands generated after state change
 
 Possible errors:
 - `InvalidTransitionError` - No transition defined for state/event
@@ -424,7 +579,7 @@ import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime(orderId, definition, Pending)
+    fsm <- FSMRuntime(orderId, machine, Pending)
     _   <- fsm.send(Pay)    // Event persisted
     _   <- fsm.send(Ship)   // Event persisted
   yield ()
@@ -437,22 +592,14 @@ val program = ZIO.scoped {
 Implement `EventStore[Id, S, E]` for your storage backend:
 
 ```scala
-trait EventStore[Id, S <: MState, E <: MEvent]:
-  // Core method - events are wrapped in Timed[E] internally
-  def append(instanceId: Id, event: Timed[E], expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
-
-  // Convenience methods (built-in, no need to override)
-  def appendEvent(instanceId: Id, event: E, expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
-  def appendTimeout(instanceId: Id, expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
-
-  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]]
-  def loadEventsFrom(instanceId: Id, fromSeqNr: Long): ZStream[Any, MechanoidError, StoredEvent[Id, Timed[E]]]
+trait EventStore[Id, S, E]:
+  def append(instanceId: Id, event: E, expectedSeqNr: Long): ZIO[Any, MechanoidError, Long]
+  def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, E]]
+  def loadEventsFrom(instanceId: Id, fromSeqNr: Long): ZStream[Any, MechanoidError, StoredEvent[Id, E]]
   def loadSnapshot(instanceId: Id): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]]
   def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, MechanoidError, Unit]
   def highestSequenceNr(instanceId: Id): ZIO[Any, MechanoidError, Long]
 ```
-
-**Note**: `Timed[E]` is an internal wrapper that distinguishes user events from timeout events. You only need to handle this in your `append` implementation - serialize both types appropriately.
 
 **Critical**: `append` must implement optimistic locking - atomically check that `expectedSeqNr` matches the current highest sequence number, then increment. This prevents lost updates in concurrent scenarios.
 
@@ -527,7 +674,7 @@ import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withDurableTimeouts(orderId, definition, Pending)
+    fsm <- FSMRuntime.withDurableTimeouts(orderId, machine, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout is now persisted - survives node restart
   yield ()
@@ -555,7 +702,7 @@ val sweeper = ZIO.scoped {
 **Flow:**
 1. Query for expired, unclaimed timeouts
 2. Atomically claim each timeout (prevents duplicates)
-3. Fire the timeout (append `Timeout` event to EventStore)
+3. Fire the timeout (send the user-defined timeout event)
 4. Mark complete (removes from TimeoutStore)
 
 ### Sweeper Configuration
@@ -639,7 +786,7 @@ import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
+    fsm <- FSMRuntime.withLocking(orderId, machine, Pending)
     _   <- fsm.send(Pay)  // Lock acquired automatically before processing
   yield ()
 }.provide(eventStoreLayer, lockLayer)
@@ -714,7 +861,7 @@ val program = ZIO.scoped {
   for
     fsm <- FSMRuntime.withLockingAndTimeouts(
       orderId,
-      definition,
+      machine,
       Pending,
       LockConfig.default
     )
@@ -732,29 +879,53 @@ This provides:
 
 ---
 
-## Command Queue
+## Command Pattern
 
-### The Side Effect Problem
+### Declarative Commands with emitting
 
-When using persistence, FSM state can be recovered by replaying events. However, **side effects** present a challenge.
+The recommended way to generate side-effect commands is using the `emitting` DSL on transitions:
 
-Mechanoid's FSM transitions are statically resolvable—all target states are known at compile time. Side effects should be handled through:
+```scala
+enum OrderCommand:
+  case ProcessPayment(orderId: String, amount: BigDecimal)
+  case SendNotification(message: String)
+  case NotifyWarehouse(orderId: String)
 
-| Action Type | Runs During Replay | Safe for Side Effects |
-|------------|-------------------|----------------------|
-| `.onState(s).onEntry(action)` | No | Yes |
-| `.onState(s).onExit(action)` | No | Yes |
-| **Command Queue** | No (commands persisted) | Yes |
+val machine = buildAll[OrderState, OrderEvent]:
+  // Helper function for payment commands
+  val buildPaymentCommand: (OrderEvent, OrderState) => List[OrderCommand] = { (event, _) =>
+    event match
+      case e: InitiatePayment => List(ProcessPayment(e.orderId, e.amount))
+      case _ => Nil
+  }
 
-**Solutions:**
+  // Emit commands when transitioning
+  Created via event[InitiatePayment] to PaymentProcessing emitting buildPaymentCommand
 
-1. **Entry/Exit actions**: Put side effects in lifecycle actions (they don't run during replay)
-2. **Idempotent operations**: Design side effects to be safely repeatable
-3. **Command Queue**: Persist commands for separate execution (recommended for complex workflows)
+  // Or inline
+  Paid via Ship to Shipped emitting { (event, state) =>
+    List(
+      SendNotification(s"Order shipped!"),
+      NotifyWarehouse(state.orderId)
+    )
+  }
+```
+
+**`emitting` vs `emittingBefore`:**
+
+- `emitting` - Commands generated AFTER state change. Receives `(event, targetState)`.
+- `emittingBefore` - Commands generated BEFORE state change. Receives `(event, sourceState)`.
+
+```scala
+// Log before transition, notify after
+Pending via Pay to Paid
+  emittingBefore { (event, state) => List(LogTransition(state)) }
+  emitting { (event, state) => List(SendNotification(state)) }
+```
 
 ### Transactional Outbox Pattern
 
-The command queue implements the **transactional outbox pattern**:
+The command pattern implements the **transactional outbox pattern**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -830,21 +1001,15 @@ CREATE INDEX idx_commands_instance ON commands (instance_id);
 The worker polls for pending commands and executes them:
 
 ```scala
-// Define your command type
-enum OrderCommand:
-  case ChargeCard(amount: BigDecimal, token: String)
-  case SendEmail(to: String, template: String)
-  case NotifyWarehouse(orderId: String)
-
 // Define executor
 val executor: OrderCommand => ZIO[Any, Throwable, CommandResult] = {
-  case ChargeCard(amount, token) =>
-    paymentService.charge(amount, token)
+  case ProcessPayment(orderId, amount) =>
+    paymentService.charge(orderId, amount)
       .as(CommandResult.Success)
       .catchAll(e => ZIO.succeed(CommandResult.Failure(e.getMessage, retryable = true)))
 
-  case SendEmail(to, template) =>
-    emailService.send(to, template)
+  case SendNotification(message) =>
+    notificationService.send(message)
       .as(CommandResult.Success)
 
   case NotifyWarehouse(orderId) =>
@@ -911,91 +1076,6 @@ RetryPolicy.exponentialBackoff(
 | 4 | 8s |
 | 5 | 16s (or maxDelay) |
 
-### Integration with FSM
-
-The `StateBuilder` provides declarative methods to enqueue commands when entering a state. This is the recommended approach:
-
-```scala
-// Define command type
-enum OrderCommand:
-  case ChargeCard(amount: BigDecimal, token: String)
-  case SendEmail(to: String, template: String)
-  case NotifyWarehouse(orderId: String)
-
-// Use build with commands type parameter
-val definition = build[OrderState, OrderEvent, OrderCommand] {
-  _.when(Pending).on(Pay).goto(Paid)
-    .when(Paid).on(Ship).goto(Shipped)
-    // Declaratively enqueue command when entering Paid state
-    .onState(Paid)
-      .enqueue(state => ChargeCard(state.total, state.paymentToken))
-      .done
-    // Enqueue multiple commands when entering Shipped state
-    .onState(Shipped)
-      .enqueue(_ => SendEmail(customerEmail, "shipped-notification"))
-      .enqueue(state => NotifyWarehouse(state.orderId))
-      .done
-}
-```
-
-The `enqueue` method:
-- Takes a function `S => Cmd` that produces a command from the current state
-- Automatically generates idempotency keys based on `instanceId-seqNr`
-- Commands are persisted atomically with the state transition
-
-For multiple commands, you can chain `.enqueue` calls or use `.enqueueAll`:
-
-```scala
-.onState(Shipped)
-  .enqueueAll { state =>
-    List(
-      SendEmail(state.email, "shipped"),
-      NotifyWarehouse(state.orderId)
-    )
-  }
-  .done
-```
-
-**Alternative: Manual enqueueing in entry actions**
-
-For advanced use cases where you need more control (e.g., conditional enqueueing, custom idempotency keys), you can use entry actions:
-
-```scala
-val definition = build[OrderState, OrderEvent, OrderCommand] {
-  _.when(Pending).on(Pay).goto(Paid)
-    .onState(Paid).onEntry {
-      for
-        order <- getOrderDetails
-        _ <- commandStore.enqueue(
-          instanceId = order.id,
-          command = ChargeCard(order.total, order.paymentToken),
-          idempotencyKey = s"charge-order-${order.id}"
-        )
-      yield ()
-    }.done
-}
-```
-
-**Complete flow:**
-
-1. FSM transitions from `Pending` to `Paid`
-2. Entry action enqueues `ChargeCard` command (persisted atomically)
-3. Event is persisted to EventStore
-4. If node crashes here, command is still in queue
-5. CommandWorker picks up command, executes it
-6. On success, command marked complete
-7. On failure, command retried according to policy
-
-**Monitoring:**
-
-```scala
-for
-  counts <- commandStore.countByStatus
-  _ <- ZIO.logInfo(s"Commands - Pending: ${counts.getOrElse(CommandStatus.Pending, 0)}")
-  _ <- ZIO.logInfo(s"Commands - Failed: ${counts.getOrElse(CommandStatus.Failed, 0)}")
-yield ()
-```
-
 ---
 
 ## Visualization
@@ -1030,16 +1110,16 @@ FSM definitions have extension methods for convenient visualization:
 import mechanoid.visualization.*
 
 // State diagram using extension method
-val diagram = orderDefinition.toMermaidStateDiagram(Some(OrderState.Created))
+val diagram = machine.toMermaidStateDiagram(Some(OrderState.Created))
 
 // Flowchart
-val flowchart = orderDefinition.toMermaidFlowchart
+val flowchart = machine.toMermaidFlowchart
 
 // With execution trace highlighting
-val highlighted = orderDefinition.toMermaidFlowchartWithTrace(trace)
+val highlighted = machine.toMermaidFlowchartWithTrace(trace)
 
 // GraphViz
-val dot = orderDefinition.toGraphViz(name = "OrderFSM", initialState = Some(OrderState.Created))
+val dot = machine.toGraphViz(name = "OrderFSM", initialState = Some(OrderState.Created))
 ```
 
 Execution traces also have extension methods:
@@ -1058,7 +1138,7 @@ import mechanoid.visualization.MermaidVisualizer
 
 // Basic state diagram using static method
 val diagram = MermaidVisualizer.stateDiagram(
-  fsm = orderDefinition,
+  fsm = machine,
   initialState = Some(OrderState.Created)
 )
 
@@ -1080,8 +1160,8 @@ val trace: ExecutionTrace[OrderState, OrderEvent] = fsm.getTrace
 
 val sequenceDiagram = MermaidVisualizer.sequenceDiagram(
   trace = trace,
-  stateEnum = OrderState.sealedEnum,
-  eventEnum = OrderEvent.sealedEnum
+  stateEnum = summon[Finite[OrderState]],
+  eventEnum = summon[Finite[OrderEvent]]
 )
 ```
 
@@ -1091,44 +1171,8 @@ Shows the FSM as a flowchart with highlighted execution path:
 
 ```scala
 val flowchart = MermaidVisualizer.flowchart(
-  fsm = orderDefinition,
+  fsm = machine,
   trace = Some(executionTrace)  // Optional: highlights visited states
-)
-```
-
-#### With Command Integration
-
-For FSMs that use the command queue, enhanced visualizations show which commands are triggered:
-
-```scala
-// Map state ordinals to command type names
-val stateCommands = Map(
-  OrderState.PaymentProcessing.ordinal -> List("ProcessPayment"),
-  OrderState.Paid.ordinal -> List("RequestShipping", "SendNotification"),
-  OrderState.Shipped.ordinal -> List("SendNotification")
-)
-
-// State diagram with command annotations
-val diagramWithCommands = MermaidVisualizer.stateDiagramWithCommands(
-  fsm = orderDefinition,
-  stateCommands = stateCommands,
-  initialState = Some(OrderState.Created)
-)
-
-// Flowchart with command lanes
-val flowchartWithCommands = MermaidVisualizer.flowchartWithCommands(
-  fsm = orderDefinition,
-  stateCommands = stateCommands,
-  trace = Some(executionTrace)
-)
-
-// Sequence diagram interleaving FSM and command execution
-val sequenceWithCommands = MermaidVisualizer.sequenceDiagramWithCommands(
-  trace = executionTrace,
-  stateEnum = OrderState.sealedEnum,
-  eventEnum = OrderEvent.sealedEnum,
-  commands = pendingCommands,
-  commandName = cmd => cmd.toString
 )
 ```
 
@@ -1141,7 +1185,7 @@ import mechanoid.visualization.GraphVizVisualizer
 
 // Basic digraph
 val dot = GraphVizVisualizer.digraph(
-  fsm = orderDefinition,
+  fsm = machine,
   initialState = Some(OrderState.Created)
 )
 
@@ -1155,7 +1199,7 @@ val dot = GraphVizVisualizer.digraph(
 
 // With execution trace highlighting
 val dotWithTrace = GraphVizVisualizer.digraphWithTrace(
-  fsm = orderDefinition,
+  fsm = machine,
   trace = executionTrace
 )
 ```
@@ -1189,26 +1233,6 @@ val summaryTable = CommandVisualizer.summaryTable(counts)
 // | ❌ Failed | 1 |
 ```
 
-#### Command List by Instance
-
-```scala
-val commandList = CommandVisualizer.commandList(
-  commands = allCommands,
-  commandName = cmd => cmd.toString
-)
-```
-
-#### Flowchart
-
-Shows command types flowing to their final statuses:
-
-```scala
-val flowchart = CommandVisualizer.flowchart(
-  commands = allCommands,
-  commandType = cmd => cmd.getClass.getSimpleName
-)
-```
-
 #### Complete Report
 
 Combines summary, flowchart, and detailed list:
@@ -1231,11 +1255,11 @@ Here's a complete example that generates all visualization types:
 import mechanoid.visualization.*
 import java.nio.file.{Files, Paths}
 
-def generateVisualizations[S <: MState, E <: MEvent, R, Err](
-    fsm: FSMDefinition[S, E, R, Err],
+def generateVisualizations[S, E](
+    machine: Machine[S, E, ?],
     initialState: S,
     outputDir: String
-): ZIO[Any, Throwable, Unit] =
+)(using Finite[S], Finite[E]): ZIO[Any, Throwable, Unit] =
   for
     _ <- ZIO.attempt(Files.createDirectories(Paths.get(outputDir)))
 
@@ -1245,19 +1269,19 @@ def generateVisualizations[S <: MState, E <: MEvent, R, Err](
                      |## State Diagram
                      |
                      |```mermaid
-                     |${MermaidVisualizer.stateDiagram(fsm, Some(initialState))}
+                     |${MermaidVisualizer.stateDiagram(machine, Some(initialState))}
                      |```
                      |
                      |## Flowchart
                      |
                      |```mermaid
-                     |${MermaidVisualizer.flowchart(fsm)}
+                     |${MermaidVisualizer.flowchart(machine)}
                      |```
                      |
                      |## GraphViz
                      |
                      |```dot
-                     |${GraphVizVisualizer.digraph(fsm, Some(initialState))}
+                     |${GraphVizVisualizer.digraph(machine, Some(initialState))}
                      |```
                      |""".stripMargin
 
@@ -1265,26 +1289,6 @@ def generateVisualizations[S <: MState, E <: MEvent, R, Err](
       Files.writeString(Paths.get(s"$outputDir/fsm-structure.md"), structureMd)
     )
   yield ()
-
-// Generate trace visualization after FSM execution
-def generateTraceVisualization[S <: MState, E <: MEvent](
-    trace: ExecutionTrace[S, E],
-    stateEnum: SealedEnum[S],
-    eventEnum: SealedEnum[E],
-    outputPath: String
-): ZIO[Any, Throwable, Unit] =
-  val traceMd = s"""# Execution Trace: ${trace.instanceId}
-                   |
-                   |**Final State:** ${stateEnum.nameOf(trace.currentState)}
-                   |
-                   |## Sequence Diagram
-                   |
-                   |```mermaid
-                   |${MermaidVisualizer.sequenceDiagram(trace, stateEnum, eventEnum)}
-                   |```
-                   |""".stripMargin
-
-  ZIO.attempt(Files.writeString(Paths.get(outputPath), traceMd))
 ```
 
 ### Example Outputs
@@ -1305,8 +1309,8 @@ See the [visualizations directory](visualizations/) for complete examples:
 Enforce valid transitions at compile time:
 
 ```scala
-def processPayment[Id, S <: MState, E <: MEvent, Cmd](fsm: FSMRuntime[Id, S, E, Cmd], event: E)
-                                                      (using ValidTransition[S, E]): ZIO[Any, MechanoidError, TransitionResult[S]] =
+def processPayment[Id, S, E, Cmd](fsm: FSMRuntime[Id, S, E, Cmd], event: E)
+                                  (using ValidTransition[S, E]): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
   fsm.send(event)
 ```
 
@@ -1361,35 +1365,48 @@ import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 import zio.*
 import java.time.Instant
+import scala.concurrent.duration.*
 
-// Domain
-enum OrderState extends MState:
+// Domain - plain enums, no marker traits needed
+enum OrderState:
   case Pending, AwaitingPayment, Paid, Shipped, Delivered, Cancelled
 
-enum OrderEvent extends MEvent:
-  case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel
+enum OrderEvent:
+  case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel, PaymentTimeout
 
-// FSM Definition with compile-time validation
-val orderDefinition = build[OrderState, OrderEvent] {
+// Commands for side effects
+enum OrderCommand:
+  case ChargeCard(amount: BigDecimal)
+  case SendEmail(to: String, template: String)
+  case NotifyWarehouse(orderId: String)
+
+// Timed state - will timeout after 30 minutes
+val awaitingWithTimeout = AwaitingPayment @@ timeout(30.minutes, PaymentTimeout)
+
+// FSM Definition with new DSL
+val orderMachine = buildAll[OrderState, OrderEvent]:
   // Happy path
-  _.when(Pending).on(RequestPayment).goto(AwaitingPayment)
-    .when(AwaitingPayment).on(ConfirmPayment).goto(Paid)
-    .when(AwaitingPayment).onTimeout.goto(Cancelled)
-    .when(Paid).on(Ship).goto(Shipped)
-    .when(Shipped).on(Deliver).goto(Delivered)
-    // Cancellation
-    .when(Pending).on(Cancel).goto(Cancelled)
-    .when(AwaitingPayment).on(Cancel).goto(Cancelled)
-    // Timeout for payment
-    .withTimeout(AwaitingPayment, scala.concurrent.duration.Duration(30, "minutes"))
-    // Lifecycle hooks
-    .onState(AwaitingPayment)
-      .onEntry(ZIO.logInfo("Waiting for payment..."))
-      .done
-    .onState(Cancelled)
-      .onEntry(ZIO.logInfo("Order cancelled"))
-      .done
-}
+  Pending via RequestPayment to awaitingWithTimeout
+  AwaitingPayment via ConfirmPayment to Paid emitting { (_, _) =>
+    List(OrderCommand.ChargeCard(BigDecimal(100)))
+  }
+  Paid via Ship to Shipped emitting { (_, _) =>
+    List(OrderCommand.NotifyWarehouse("order-123"))
+  }
+  Shipped via Deliver to Delivered emitting { (_, _) =>
+    List(OrderCommand.SendEmail("customer@example.com", "delivered"))
+  }
+
+  // Timeout handling
+  AwaitingPayment via PaymentTimeout to Cancelled
+
+  // Cancellation from multiple states
+  anyOf(Pending, AwaitingPayment) via Cancel to Cancelled
+
+// Add lifecycle actions
+val machineWithActions = orderMachine
+  .withEntry(AwaitingPayment)(ZIO.logInfo("Waiting for payment..."))
+  .withEntry(Cancelled)(ZIO.logInfo("Order cancelled"))
 
 // Running with persistence and durable timeouts
 val program = ZIO.scoped {
@@ -1397,7 +1414,7 @@ val program = ZIO.scoped {
     // Create FSM with durable timeouts
     fsm <- FSMRuntime.withDurableTimeouts(
       "order-123",
-      orderDefinition,
+      machineWithActions,
       OrderState.Pending
     )
 

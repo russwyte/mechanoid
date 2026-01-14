@@ -11,9 +11,6 @@ stateDiagram-v2
     ShippingRequested --> Shipped: ShipmentDispatched
     Paid --> ShippingRequested: RequestShipping
     Created --> PaymentProcessing: InitiatePayment
-    note left of PaymentProcessing : enqueuePaymentCommand [ProcessPayment]
-    note left of Paid : enqueueShippingCommands [RequestShipping, SendNotification]
-    note left of Shipped : enqueueShippedNotification [SendNotification]
 ```
 
 ## FSM + Commands Flowchart
@@ -65,12 +62,12 @@ digraph FSM {
     node [shape=ellipse, fontsize=12];
     edge [fontsize=10];
 
-    Shipped [label="Shipped\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueueShippedNotification]"];
-    PaymentProcessing [label="PaymentProcessing\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueuePaymentCommand]"];
+    Shipped [label="Shipped"];
+    PaymentProcessing [label="PaymentProcessing"];
     ShippingRequested [label="ShippingRequested"];
     Delivered [label="Delivered"];
     Cancelled [label="Cancelled"];
-    Paid [label="Paid\n[mechanoid.examples.PetStoreApp$.OrderFSMManager.enqueueShippingCommands]"];
+    Paid [label="Paid"];
     Created [label="Created"];
     __start__ [shape=point, width=0.2];
     __start__ -> Created;

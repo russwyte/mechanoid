@@ -1,14 +1,50 @@
 package mechanoid
 
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
 
 object Mechanoid
 
+/** Utility for generating idempotency keys for commands.
+  *
+  * Use this to create deterministic, collision-resistant keys for command deduplication in the transactional outbox
+  * pattern.
+  *
+  * ==Usage==
+  * {{{
+  * for
+  *   outcome <- fsmRuntime.send(event)
+  *   seqNr <- fsmRuntime.lastSequenceNr
+  *   _ <- ZIO.foreachDiscard(outcome.allCommands.zipWithIndex) { (cmd, idx) =>
+  *     val key = CommandKey.fromEvent(event, seqNr, idx, "all")
+  *     commandStore.enqueue(instanceId, cmd, key)
+  *   }
+  * yield outcome
+  * }}}
+  */
+object CommandKey:
+  /** Create a deterministic idempotency key for a command.
+    *
+    * @param event
+    *   The triggering event
+    * @param seqNr
+    *   The sequence number when the event was persisted
+    * @param index
+    *   The command's index within the list (for multiple commands from one transition)
+    * @param phase
+    *   Either "pre" or "post" to distinguish command generation phase
+    * @return
+    *   A deterministic key string suitable for idempotency checks
+    */
+  def fromEvent[E](event: E, seqNr: Long, index: Int, phase: String): String =
+    val eventTypeName = event.getClass.getName
+    val dataHash      = event.hashCode
+    s"cmd-$phase-${eventTypeName.hashCode}-$dataHash-$seqNr-$index"
+end CommandKey
+
 // Re-export core types
-export core.MState
-export core.MEvent
+export core.Finite
 export core.TransitionResult
+export core.TransitionOutcome
 export core.Transition
 export core.StateLifecycle
 export core.StateTimeout
@@ -20,11 +56,22 @@ export core.ActionFailedError
 export core.ProcessingTimeoutError
 export core.CaseHasher
 
-// Re-export DSL
-export dsl.FSMDefinition
-export dsl.TypedDSL
-export macros.TypedFSMValidation.validated
-export macros.TypedFSMValidation.validatedWithCommands
+// Re-export suite-style DSL
+export machine.Machine
+export machine.build
+export machine.buildAll
+export machine.all
+export machine.anyOf
+export machine.Aspect
+export machine.stay
+export machine.stop
+export machine.TransitionSpec as MachineTransitionSpec
+export machine.TimeoutSpec
+export machine.ViaBuilder
+export machine.AllMatcher
+export machine.AnyOfMatcher
+export machine.AnyOfEventMatcher
+export machine.include
 
 // Re-export runtime
 export runtime.FSMRuntime

@@ -6,7 +6,7 @@ package mechanoid.core
   *   - `CaseHasher.Default` - Uses `String.hashCode`, lightweight and efficient
   *   - `CaseHasher.Murmur3` - Uses MurmurHash3, better distribution for collision resistance
   *
-  * The default hasher is used automatically for all MState and MEvent types. Use Murmur3 only if you encounter hash
+  * The default hasher is used automatically for all state and event types. Use Murmur3 only if you encounter hash
   * collisions (the compiler will tell you).
   *
   * Hash collisions are detected at compile time and result in a compilation error.
@@ -14,12 +14,12 @@ package mechanoid.core
   * Example:
   * {{{
   * // Default (automatic)
-  * enum MyState extends MState:
+  * enum MyState derives Finite:
   *   case Idle, Running
   *
   * // Murmur3 (explicit, only if needed for collision resolution)
   * object MyState:
-  *   given murmur3Hasher = MState.deriveWithHasher[MyState](CaseHasher.Murmur3)
+  *   given murmur3Hasher = Finite.deriveWithHasher[MyState](CaseHasher.Murmur3)
   * }}}
   */
 sealed trait CaseHasher

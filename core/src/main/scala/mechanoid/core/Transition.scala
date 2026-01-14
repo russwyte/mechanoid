@@ -18,18 +18,18 @@ import scala.concurrent.duration.Duration
   * @param description
   *   Optional human-readable description of this transition
   */
-final case class Transition[-S <: MState, -E <: MEvent, +S2 <: MState](
+final case class Transition[-S, -E, +S2](
     action: (S, E) => ZIO[Any, MechanoidError, TransitionResult[S2]],
     description: Option[String] = None,
 )
 
 object Transition:
   /** Create a simple transition that goes to a target state. */
-  def goto[S <: MState, E <: MEvent, S2 <: MState](target: S2): Transition[S, E, S2] =
+  def goto[S, E, S2](target: S2): Transition[S, E, S2] =
     Transition((_, _) => ZIO.succeed(TransitionResult.Goto(target)), None)
 
   /** Create a transition that stays in the current state. */
-  def stay[S <: MState, E <: MEvent]: Transition[S, E, S] =
+  def stay[S, E]: Transition[S, E, S] =
     Transition((_, _) => ZIO.succeed(TransitionResult.Stay), None)
 
 /** Entry and exit actions for a state.
@@ -51,7 +51,7 @@ object Transition:
   * @param onExitDescription
   *   Human-readable description of exit action (for visualization)
   */
-final case class StateLifecycle[-S <: MState, +Cmd](
+final case class StateLifecycle[-S, +Cmd](
     onEntry: Option[ZIO[Any, MechanoidError, Unit]] = None,
     onExit: Option[ZIO[Any, MechanoidError, Unit]] = None,
     commandFactory: Option[S => List[Cmd]] = None,
@@ -60,7 +60,7 @@ final case class StateLifecycle[-S <: MState, +Cmd](
 )
 
 object StateLifecycle:
-  def empty[S <: MState, Cmd]: StateLifecycle[S, Cmd] =
+  def empty[S, Cmd]: StateLifecycle[S, Cmd] =
     StateLifecycle(None, None, None, None, None)
 
 /** Timeout configuration for a state.
@@ -73,7 +73,36 @@ object StateLifecycle:
   * @tparam S2
   *   The potential target state type
   */
-final case class StateTimeout[-S <: MState, +S2 <: MState](
+final case class StateTimeout[-S, +S2](
     duration: Duration,
     action: ZIO[Any, MechanoidError, TransitionResult[S2]],
 )
+
+/** Result of a transition including any generated commands.
+  *
+  * This is returned by `FSMRuntime.send` and includes:
+  *   - The transition result (Stay, Goto, Stop)
+  *   - Pre-transition commands (generated before state change)
+  *   - Post-transition commands (generated after state change)
+  *
+  * @tparam S
+  *   The state type
+  * @tparam Cmd
+  *   The command type
+  */
+final case class TransitionOutcome[+S, +Cmd](
+    result: TransitionResult[S],
+    preCommands: List[Cmd],
+    postCommands: List[Cmd],
+):
+  /** All commands in execution order (pre first, then post). */
+  def allCommands: List[Cmd] = preCommands ++ postCommands
+
+  /** Whether any commands were generated. */
+  def hasCommands: Boolean = preCommands.nonEmpty || postCommands.nonEmpty
+end TransitionOutcome
+
+object TransitionOutcome:
+  /** Create an outcome with no commands (for FSMs without command support). */
+  def noCommands[S](result: TransitionResult[S]): TransitionOutcome[S, Nothing] =
+    TransitionOutcome(result, Nil, Nil)

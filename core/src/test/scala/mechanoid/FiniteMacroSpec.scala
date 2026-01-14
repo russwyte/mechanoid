@@ -2,48 +2,48 @@ package mechanoid
 
 import zio.*
 import zio.test.*
-import mechanoid.core.{CaseHasher, MState, MEvent, SealedEnum}
-import mechanoid.macros.SealedEnumMacros
-import mechanoid.macros.SealedEnumMacros.CaseInfo
+import mechanoid.core.{CaseHasher, Finite}
+import mechanoid.macros.FiniteMacros
+import mechanoid.macros.FiniteMacros.CaseInfo
 
-object SealedEnumMacroSpec extends ZIOSpecDefault:
+object FiniteMacroSpec extends ZIOSpecDefault:
 
   // Test sealed trait with case classes
-  sealed trait TestSealedTrait    extends MState
+  sealed trait TestSealedTrait derives Finite
   case class StateA(value: Int)   extends TestSealedTrait
   case class StateB(name: String) extends TestSealedTrait
   case object StateC              extends TestSealedTrait
 
   // Test enum
-  enum TestEnum extends MState:
+  enum TestEnum derives Finite:
     case One, Two, Three
 
   // Test event enum
-  enum TestEvent extends MEvent:
+  enum TestEvent derives Finite:
     case Click
     case Submit(data: String)
 
-  def spec = suite("SealedEnum Macros")(
+  def spec = suite("Finite Macros")(
     suite("CaseInfo extraction")(
       test("extracts case info from enum") {
-        val infos = SealedEnumMacros.extractCaseInfo[TestEnum](CaseHasher.Default)
+        val infos = FiniteMacros.extractCaseInfo[TestEnum](CaseHasher.Default)
         assertTrue(
           infos.length == 3,
           infos.map(_.simpleName).toSet == Set("One", "Two", "Three"),
-          infos.forall(_.fullName.startsWith("mechanoid.SealedEnumMacroSpec")),
+          infos.forall(_.fullName.startsWith("mechanoid.FiniteMacroSpec")),
           infos.forall(_.fullName.contains("TestEnum")),
         )
       },
       test("extracts case info from sealed trait") {
-        val infos = SealedEnumMacros.extractCaseInfo[TestSealedTrait](CaseHasher.Default)
+        val infos = FiniteMacros.extractCaseInfo[TestSealedTrait](CaseHasher.Default)
         assertTrue(
           infos.length == 3,
           infos.map(_.simpleName).toSet == Set("StateA", "StateB", "StateC"),
-          infos.forall(_.fullName.startsWith("mechanoid.SealedEnumMacroSpec")),
+          infos.forall(_.fullName.startsWith("mechanoid.FiniteMacroSpec")),
         )
       },
       test("extracts case info from event enum with case classes") {
-        val infos = SealedEnumMacros.extractCaseInfo[TestEvent](CaseHasher.Default)
+        val infos = FiniteMacros.extractCaseInfo[TestEvent](CaseHasher.Default)
         assertTrue(
           infos.length == 2,
           infos.map(_.simpleName).toSet == Set("Click", "Submit"),
@@ -52,7 +52,7 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
     ),
     suite("caseHash derivation")(
       test("caseHash is based on full name") {
-        val se        = summon[SealedEnum[TestEnum]]
+        val se        = summon[Finite[TestEnum]]
         val oneHash   = se.caseHash(TestEnum.One)
         val twoHash   = se.caseHash(TestEnum.Two)
         val threeHash = se.caseHash(TestEnum.Three)
@@ -65,13 +65,13 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
         )
       },
       test("caseHash is stable - same input gives same hash") {
-        val se    = summon[SealedEnum[TestEnum]]
+        val se    = summon[Finite[TestEnum]]
         val hash1 = se.caseHash(TestEnum.One)
         val hash2 = se.caseHash(TestEnum.One)
         assertTrue(hash1 == hash2)
       },
       test("caseHash works for case classes with different data") {
-        val se     = summon[SealedEnum[TestSealedTrait]]
+        val se     = summon[Finite[TestSealedTrait]]
         val hashA1 = se.caseHash(StateA(1))
         val hashA2 = se.caseHash(StateA(999))
         val hashB  = se.caseHash(StateB("test"))
@@ -85,12 +85,12 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
     ),
     suite("name lookup")(
       test("nameFor returns correct name for hash") {
-        val se      = summon[SealedEnum[TestEnum]]
+        val se      = summon[Finite[TestEnum]]
         val oneHash = se.caseHash(TestEnum.One)
         assertTrue(se.nameFor(oneHash) == "One")
       },
       test("nameOf returns correct name for instance") {
-        val se = summon[SealedEnum[TestEnum]]
+        val se = summon[Finite[TestEnum]]
         assertTrue(
           se.nameOf(TestEnum.One) == "One",
           se.nameOf(TestEnum.Two) == "Two",
@@ -98,14 +98,14 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
         )
       },
       test("nameFor returns Unknown for invalid hash") {
-        val se     = summon[SealedEnum[TestEnum]]
+        val se     = summon[Finite[TestEnum]]
         val result = se.nameFor(999999999)
         assertTrue(result.startsWith("Unknown"))
       },
     ),
     suite("caseInfos")(
       test("caseInfos provides full name information") {
-        val se    = summon[SealedEnum[TestEnum]]
+        val se    = summon[Finite[TestEnum]]
         val infos = se.caseInfos
         assertTrue(
           infos.exists(_.simpleName == "One"),
@@ -116,7 +116,7 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
         )
       },
       test("allHashes returns all hash values") {
-        val se     = summon[SealedEnum[TestEnum]]
+        val se     = summon[Finite[TestEnum]]
         val hashes = se.allHashes
         assertTrue(
           hashes.length == 3,
@@ -127,7 +127,7 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
     suite("CaseHasher")(
       test("default hasher uses String.hashCode") {
         // Verify the default hasher produces String.hashCode values
-        val se   = summon[SealedEnum[TestEnum]]
+        val se   = summon[Finite[TestEnum]]
         val hash = se.caseHash(TestEnum.One)
         // The hash should be the hashCode of the fully qualified name
         val infos    = se.caseInfos
@@ -137,10 +137,10 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
       },
       test("murmur3 hasher produces different hashes than default") {
         // Default hasher
-        val defaultSE = summon[SealedEnum[TestEnum]]
+        val defaultSE = summon[Finite[TestEnum]]
 
         // Murmur3 hasher - use explicit parameter
-        val murmur3SE = SealedEnum.deriveWithHasher[TestEnum](CaseHasher.Murmur3)
+        val murmur3SE = Finite.deriveWithHasher[TestEnum](CaseHasher.Murmur3)
 
         val defaultHash = defaultSE.caseHash(TestEnum.One)
         val murmur3Hash = murmur3SE.caseHash(TestEnum.One)
@@ -149,7 +149,7 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
         assertTrue(defaultHash != murmur3Hash)
       },
       test("murmur3 produces unique hashes for all cases") {
-        val se     = SealedEnum.deriveWithHasher[TestEnum](CaseHasher.Murmur3)
+        val se     = Finite.deriveWithHasher[TestEnum](CaseHasher.Murmur3)
         val hashes = se.allHashes
 
         assertTrue(
@@ -159,4 +159,4 @@ object SealedEnumMacroSpec extends ZIOSpecDefault:
       },
     ),
   ) @@ TestAspect.sequential
-end SealedEnumMacroSpec
+end FiniteMacroSpec

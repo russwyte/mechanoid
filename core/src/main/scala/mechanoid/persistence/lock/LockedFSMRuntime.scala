@@ -42,7 +42,7 @@ import mechanoid.runtime.FSMRuntime
   * }.provide(eventStoreLayer, lockLayer)
   * }}}
   */
-final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, Cmd] private[lock] (
+final class LockedFSMRuntime[Id, S, E, Cmd] private[lock] (
     underlying: FSMRuntime[Id, S, E, Cmd],
     lock: FSMInstanceLock[Id],
     config: LockConfig,
@@ -50,7 +50,7 @@ final class LockedFSMRuntime[Id, S <: MState, E <: MEvent, Cmd] private[lock] (
 
   override def instanceId: Id = underlying.instanceId
 
-  override def send(event: E): ZIO[Any, MechanoidError, TransitionResult[S]] =
+  override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
     lock
       .withLock(instanceId, config.nodeId, config.lockDuration, Some(config.acquireTimeout)) {
         // Optionally validate lock is still held before proceeding
@@ -120,7 +120,7 @@ object LockedFSMRuntime:
     * @return
     *   A new runtime that acquires locks around event processing
     */
-  def apply[Id, S <: MState, E <: MEvent, Cmd](
+  def apply[Id, S, E, Cmd](
       underlying: FSMRuntime[Id, S, E, Cmd],
       lock: FSMInstanceLock[Id],
       config: LockConfig = LockConfig.default,

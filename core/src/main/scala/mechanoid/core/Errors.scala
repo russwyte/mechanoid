@@ -16,8 +16,8 @@ trait MechanoidError
   *   Additional context about why the transition is invalid
   */
 final case class InvalidTransitionError(
-    currentState: MState,
-    event: MEvent,
+    currentState: Any,
+    event: Any,
     message: String = "No transition defined",
 ) extends MechanoidError
 
@@ -42,7 +42,7 @@ final case class ActionFailedError[+E](cause: E) extends MechanoidError
   *   The timeout duration in milliseconds
   */
 final case class ProcessingTimeoutError(
-    currentState: MState,
+    currentState: Any,
     timeoutMs: Long,
 ) extends MechanoidError
 
@@ -107,8 +107,8 @@ final case class SequenceConflictError(
   *   The sequence number of the problematic event
   */
 final case class EventReplayError(
-    currentState: MState,
-    event: MEvent,
+    currentState: Any,
+    event: Any,
     sequenceNr: Long,
 ) extends Exception(
       s"Cannot replay event $event (seqNr=$sequenceNr) from state $currentState: no matching transition"

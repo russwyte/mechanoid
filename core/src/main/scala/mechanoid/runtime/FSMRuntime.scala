@@ -2,7 +2,7 @@ package mechanoid.runtime
 
 import zio.*
 import mechanoid.core.*
-import mechanoid.dsl.FSMDefinition
+import mechanoid.machine.Machine
 import mechanoid.persistence.{EventStore, FSMSnapshot, StoredEvent}
 import mechanoid.persistence.timeout.TimeoutStore
 import mechanoid.persistence.lock.{FSMInstanceLock, LockConfig, LockedFSMRuntime}
@@ -22,21 +22,21 @@ import java.time.Instant
   * @tparam Cmd
   *   The command type (use `Nothing` for FSMs without commands)
   */
-trait FSMRuntime[Id, S <: MState, E <: MEvent, Cmd]:
+trait FSMRuntime[Id, S, E, +Cmd]:
 
   /** The FSM instance identifier. */
   def instanceId: Id
 
-  /** Send an event to the FSM and get the transition result.
+  /** Send an event to the FSM and get the transition outcome.
     *
     * Returns the outcome of processing the event:
-    *   - Stay: FSM remained in current state
-    *   - Goto: FSM transitioned to a new state
-    *   - Stop: FSM has stopped
+    *   - result: The transition result (Stay, Goto, Stop)
+    *   - preCommands: Commands generated before state change
+    *   - postCommands: Commands generated after state change
     *
     * If no transition is defined for the current state and event, returns an InvalidTransitionError.
     */
-  def send(event: E): ZIO[Any, MechanoidError, TransitionResult[S]]
+  def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]]
 
   /** Get the current state of the FSM. */
   def currentState: UIO[S]
@@ -97,33 +97,34 @@ object FSMRuntime:
     * when the scope closes.
     *
     * {{{
-    * val definition = fsm[TrafficLight, TrafficEvent]
-    *   .when(Red).on(Timer).goto(Green)
-    *   .when(Green).on(Timer).goto(Yellow)
-    *   .when(Yellow).on(Timer).goto(Red)
+    * val machine = build[TrafficLight, TrafficEvent](
+    *   Red via Timer to Green,
+    *   Green via Timer to Yellow,
+    *   Yellow via Timer to Red,
+    * )
     *
     * val program = ZIO.scoped {
     *   for
-    *     fsm   <- FSMRuntime.make(definition, Red)
+    *     fsm   <- machine.start(Red)
     *     _     <- fsm.send(Timer)
     *     state <- fsm.currentState  // Green
     *   yield state
     * }
     * }}}
     *
-    * @param definition
-    *   The FSM definition
+    * @param machine
+    *   The Machine definition
     * @param initial
     *   The initial state
     */
-  def make[S <: MState, E <: MEvent, Cmd](
-      definition: FSMDefinition[S, E, Cmd],
+  def make[S, E, Cmd](
+      machine: Machine[S, E, Cmd],
       initial: S,
   ): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E, Cmd]] =
     for
       eventStore <- InMemoryEventStore.make[Unit, S, E]
       runtime    <- ZIO.acquireRelease(
-        createRuntime((), definition, initial, eventStore, None)
+        createRuntime((), machine, initial, eventStore, None)
       )(_.stop)
     yield runtime
 
@@ -148,7 +149,7 @@ object FSMRuntime:
     * // Use the FSM with the store from the environment
     * val program = ZIO.scoped {
     *   for
-    *     fsm <- FSMRuntime(orderId, orderDefinition, Pending)
+    *     fsm <- FSMRuntime(orderId, orderMachine, Pending)
     *     _   <- fsm.send(Pay)
     *   yield ()
     * }.provide(storeLayer, dataSourceLayer)
@@ -161,21 +162,21 @@ object FSMRuntime:
     *
     * @param id
     *   The FSM instance identifier
-    * @param definition
-    *   The FSM definition
+    * @param machine
+    *   The Machine definition
     * @param initialState
     *   The initial state for new instances
     */
-  def apply[Id, S <: MState, E <: MEvent, Cmd](
+  def apply[Id, S, E, Cmd](
       id: Id,
-      definition: FSMDefinition[S, E, Cmd],
+      machine: Machine[S, E, Cmd],
       initialState: S,
   )(using
       Tag[EventStore[Id, S, E]]
   ): ZIO[Scope & EventStore[Id, S, E], MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
     ZIO.serviceWithZIO[EventStore[Id, S, E]] { store =>
       ZIO.acquireRelease(
-        createRuntime(id, definition, initialState, store, None)
+        createRuntime(id, machine, initialState, store, None)
       )(_.stop)
     }
 
@@ -206,7 +207,7 @@ object FSMRuntime:
     * // Create FSM with durable timeouts
     * val program = ZIO.scoped {
     *   for
-    *     fsm <- FSMRuntime.withDurableTimeouts(orderId, orderDef, Pending)
+    *     fsm <- FSMRuntime.withDurableTimeouts(orderId, orderMachine, Pending)
     *     _   <- fsm.send(StartPayment)
     *     // Timeout is now persisted - survives node restart
     *   yield ()
@@ -218,14 +219,14 @@ object FSMRuntime:
     *
     * @param id
     *   The FSM instance identifier
-    * @param definition
-    *   The FSM definition
+    * @param machine
+    *   The Machine definition
     * @param initialState
     *   The initial state for new instances
     */
-  def withDurableTimeouts[Id, S <: MState, E <: MEvent, Cmd](
+  def withDurableTimeouts[Id, S, E, Cmd](
       id: Id,
-      definition: FSMDefinition[S, E, Cmd],
+      machine: Machine[S, E, Cmd],
       initialState: S,
   )(using
       Tag[EventStore[Id, S, E]],
@@ -235,7 +236,7 @@ object FSMRuntime:
       eventStore   <- ZIO.service[EventStore[Id, S, E]]
       timeoutStore <- ZIO.service[TimeoutStore[Id]]
       runtime      <- ZIO.acquireRelease(
-        createRuntime(id, definition, initialState, eventStore, Some(timeoutStore))
+        createRuntime(id, machine, initialState, eventStore, Some(timeoutStore))
       )(_.stop)
     yield runtime
 
@@ -272,7 +273,7 @@ object FSMRuntime:
     * {{{
     * val program = ZIO.scoped {
     *   for
-    *     fsm <- FSMRuntime.withLocking(orderId, orderDef, Pending)
+    *     fsm <- FSMRuntime.withLocking(orderId, orderMachine, Pending)
     *     _   <- fsm.send(Pay)  // Lock acquired automatically
     *   yield ()
     * }.provide(eventStoreLayer, lockLayer)
@@ -280,16 +281,16 @@ object FSMRuntime:
     *
     * @param id
     *   The FSM instance identifier
-    * @param definition
-    *   The FSM definition
+    * @param machine
+    *   The Machine definition
     * @param initialState
     *   The initial state for new instances
     * @param lockConfig
     *   Lock configuration (duration, timeout, etc.)
     */
-  def withLocking[Id, S <: MState, E <: MEvent, Cmd](
+  def withLocking[Id, S, E, Cmd](
       id: Id,
-      definition: FSMDefinition[S, E, Cmd],
+      machine: Machine[S, E, Cmd],
       initialState: S,
       lockConfig: LockConfig = LockConfig.default,
   )(using
@@ -304,7 +305,7 @@ object FSMRuntime:
       eventStore <- ZIO.service[EventStore[Id, S, E]]
       lock       <- ZIO.service[FSMInstanceLock[Id]]
       runtime    <- ZIO.acquireRelease(
-        createRuntime(id, definition, initialState, eventStore, None)
+        createRuntime(id, machine, initialState, eventStore, None)
       )(_.stop)
     yield LockedFSMRuntime(runtime, lock, lockConfig)
 
@@ -323,7 +324,7 @@ object FSMRuntime:
     * {{{
     * val program = ZIO.scoped {
     *   for
-    *     fsm <- FSMRuntime.withLockingAndTimeouts(orderId, orderDef, Pending)
+    *     fsm <- FSMRuntime.withLockingAndTimeouts(orderId, orderMachine, Pending)
     *     _   <- fsm.send(StartPayment)
     *     // - Lock protects against concurrent processing
     *     // - Timeout persisted and survives node restart
@@ -333,16 +334,16 @@ object FSMRuntime:
     *
     * @param id
     *   The FSM instance identifier
-    * @param definition
-    *   The FSM definition
+    * @param machine
+    *   The Machine definition
     * @param initialState
     *   The initial state for new instances
     * @param lockConfig
     *   Lock configuration (duration, timeout, etc.)
     */
-  def withLockingAndTimeouts[Id, S <: MState, E <: MEvent, Cmd](
+  def withLockingAndTimeouts[Id, S, E, Cmd](
       id: Id,
-      definition: FSMDefinition[S, E, Cmd],
+      machine: Machine[S, E, Cmd],
       initialState: S,
       lockConfig: LockConfig = LockConfig.default,
   )(using
@@ -359,7 +360,7 @@ object FSMRuntime:
       timeoutStore <- ZIO.service[TimeoutStore[Id]]
       lock         <- ZIO.service[FSMInstanceLock[Id]]
       runtime      <- ZIO.acquireRelease(
-        createRuntime(id, definition, initialState, eventStore, Some(timeoutStore))
+        createRuntime(id, machine, initialState, eventStore, Some(timeoutStore))
       )(_.stop)
     yield LockedFSMRuntime(runtime, lock, lockConfig)
 
@@ -371,9 +372,9 @@ object FSMRuntime:
     *
     * This is the core factory method used by all the public factory methods above.
     */
-  private def createRuntime[Id, S <: MState, E <: MEvent, Cmd](
+  private def createRuntime[Id, S, E, Cmd](
       id: Id,
-      definition: FSMDefinition[S, E, Cmd],
+      machine: Machine[S, E, Cmd],
       initialState: S,
       store: EventStore[Id, S, E],
       timeoutStore: Option[TimeoutStore[Id]],
@@ -388,7 +389,7 @@ object FSMRuntime:
       events <- store.loadEventsFrom(id, startSeqNr).runCollect
 
       // Rebuild state by applying events
-      rebuiltState <- rebuildState(definition, startState, events.toList)
+      rebuiltState <- rebuildState(machine, startState, events.toList)
 
       // Initialize runtime state
       stateRef   <- Ref.make(rebuiltState)
@@ -398,8 +399,8 @@ object FSMRuntime:
       // Create self-reference for timeout handling
       runtimeRef <- Ref.make[Option[FSMRuntimeImpl[Id, S, E, Cmd]]](None)
 
-      sendSelf: (Timed[E] => ZIO[Any, MechanoidError, TransitionResult[S]]) =
-        (event: Timed[E]) =>
+      sendSelf: (E => ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]]) =
+        (event: E) =>
           runtimeRef.get.flatMap(
             _.map(_.sendInternal(event))
               .getOrElse(ZIO.fail(FSMStoppedError(Some("Runtime not initialized"))))
@@ -407,7 +408,7 @@ object FSMRuntime:
 
       runtime = new FSMRuntimeImpl(
         id,
-        definition,
+        machine,
         store,
         timeoutStore,
         stateRef,
@@ -433,15 +434,15 @@ object FSMRuntime:
     * @throws EventReplayError
     *   if an event doesn't match the current FSM definition
     */
-  private def rebuildState[S <: MState, E <: MEvent, Cmd](
-      definition: FSMDefinition[S, E, Cmd],
+  private def rebuildState[S, E, Cmd](
+      machine: Machine[S, E, Cmd],
       startState: S,
-      events: List[StoredEvent[?, Timed[E]]],
+      events: List[StoredEvent[?, E]],
   ): ZIO[Any, EventReplayError, FSMState[S]] =
     ZIO.foldLeft(events)(FSMState.initial(startState)) { (fsmState, stored) =>
-      val currentCaseHash = definition.stateEnum.caseHash(fsmState.current)
-      val eventCaseHash   = definition.eventEnum.caseHash(stored.event)
-      definition.transitions.get((currentCaseHash, eventCaseHash)) match
+      val currentCaseHash = machine.stateEnum.caseHash(fsmState.current)
+      val eventCaseHash   = machine.eventEnum.caseHash(stored.event)
+      machine.transitions.get((currentCaseHash, eventCaseHash)) match
         case Some(transition) =>
           // Execute the transition action to get the result
           // During replay, errors are ignored (events were already validated when stored)
@@ -455,7 +456,7 @@ object FSMRuntime:
             }
         case None =>
           // Event doesn't match current FSM definition - fail explicitly
-          ZIO.fail(EventReplayError(fsmState.current, stored.event: MEvent, stored.sequenceNr))
+          ZIO.fail(EventReplayError(fsmState.current, stored.event, stored.sequenceNr))
       end match
     }
 end FSMRuntime
@@ -465,61 +466,92 @@ end FSMRuntime
   * All FSM runtimes (in-memory and persistent) use this same implementation, differing only in the EventStore and
   * optional stores provided.
   */
-private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd](
+private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
     val instanceId: Id,
-    definition: FSMDefinition[S, E, Cmd],
+    machine: Machine[S, E, Cmd],
     store: EventStore[Id, S, E],
     timeoutStore: Option[TimeoutStore[Id]],
     stateRef: Ref[FSMState[S]],
     seqNrRef: Ref[Long],
     runningRef: Ref[Boolean],
-    sendSelf: Timed[E] => ZIO[Any, MechanoidError, TransitionResult[S]],
+    sendSelf: E => ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]], // Just E, no Timed wrapper
 ) extends FSMRuntime[Id, S, E, Cmd]:
 
-  override def send(event: E): ZIO[Any, MechanoidError, TransitionResult[S]] =
-    sendSelf(event.timed)
+  override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+    sendSelf(event) // Direct call, no .timed wrapping
 
   private[mechanoid] def sendInternal(
-      event: Timed[E]
-  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
+      event: E
+  ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
     for
       running <- runningRef.get
       result  <-
-        if !running then ZIO.succeed(TransitionResult.Stop(Some("FSM stopped")))
+        if !running then ZIO.succeed(TransitionOutcome(TransitionResult.Stop(Some("FSM stopped")), Nil, Nil))
         else processEvent(event)
     yield result
 
   private def processEvent(
-      event: Timed[E]
-  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
+      event: E
+  ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
     for
       fsmState <- stateRef.get
       currentState    = fsmState.current
-      currentCaseHash = definition.stateEnum.caseHash(currentState)
-      eventCaseHash   = definition.eventEnum.caseHash(event)
+      currentCaseHash = machine.stateEnum.caseHash(currentState)
+      eventCaseHash   = machine.eventEnum.caseHash(event)
       transition <- ZIO
-        .fromOption(definition.transitions.get((currentCaseHash, eventCaseHash)))
-        .orElseFail(InvalidTransitionError(currentState, event: MEvent))
-      result <- executeTransition(fsmState, event, transition)
-    yield result
+        .fromOption(machine.transitions.get((currentCaseHash, eventCaseHash)))
+        .orElseFail(InvalidTransitionError(currentState, event))
+      outcome <- executeTransition(fsmState, event, transition, currentCaseHash, eventCaseHash)
+    yield outcome
 
   private def executeTransition(
       fsmState: FSMState[S],
-      event: Timed[E],
-      transition: Transition[S, Timed[E], S],
-  ): ZIO[Any, MechanoidError, TransitionResult[S]] =
+      event: E,
+      transition: Transition[S, E, S],
+      stateHash: Int,
+      eventHash: Int,
+  ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
     for
+      // Generate PRE-transition commands (before state change)
+      preCommands <- ZIO.succeed {
+        machine.preCommandFactories
+          .get((stateHash, eventHash))
+          .map { factory =>
+            // Events are just E now - no unwrapping needed
+            factory(event, fsmState.current).asInstanceOf[List[Cmd]]
+          }
+          .getOrElse(Nil)
+      }
+
       // Execute the transition action FIRST
       // If it fails (e.g., external service call), the event is NOT persisted
       result <- transition.action(fsmState.current, event)
+
       // Only persist after successful action execution
       // Use optimistic locking to detect concurrent modifications
       currentSeqNr <- seqNrRef.get
       seqNr        <- store.append(instanceId, event, currentSeqNr)
       _            <- seqNrRef.set(seqNr)
+
+      // Determine target state for post-commands
+      targetState = result match
+        case TransitionResult.Goto(s) => s
+        case _                        => fsmState.current
+
+      // Generate POST-transition commands (after state change)
+      postCommands <- ZIO.succeed {
+        machine.postCommandFactories
+          .get((stateHash, eventHash))
+          .map { factory =>
+            // Events are just E now - no unwrapping needed
+            factory(event, targetState).asInstanceOf[List[Cmd]]
+          }
+          .getOrElse(Nil)
+      }
+
       // Update state
       _ <- handleTransitionResult(fsmState, result)
-    yield result
+    yield TransitionOutcome(result, preCommands, postCommands)
 
   private def handleTransitionResult(
       fsmState: FSMState[S],
@@ -552,10 +584,10 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
         yield ()
 
   private[mechanoid] def runEntryAction(state: S): ZIO[Any, MechanoidError, Unit] =
-    definition.lifecycles.get(definition.stateEnum.caseHash(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
+    machine.lifecycles.get(machine.stateEnum.caseHash(state)).flatMap(_.onEntry).getOrElse(ZIO.unit)
 
   private def runExitAction(state: S): ZIO[Any, MechanoidError, Unit] =
-    definition.lifecycles.get(definition.stateEnum.caseHash(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
+    machine.lifecycles.get(machine.stateEnum.caseHash(state)).flatMap(_.onExit).getOrElse(ZIO.unit)
 
   /** Cancel any pending timeout for this FSM instance.
     *
@@ -577,8 +609,14 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
     *   - Does NOT survive node failures
     */
   private[mechanoid] def startTimeout(state: S): ZIO[Any, Nothing, Unit] =
-    val stateCaseHash = definition.stateEnum.caseHash(state)
-    ZIO.foreachDiscard(definition.timeouts.get(stateCaseHash)) { duration =>
+    val stateCaseHash = machine.stateEnum.caseHash(state)
+    // Get both duration and user-defined timeout event for this state
+    val timeoutConfig = for
+      duration <- machine.timeouts.get(stateCaseHash)
+      event    <- machine.timeoutEvents.get(stateCaseHash)
+    yield (duration, event)
+
+    ZIO.foreachDiscard(timeoutConfig) { case (duration, timeoutEvent) =>
       timeoutStore match
         case Some(store) =>
           // Durable timeout: persist to TimeoutStore
@@ -589,11 +627,12 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S <: MState, E <: MEvent, Cmd]
 
         case None =>
           // In-memory timeout: use fiber-based approach
+          // Fire user-defined event when timeout expires
           (ZIO.sleep(zio.Duration.fromScala(duration)) *>
             stateRef.get.flatMap { currentFsmState =>
               // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
-              ZIO.when(definition.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(
-                sendInternal(Timed.TimeoutEvent).ignore
+              ZIO.when(machine.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(
+                send(timeoutEvent).ignore // Fire user-defined event instead of Timed.TimeoutEvent
               )
             }).forkDaemon.unit
     }

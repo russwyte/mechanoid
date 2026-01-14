@@ -1,10 +1,11 @@
 # Order 5 Execution Trace
 
-**Final State:** Shipped
+**Final State:** Paid
 
 ## Command Summary
 
-- Completed: 7
+- Completed: 3
+- Failed: 1
 
 ## FSM + Commands Sequence Diagram
 
@@ -16,43 +17,27 @@ sequenceDiagram
     participant W as Worker
 
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=5<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=5<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>amount=150.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=5<br/>petName=Hoppy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=e767b159-add2-4caa-b7db-a8b406620f64
+    Note right of CQ: orderId=5<br/>petName=Whiskers<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=87cc67f6-e8dd-49fd-98cc-6b1fdf777851
     CQ->>W: claim
-    W->>CQ: ✅ Completed
+    W->>CQ: ❌ Failed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=order_confirmed<br/>messageId=6d1f019d-9b1e-45e7-8ee2-3a3b489fdb52
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>FSM: RequestShipping
-    Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
-    Note over FSM: Shipped
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=6d1f019d-9b1e-45e7-8ee2-3a3b489fdb52<br/>delivered=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=e767b159-add2-4caa-b7db-a8b406620f64<br/>trackingNumber=TRACK-95018<br/>carrier=FurryFriends Delivery<br/>estimatedDelivery=4 business days<br/>success=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=shipped<br/>messageId=6d1f019d-9b1e-45e7-8ee2-3a3b489fdb52-shipped
+    Note right of CQ: orderId=5<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Whiskers<br/>notificationType=order_confirmed<br/>messageId=2531c8ca-5fe7-4622-8c11-35a04563a525
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=6d1f019d-9b1e-45e7-8ee2-3a3b489fdb52-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: messageId=2531c8ca-5fe7-4622-8c11-35a04563a525<br/>delivered=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
-    Note over FSM: Current: Shipped
+    Note over FSM: Current: Paid
 ```
 
 ## FSM-Only Sequence Diagram
@@ -61,15 +46,11 @@ sequenceDiagram
 sequenceDiagram
     participant FSM as Order-5
     Note over FSM: Created
-    FSM->>FSM: InitiatePayment
+    FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded
+    FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
-    FSM->>FSM: RequestShipping
-    Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched
-    Note over FSM: Shipped
-    Note over FSM: Current: Shipped
+    Note over FSM: Current: Paid
 ```
 
 ## Flowchart with Commands
@@ -112,9 +93,7 @@ flowchart TB
     style SendNotification fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
 
     style Created fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style ShippingRequested fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style PaymentProcessing fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Shipped fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style Paid fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Shipped fill:#90EE90,stroke:#228B22,stroke-width:4px
+    style Paid fill:#90EE90,stroke:#228B22,stroke-width:4px
 ```

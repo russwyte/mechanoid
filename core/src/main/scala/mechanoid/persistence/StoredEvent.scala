@@ -1,6 +1,5 @@
 package mechanoid.persistence
 
-import mechanoid.core.*
 import java.time.Instant
 
 /** A persisted event wrapper for event sourcing.
@@ -20,7 +19,7 @@ import java.time.Instant
   * @param timestamp
   *   When the event was persisted
   */
-final case class StoredEvent[Id, E <: MEvent](
+final case class StoredEvent[Id, E](
     instanceId: Id,
     sequenceNr: Long,
     event: E,

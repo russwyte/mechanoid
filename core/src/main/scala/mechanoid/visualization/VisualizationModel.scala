@@ -2,7 +2,6 @@ package mechanoid.visualization
 
 import scala.concurrent.duration.Duration
 import java.time.Instant
-import mechanoid.core.*
 
 /** The kind of transition for visualization purposes. */
 enum TransitionKind:
@@ -36,7 +35,7 @@ case class FSMMeta(
 )
 
 /** A single step in an FSM execution trace. */
-case class TraceStep[S <: MState, E <: MEvent](
+case class TraceStep[S, E](
     sequenceNumber: Int,
     from: S,
     to: S,
@@ -47,7 +46,7 @@ case class TraceStep[S <: MState, E <: MEvent](
   def isSelfTransition: Boolean = from == to
 
 /** Complete execution trace for runtime visualization. */
-case class ExecutionTrace[S <: MState, E <: MEvent](
+case class ExecutionTrace[S, E](
     instanceId: String,
     initialState: S,
     currentState: S,
@@ -62,7 +61,7 @@ end ExecutionTrace
 
 object ExecutionTrace:
   /** Create an empty trace starting from an initial state. */
-  def empty[S <: MState, E <: MEvent](
+  def empty[S, E](
       instanceId: String,
       initialState: S,
   ): ExecutionTrace[S, E] =
