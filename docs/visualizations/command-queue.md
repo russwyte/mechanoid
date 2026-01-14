@@ -6,7 +6,7 @@
 |--------|-------|
 | ⏳ Pending | 0 |
 | ⚙️ Processing | 0 |
-| ✅ Completed | 16 |
+| ✅ Completed | 12 |
 | ❌ Failed | 4 |
 | ⏭️ Skipped | 0 |
 
@@ -34,12 +34,12 @@ flowchart LR
     style cmd3 fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
     style cmd4 fill:#87CEEB,stroke:#4682B4,stroke-width:2px
 
-    cmd0 -->|5| completed
-    cmd1 -->|4| completed
-    cmd1 -->|1| failed
+    cmd0 -->|3| completed
+    cmd1 -->|3| completed
+    cmd1 -->|2| failed
     cmd2 -->|1| completed
-    cmd2 -->|3| failed
-    cmd3 -->|5| completed
+    cmd2 -->|2| failed
+    cmd3 -->|4| completed
     cmd4 -->|1| completed
 ```
 
@@ -49,48 +49,44 @@ flowchart LR
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 1 | ProcessPayment(orderId=1, customerId={redacted}, customerName={redacted}, petName=Goldie, amount=25.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:45:46.384 |
-| 2 | RequestShipping(orderId=1, petName=Goldie, customerName={redacted}, customerAddress={redacted}, correlationId=d05225d2-1b8e-4a01-bf6b-40ff7f9047cb) | ✅ Completed | 2 | 16:45:46.590 |
-| 3 | SendNotification(orderId=1, customerEmail={redacted}, customerName={redacted}, petName=Goldie, notificationType=order_confirmed, messageId=45622422-5ee8-4ed9-b315-122c50236c03) | ✅ Completed | 1 | 16:45:46.590 |
-| 4 | NotificationCallback(messageId=45622422-5ee8-4ed9-b315-122c50236c03, delivered=true, error=None) | ✅ Completed | 1 | 16:45:47.342 |
-| 18 | ShippingCallback(correlationId=d05225d2-1b8e-4a01-bf6b-40ff7f9047cb, trackingNumber=TRACK-237802, carrier=PetExpress, estimatedDelivery=5 business days, success=true, error=None) | ✅ Completed | 1 | 16:45:52.844 |
-| 19 | SendNotification(orderId=1, customerEmail={redacted}, customerName={redacted}, petName=Goldie, notificationType=shipped, messageId=45622422-5ee8-4ed9-b315-122c50236c03-shipped) | ✅ Completed | 1 | 16:45:52.973 |
-| 20 | NotificationCallback(messageId=45622422-5ee8-4ed9-b315-122c50236c03-shipped, delivered=true, error=None) | ✅ Completed | 1 | 16:45:53.902 |
+| 1 | ProcessPayment(orderId=1, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ✅ Completed | 2 | 15:35:30.226 |
+| 6 | RequestShipping(orderId=1, petName=Hoppy, customerName={redacted}, customerAddress={redacted}, correlationId=148df28b-dfc2-4908-8463-32bc0ea6534d) | ✅ Completed | 1 | 15:35:32.407 |
+| 7 | SendNotification(orderId=1, customerEmail={redacted}, customerName={redacted}, petName=Hoppy, notificationType=order_confirmed, messageId=882de6b8-a8e9-4406-be82-f51b151d06fc) | ✅ Completed | 1 | 15:35:32.407 |
+| 10 | NotificationCallback(messageId=882de6b8-a8e9-4406-be82-f51b151d06fc, delivered=true, error=None) | ✅ Completed | 1 | 15:35:33.133 |
+| 11 | ShippingCallback(correlationId=148df28b-dfc2-4908-8463-32bc0ea6534d, trackingNumber=TRACK-75310, carrier=AnimalCare Logistics, estimatedDelivery=2 business days, success=true, error=None) | ✅ Completed | 1 | 15:35:33.742 |
+| 12 | SendNotification(orderId=1, customerEmail={redacted}, customerName={redacted}, petName=Hoppy, notificationType=shipped, messageId=882de6b8-a8e9-4406-be82-f51b151d06fc-shipped) | ✅ Completed | 1 | 15:35:33.817 |
 
 ### Instance: 2
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 5 | ProcessPayment(orderId=2, customerId={redacted}, customerName={redacted}, petName=Whiskers, amount=150.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:45:47.647 |
-| 6 | RequestShipping(orderId=2, petName=Whiskers, customerName={redacted}, customerAddress={redacted}, correlationId=5ca48a41-72b4-4e9d-bc0c-df48d7fe4af8) | ❌ Failed | 1 | 16:45:48.097 |
-|   | ↳ Error: AddressInvalid(Could not validate address) |   |   |   |
-| 7 | SendNotification(orderId=2, customerEmail={redacted}, customerName={redacted}, petName=Whiskers, notificationType=order_confirmed, messageId=96c6fdb2-a5f6-4e55-891e-48afca881ec6) | ✅ Completed | 1 | 16:45:48.097 |
-| 9 | NotificationCallback(messageId=96c6fdb2-a5f6-4e55-891e-48afca881ec6, delivered=true, error=None) | ✅ Completed | 1 | 16:45:49.089 |
+| 2 | ProcessPayment(orderId=2, customerId={redacted}, customerName={redacted}, petName=Buddy, amount=250.0, paymentMethod={redacted}) | ❌ Failed | 1 | 15:35:30.147 |
+|   | ↳ Error: FraudCheckFailed |   |   |   |
 
 ### Instance: 3
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 8 | ProcessPayment(orderId=3, customerId={redacted}, customerName={redacted}, petName=Goldie, amount=25.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:45:48.906 |
-| 10 | RequestShipping(orderId=3, petName=Goldie, customerName={redacted}, customerAddress={redacted}, correlationId=455b8025-ff5f-4a06-935f-dae7f020cebf) | ❌ Failed | 1 | 16:45:49.344 |
-|   | ↳ Error: DestinationUnreachable |   |   |   |
-| 11 | SendNotification(orderId=3, customerEmail={redacted}, customerName={redacted}, petName=Goldie, notificationType=order_confirmed, messageId=16707884-10da-4db7-b8b8-943e9c85c9ed) | ✅ Completed | 1 | 16:45:49.344 |
-| 13 | NotificationCallback(messageId=16707884-10da-4db7-b8b8-943e9c85c9ed, delivered=true, error=None) | ✅ Completed | 1 | 16:45:50.374 |
+| 3 | ProcessPayment(orderId=3, customerId={redacted}, customerName={redacted}, petName=Tweety, amount=75.0, paymentMethod={redacted}) | ✅ Completed | 1 | 15:35:31.408 |
+| 4 | RequestShipping(orderId=3, petName=Tweety, customerName={redacted}, customerAddress={redacted}, correlationId=59942544-a912-47b0-ae6a-5e3efa4a6c1b) | ❌ Failed | 1 | 15:35:31.749 |
+|   | ↳ Error: AddressInvalid(Could not validate address) |   |   |   |
+| 5 | SendNotification(orderId=3, customerEmail={redacted}, customerName={redacted}, petName=Tweety, notificationType=order_confirmed, messageId=b9220429-d6e6-4803-9a2a-42104d0bd07d) | ✅ Completed | 1 | 15:35:31.749 |
+| 8 | NotificationCallback(messageId=b9220429-d6e6-4803-9a2a-42104d0bd07d, delivered=true, error=None) | ✅ Completed | 1 | 15:35:32.551 |
 
 ### Instance: 4
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 12 | ProcessPayment(orderId=4, customerId={redacted}, customerName={redacted}, petName=Tweety, amount=75.0, paymentMethod={redacted}) | ✅ Completed | 1 | 16:45:50.166 |
-| 14 | RequestShipping(orderId=4, petName=Tweety, customerName={redacted}, customerAddress={redacted}, correlationId=0c6c0788-9c70-4398-a69e-5624886f70f4) | ❌ Failed | 1 | 16:45:50.452 |
-|   | ↳ Error: AddressInvalid(Could not validate address) |   |   |   |
-| 15 | SendNotification(orderId=4, customerEmail={redacted}, customerName={redacted}, petName=Tweety, notificationType=order_confirmed, messageId=811ece04-268d-4801-9db3-a80e335426fc) | ✅ Completed | 1 | 16:45:50.452 |
-| 16 | NotificationCallback(messageId=811ece04-268d-4801-9db3-a80e335426fc, delivered=true, error=None) | ✅ Completed | 1 | 16:45:51.414 |
+| 9 | ProcessPayment(orderId=4, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ❌ Failed | 2 | 15:35:32.669 |
+|   | ↳ Error: CardDeclined(Generic decline) |   |   |   |
 
 ### Instance: 5
 
 | # | Command | Status | Attempts | Enqueued |
 |---|---------|--------|----------|----------|
-| 17 | ProcessPayment(orderId=5, customerId={redacted}, customerName={redacted}, petName=Hoppy, amount=100.0, paymentMethod={redacted}) | ❌ Failed | 1 | 16:45:51.424 |
-|   | ↳ Error: FraudCheckFailed |   |   |   |
+| 13 | ProcessPayment(orderId=5, customerId={redacted}, customerName={redacted}, petName=Whiskers, amount=150.0, paymentMethod={redacted}) | ✅ Completed | 1 | 15:35:33.931 |
+| 14 | RequestShipping(orderId=5, petName=Whiskers, customerName={redacted}, customerAddress={redacted}, correlationId=87cc67f6-e8dd-49fd-98cc-6b1fdf777851) | ❌ Failed | 1 | 15:35:34.144 |
+|   | ↳ Error: AddressInvalid(Could not validate address) |   |   |   |
+| 15 | SendNotification(orderId=5, customerEmail={redacted}, customerName={redacted}, petName=Whiskers, notificationType=order_confirmed, messageId=2531c8ca-5fe7-4622-8c11-35a04563a525) | ✅ Completed | 1 | 15:35:34.145 |
+| 16 | NotificationCallback(messageId=2531c8ca-5fe7-4622-8c11-35a04563a525, delivered=true, error=None) | ✅ Completed | 1 | 15:35:35.228 |
 

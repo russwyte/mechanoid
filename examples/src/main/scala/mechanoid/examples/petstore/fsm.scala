@@ -99,72 +99,97 @@ end OrderEvent
   *
   * Note: The `emitting` lambda receives the parent event type (OrderEvent), so we pattern match to extract the specific
   * event fields.
+  *
+  * This example uses the `buildAll` block syntax which allows:
+  *   - Local helper vals for command factory functions
+  *   - Clean separation of concerns
+  *   - No commas between transition definitions
   */
 object OrderFSM:
   import OrderState.*
   import OrderEvent.{InitiatePayment, PaymentSucceeded, PaymentFailed, ShipmentDispatched, DeliveryConfirmed}
   // Don't import OrderEvent.RequestShipping to avoid ambiguity with PetStoreCommand.RequestShipping
 
-  val machine =
-    build[OrderState, OrderEvent](
-      // Created -> PaymentProcessing: emit ProcessPayment command
-      Created via event[InitiatePayment] to PaymentProcessing emitting {
-        case (e: InitiatePayment, _) =>
-          List(
-            PetStoreCommand.ProcessPayment(
-              orderId = e.orderId,
-              customerId = e.customerId,
-              customerName = e.customerName,
-              petName = e.petName,
-              amount = e.amount,
-              paymentMethod = e.paymentMethod,
-            )
+  val machine = buildAll[OrderState, OrderEvent]:
+    // ═══════════════════════════════════════════════════════════════════
+    // Command factory helpers - local vals defined at the top of the block
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** Build ProcessPayment command from InitiatePayment event. */
+    val buildPaymentCommand: (OrderEvent, OrderState) => List[PetStoreCommand] = {
+      case (e: InitiatePayment, _) =>
+        List(
+          PetStoreCommand.ProcessPayment(
+            orderId = e.orderId,
+            customerId = e.customerId,
+            customerName = e.customerName,
+            petName = e.petName,
+            amount = e.amount,
+            paymentMethod = e.paymentMethod,
           )
-        case _ => Nil
-      },
-      // PaymentProcessing -> Paid: emit RequestShipping + SendNotification
-      PaymentProcessing via event[PaymentSucceeded] to Paid emitting {
-        case (e: PaymentSucceeded, _) =>
-          List(
-            PetStoreCommand.RequestShipping(
-              orderId = e.orderId,
-              petName = e.petName,
-              customerName = e.customerName,
-              customerAddress = e.customerAddress,
-              correlationId = e.correlationId,
-            ),
-            PetStoreCommand.SendNotification(
-              orderId = e.orderId,
-              customerEmail = e.customerEmail,
-              customerName = e.customerName,
-              petName = e.petName,
-              notificationType = "order_confirmed",
-              messageId = e.messageId,
-            ),
+        )
+      case _ => Nil
+    }
+
+    /** Build shipping + confirmation commands from PaymentSucceeded event. */
+    val buildPaidCommands: (OrderEvent, OrderState) => List[PetStoreCommand] = {
+      case (e: PaymentSucceeded, _) =>
+        List(
+          PetStoreCommand.RequestShipping(
+            orderId = e.orderId,
+            petName = e.petName,
+            customerName = e.customerName,
+            customerAddress = e.customerAddress,
+            correlationId = e.correlationId,
+          ),
+          PetStoreCommand.SendNotification(
+            orderId = e.orderId,
+            customerEmail = e.customerEmail,
+            customerName = e.customerName,
+            petName = e.petName,
+            notificationType = "order_confirmed",
+            messageId = e.messageId,
+          ),
+        )
+      case _ => Nil
+    }
+
+    /** Build shipped notification command from ShipmentDispatched event. */
+    val buildShippedNotification: (OrderEvent, OrderState) => List[PetStoreCommand] = {
+      case (e: ShipmentDispatched, _) =>
+        List(
+          PetStoreCommand.SendNotification(
+            orderId = e.orderId,
+            customerEmail = e.customerEmail,
+            customerName = e.customerName,
+            petName = e.petName,
+            notificationType = "shipped",
+            messageId = s"${e.messageId}-shipped",
           )
-        case _ => Nil
-      },
-      // PaymentProcessing -> Cancelled: no commands
-      PaymentProcessing via event[PaymentFailed] to Cancelled,
-      // Paid -> ShippingRequested: no commands (shipping already requested)
-      Paid via event[OrderEvent.RequestShipping] to ShippingRequested,
-      // ShippingRequested -> Shipped: emit shipped notification
-      ShippingRequested via event[ShipmentDispatched] to Shipped emitting {
-        case (e: ShipmentDispatched, _) =>
-          List(
-            PetStoreCommand.SendNotification(
-              orderId = e.orderId,
-              customerEmail = e.customerEmail,
-              customerName = e.customerName,
-              petName = e.petName,
-              notificationType = "shipped",
-              messageId = s"${e.messageId}-shipped",
-            )
-          )
-        case _ => Nil
-      },
-      // Shipped -> Delivered: no commands
-      Shipped via event[DeliveryConfirmed] to Delivered,
-    )
+        )
+      case _ => Nil
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // State machine transitions - clean and readable with infix emitting
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Created -> PaymentProcessing: emit ProcessPayment command
+    Created via event[InitiatePayment] to PaymentProcessing emitting buildPaymentCommand
+
+    // PaymentProcessing -> Paid: emit RequestShipping + SendNotification
+    PaymentProcessing via event[PaymentSucceeded] to Paid emitting buildPaidCommands
+
+    // PaymentProcessing -> Cancelled: no commands
+    PaymentProcessing via event[PaymentFailed] to Cancelled
+
+    // Paid -> ShippingRequested: no commands (shipping already requested)
+    Paid via event[OrderEvent.RequestShipping] to ShippingRequested
+
+    // ShippingRequested -> Shipped: emit shipped notification
+    ShippingRequested via event[ShipmentDispatched] to Shipped emitting buildShippedNotification
+
+    // Shipped -> Delivered: no commands
+    Shipped via event[DeliveryConfirmed] to Delivered
 
 end OrderFSM

@@ -1,6 +1,5 @@
 package mechanoid.typelevel
 
-import mechanoid.core.*
 import scala.annotation.nowarn
 import scala.compiletime.ops.boolean.*
 

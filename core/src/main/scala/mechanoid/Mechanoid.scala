@@ -59,6 +59,7 @@ export core.CaseHasher
 // Re-export suite-style DSL
 export machine.Machine
 export machine.build
+export machine.buildAll
 export machine.all
 export machine.anyOf
 export machine.Aspect
@@ -70,6 +71,7 @@ export machine.ViaBuilder
 export machine.AllMatcher
 export machine.AnyOfMatcher
 export machine.AnyOfEventMatcher
+export machine.include
 
 // Re-export runtime
 export runtime.FSMRuntime

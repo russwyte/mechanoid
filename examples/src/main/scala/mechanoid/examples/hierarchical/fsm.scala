@@ -111,53 +111,82 @@ object DocumentWorkflowFSM:
     *   - **Readable syntax**: `State via Event to Target` reads like plain English
     *   - **Hierarchical matching**: `all[InReview]` matches ALL leaf states under a parent trait
     *   - **Override support**: Use `@@ Aspect.overriding` to override parent-level transitions
+    *   - **Machine composition**: Reusable machines can be composed with `buildAll` and `include`
     *
     * The `all[T]` pattern is incredibly powerful for:
     *   - Cancel/abort actions that apply to multiple related states
     *   - Default behaviors for entire state groups
     *   - Reducing boilerplate in complex workflows
     *
-    * Example showing the pattern:
+    * Example showing the composition pattern:
     * {{{
-    * build[DocumentState, DocumentEvent](
-    *   // Default: any review state can be cancelled
+    * // Base machine with group behaviors
+    * val groupTransitions = build[DocumentState, DocumentEvent](
     *   all[InReview] via CancelReview to Draft,
-    *
-    *   // Override for specific state (if needed):
-    *   // (UnderReview via CancelReview to SomeOtherState) @@ Aspect.overriding,
+    *   all[Approval] via Abandon to Cancelled,
     * )
+    *
+    * // Compose with buildAll - last override wins
+    * val fullMachine = buildAll[DocumentState, DocumentEvent]:
+    *   include(groupTransitions)
+    *   Draft via SubmitForReview to PendingReview
+    *   // ... more transitions ...
     * }}}
     */
-  val definition =
-    build[DocumentState, DocumentEvent](
-      // ===== Draft Phase =====
-      // Submit a draft for review
-      Draft via SubmitForReview to PendingReview,
 
-      // ===== Review Phase (Hierarchical) =====
-      // Any state in the review phase can be cancelled, returning to Draft
-      // This single line applies to: PendingReview, UnderReview, ChangesRequested
-      all[InReview] via CancelReview to Draft,
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Reusable machine fragment: Group behaviors using hierarchical matching
+  // ═══════════════════════════════════════════════════════════════════════════
 
-      // Individual review state transitions
-      PendingReview via AssignReviewer to UnderReview,
-      UnderReview via RequestChanges to ChangesRequested,
-      UnderReview via ApproveReview to PendingApproval,
-      ChangesRequested via ResubmitAfterChanges to PendingReview,
+  /** Group transitions that apply to entire state hierarchies.
+    *
+    * These are the "catch-all" behaviors that can be overridden by more specific transitions.
+    */
+  val groupBehaviors = build[DocumentState, DocumentEvent](
+    // Any state in the review phase can be cancelled, returning to Draft
+    // This single line applies to: PendingReview, UnderReview, ChangesRequested
+    all[InReview] via CancelReview to Draft,
 
-      // ===== Approval Phase (Hierarchical) =====
-      // Any state in the approval phase can be abandoned
-      // This applies to: PendingApproval, Rejected
-      all[Approval] via Abandon to Cancelled,
+    // Any state in the approval phase can be abandoned
+    // This applies to: PendingApproval, Rejected
+    all[Approval] via Abandon to Cancelled,
+  )
 
-      // Individual approval state transitions
-      PendingApproval via ApprovePublication to Published,
-      PendingApproval via RejectPublication to Rejected,
-      Rejected via SubmitForReview to PendingReview,
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Full machine: Compose group behaviors with specific transitions
+  // ═══════════════════════════════════════════════════════════════════════════
 
-      // ===== Final States =====
-      // Published documents can be archived
-      Published via Archive to Archived,
-    )
+  /** The complete workflow FSM composed using buildAll.
+    *
+    * Uses `include` to incorporate the reusable `groupBehaviors` machine, then adds individual state transitions.
+    *
+    * Override semantics: Last transition wins. If a more specific transition needs to override a group behavior, use
+    * `@@ Aspect.overriding`.
+    */
+  val definition = buildAll[DocumentState, DocumentEvent]:
+    // Include the group behaviors (cancelable review states, abandonable approval states)
+    include:
+      groupBehaviors
+
+    // ===== Draft Phase =====
+    // Submit a draft for review
+    Draft via SubmitForReview to PendingReview
+
+    // ===== Review Phase (Individual transitions) =====
+    // These work alongside the group `all[InReview] via CancelReview to Draft`
+    PendingReview via AssignReviewer to UnderReview
+    UnderReview via RequestChanges to ChangesRequested
+    UnderReview via ApproveReview to PendingApproval
+    ChangesRequested via ResubmitAfterChanges to PendingReview
+
+    // ===== Approval Phase (Individual transitions) =====
+    // These work alongside the group `all[Approval] via Abandon to Cancelled`
+    PendingApproval via ApprovePublication to Published
+    PendingApproval via RejectPublication to Rejected
+    Rejected via SubmitForReview to PendingReview
+
+    // ===== Final States =====
+    // Published documents can be archived
+    Published via Archive to Archived
 
 end DocumentWorkflowFSM

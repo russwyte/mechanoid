@@ -2,7 +2,6 @@ package mechanoid.visualization
 
 import scala.concurrent.duration.Duration
 import java.time.Instant
-import mechanoid.core.*
 
 /** The kind of transition for visualization purposes. */
 enum TransitionKind:

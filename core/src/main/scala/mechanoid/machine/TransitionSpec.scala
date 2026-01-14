@@ -38,7 +38,7 @@ final case class TimeoutEventConfig[E](event: E, hash: Int)
   * @tparam Cmd
   *   The command type (for transactional outbox pattern)
   */
-final case class TransitionSpec[-S, -E, +Cmd](
+final case class TransitionSpec[+S, +E, +Cmd](
     stateHashes: Set[Int],           // Expanded from sealed hierarchies
     eventHashes: Set[Int],           // Expanded from sealed hierarchies
     stateNames: List[String],        // For error messages
@@ -52,14 +52,14 @@ final case class TransitionSpec[-S, -E, +Cmd](
     postCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, targetState) => commands
 ):
   /** Commands to emit BEFORE state change. Receives (event, sourceState). */
-  def emittingBefore[E1 <: E, S1 <: S, C](f: (E1, S1) => List[C]): TransitionSpec[S1, E1, C] =
+  infix def emittingBefore[C](f: (E, S) => List[C]): TransitionSpec[S, E, C] =
     copy(preCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
-      .asInstanceOf[TransitionSpec[S1, E1, C]]
+      .asInstanceOf[TransitionSpec[S, E, C]]
 
   /** Commands to emit AFTER state change. Receives (event, targetState). */
-  def emitting[E1 <: E, S1 <: S, C](f: (E1, S1) => List[C]): TransitionSpec[S1, E1, C] =
+  infix def emitting[C](f: (E, S) => List[C]): TransitionSpec[S, E, C] =
     copy(postCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
-      .asInstanceOf[TransitionSpec[S1, E1, C]]
+      .asInstanceOf[TransitionSpec[S, E, C]]
 
   /** Configure timeout when entering target state. */
   def withTimeout(duration: Duration): TransitionSpec[S, E, Cmd] =

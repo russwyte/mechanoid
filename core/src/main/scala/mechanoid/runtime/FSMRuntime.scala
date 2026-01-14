@@ -22,7 +22,7 @@ import java.time.Instant
   * @tparam Cmd
   *   The command type (use `Nothing` for FSMs without commands)
   */
-trait FSMRuntime[Id, S, E, Cmd]:
+trait FSMRuntime[Id, S, E, +Cmd]:
 
   /** The FSM instance identifier. */
   def instanceId: Id

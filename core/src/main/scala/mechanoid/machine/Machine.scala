@@ -22,10 +22,10 @@ import scala.concurrent.duration.Duration
   * @tparam Cmd
   *   The command type for transactional outbox pattern (use Nothing for FSMs without commands)
   */
-final class Machine[S, E, Cmd] private[machine] (
+final class Machine[S, E, +Cmd] private[machine] (
     // Runtime data - events are just E now (no Timed wrapper)
     private[mechanoid] val transitions: Map[(Int, Int), Transition[S, E, S]],
-    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, Cmd]],
+    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, Cmd @scala.annotation.unchecked.uncheckedVariance]],
     private[mechanoid] val timeouts: Map[Int, Duration],
     private[mechanoid] val timeoutEvents: Map[Int, E], // state hash -> event to fire on timeout
     private[mechanoid] val transitionMeta: List[TransitionMeta],
@@ -33,7 +33,7 @@ final class Machine[S, E, Cmd] private[machine] (
     private[mechanoid] val preCommandFactories: Map[(Int, Int), (Any, Any) => List[Any]],
     private[mechanoid] val postCommandFactories: Map[(Int, Int), (Any, Any) => List[Any]],
     // Spec data for compile-time validation and introspection
-    private[machine] val specs: List[TransitionSpec[S, E, Cmd]],
+    private[machine] val specs: List[TransitionSpec[S, E, Cmd @scala.annotation.unchecked.uncheckedVariance]],
     private[machine] val timeoutSpecs: List[TimeoutSpec[S, E]],
 )(using
     private[mechanoid] val stateEnum: Finite[S],
@@ -44,9 +44,9 @@ final class Machine[S, E, Cmd] private[machine] (
     *
     * Usage: `myMachine @@ overriding` marks all transitions as overrides.
     */
-  def @@(aspect: Aspect): Machine[S, E, Cmd] = aspect match
+  infix def @@(aspect: Aspect): Machine[S, E, Cmd] = aspect match
     case Aspect.overriding =>
-      val newSpecs = specs.map(_.copy(isOverride = true))
+      val newSpecs = specs.map(s => s.copy(isOverride = true).asInstanceOf[TransitionSpec[S, E, Cmd]])
       new Machine(
         transitions,
         lifecycles,
@@ -152,7 +152,10 @@ final class Machine[S, E, Cmd] private[machine] (
   /** Update lifecycle for a state. */
   private[mechanoid] def updateLifecycle(
       stateCaseHash: Int,
-      f: StateLifecycle[S, Cmd] => StateLifecycle[S, Cmd],
+      f: StateLifecycle[S, Cmd @scala.annotation.unchecked.uncheckedVariance] => StateLifecycle[
+        S,
+        Cmd @scala.annotation.unchecked.uncheckedVariance,
+      ],
   ): Machine[S, E, Cmd] =
     val current = lifecycles.getOrElse(stateCaseHash, StateLifecycle.empty[S, Cmd])
     new Machine(
@@ -191,6 +194,10 @@ object Machine:
   /** Create a Machine from validated specs.
     *
     * This is called by the `build` macro after validation. It converts TransitionSpecs to runtime data.
+    *
+    * Performs runtime duplicate detection for machine composition:
+    *   - Duplicates without isOverride = true cause an IllegalArgumentException
+    *   - Duplicates with isOverride = true are allowed; later spec wins
     */
   private[machine] def fromSpecs[S: Finite, E: Finite, Cmd](
       specs: List[TransitionSpec[S, E, Cmd]],
@@ -203,10 +210,15 @@ object Machine:
     var preCommandFactories  = Map.empty[(Int, Int), (Any, Any) => List[Any]]
     var postCommandFactories = Map.empty[(Int, Int), (Any, Any) => List[Any]]
 
+    // Track which (state, event) pairs we've seen for duplicate detection
+    // Maps key -> (first spec index, first spec description)
+    var seenTransitions = Map.empty[(Int, Int), (Int, String)]
+
     val stateEnumInstance = summon[Finite[S]]
+    val eventEnumInstance = summon[Finite[E]]
 
     // Convert each TransitionSpec to runtime data
-    for spec <- specs do
+    for (spec, specIdx) <- specs.zipWithIndex do
       val transition = spec.handler match
         case Handler.Goto(target) =>
           val targetState = target.asInstanceOf[S]
@@ -241,16 +253,41 @@ object Machine:
         stateHash <- spec.stateHashes
         eventHash <- spec.eventHashes
       do
+        val key = (stateHash, eventHash)
+
+        // Check for duplicates
+        seenTransitions.get(key) match
+          case Some((firstIdx, firstDesc)) if !spec.isOverride =>
+            // Duplicate without override - error
+            val stateName = stateEnumInstance.caseNames.getOrElse(stateHash, s"state#$stateHash")
+            val eventName = eventEnumInstance.caseNames.getOrElse(eventHash, s"event#$eventHash")
+            throw new IllegalArgumentException(
+              s"""Duplicate transition without override!
+                 |  Transition: $stateName via $eventName
+                 |  First defined at spec #${firstIdx + 1}: $firstDesc
+                 |  Duplicate at spec #${specIdx + 1}: ${spec.targetDesc}
+                 |
+                 |  To override, use: @@ Aspect.overriding""".stripMargin
+            )
+          case _ =>
+            // Either no duplicate, or duplicate with override - allow it
+            ()
+        end match
+
+        // Track this transition
+        val specDesc = s"${spec.stateNames.mkString(",")} via ${spec.eventNames.mkString(",")} ${spec.targetDesc}"
+        seenTransitions = seenTransitions + (key -> (specIdx, specDesc))
+
         val meta = TransitionMeta(stateHash, eventHash, targetHash, kind)
-        transitions = transitions + ((stateHash, eventHash) -> transition)
+        transitions = transitions + (key -> transition)
         transitionMetaList = transitionMetaList :+ meta
 
         // Extract command factories
         spec.preCommandFactory.foreach { f =>
-          preCommandFactories = preCommandFactories + ((stateHash, eventHash) -> f)
+          preCommandFactories = preCommandFactories + (key -> f)
         }
         spec.postCommandFactory.foreach { f =>
-          postCommandFactories = postCommandFactories + ((stateHash, eventHash) -> f)
+          postCommandFactories = postCommandFactories + (key -> f)
         }
       end for
 

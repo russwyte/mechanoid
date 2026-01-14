@@ -1,6 +1,5 @@
 package mechanoid.persistence
 
-import mechanoid.core.*
 import java.time.Instant
 
 /** A point-in-time snapshot of FSM state for optimization.

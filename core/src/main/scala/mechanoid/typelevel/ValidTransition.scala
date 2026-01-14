@@ -1,6 +1,5 @@
 package mechanoid.typelevel
 
-import mechanoid.core.*
 import scala.annotation.implicitNotFound
 
 /** Type class witnessing that a transition from state S via event E is valid.

@@ -4,7 +4,7 @@
 
 ## Command Summary
 
-- Completed: 7
+- Completed: 6
 
 ## FSM + Commands Sequence Diagram
 
@@ -19,37 +19,33 @@ sequenceDiagram
     FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=1<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>amount=25.0<br/>paymentMethod={redacted}
+    Note right of CQ: orderId=1<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: PaymentSucceeded(...)
     Note over FSM: Paid
     FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=1<br/>petName=Goldie<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=d05225d2-1b8e-4a01-bf6b-40ff7f9047cb
+    Note right of CQ: orderId=1<br/>petName=Hoppy<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=148df28b-dfc2-4908-8463-32bc0ea6534d
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=order_confirmed<br/>messageId=45622422-5ee8-4ed9-b315-122c50236c03
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=order_confirmed<br/>messageId=882de6b8-a8e9-4406-be82-f51b151d06fc
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>FSM: RequestShipping(1,123 Main St, Springfield)
     Note over FSM: ShippingRequested
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=45622422-5ee8-4ed9-b315-122c50236c03<br/>delivered=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
     FSM->>FSM: ShipmentDispatched(...)
     Note over FSM: Shipped
+    FSM->>CQ: enqueue(NotificationCallback)
+    Note right of CQ: messageId=882de6b8-a8e9-4406-be82-f51b151d06fc<br/>delivered=true<br/>error=None
+    CQ->>W: claim
+    W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(ShippingCallback)
-    Note right of CQ: correlationId=d05225d2-1b8e-4a01-bf6b-40ff7f9047cb<br/>trackingNumber=TRACK-237802<br/>carrier=PetExpress<br/>estimatedDelivery=5 business days<br/>success=true<br/>error=None
+    Note right of CQ: correlationId=148df28b-dfc2-4908-8463-32bc0ea6534d<br/>trackingNumber=TRACK-75310<br/>carrier=AnimalCare Logistics<br/>estimatedDelivery=2 business days<br/>success=true<br/>error=None
     CQ->>W: claim
     W->>CQ: ✅ Completed
     FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Goldie<br/>notificationType=shipped<br/>messageId=45622422-5ee8-4ed9-b315-122c50236c03-shipped
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=45622422-5ee8-4ed9-b315-122c50236c03-shipped<br/>delivered=true<br/>error=None
+    Note right of CQ: orderId=1<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>notificationType=shipped<br/>messageId=882de6b8-a8e9-4406-be82-f51b151d06fc-shipped
     CQ->>W: claim
     W->>CQ: ✅ Completed
     Note over FSM: Current: Shipped

@@ -89,7 +89,7 @@ object MermaidVisualizer:
   def sequenceDiagram[S, E](
       trace: ExecutionTrace[S, E],
       stateEnum: Finite[S],
-      eventEnum: Finite[E],
+      @scala.annotation.nowarn("msg=unused") eventEnum: Finite[E],
   ): String =
     val sb = StringBuilder()
     sb.append("sequenceDiagram\n")
@@ -339,7 +339,7 @@ object MermaidVisualizer:
   def sequenceDiagramWithCommands[S, E, Id, Cmd](
       trace: ExecutionTrace[S, E],
       stateEnum: Finite[S],
-      eventEnum: Finite[E],
+      @scala.annotation.nowarn("msg=unused") eventEnum: Finite[E],
       commands: List[PendingCommand[Id, Cmd]],
       commandName: Cmd => String,
   ): String =

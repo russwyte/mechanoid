@@ -1,6 +1,5 @@
 package mechanoid.machine
 
-import mechanoid.core.*
 import scala.concurrent.duration.Duration
 
 /** Aspect that can modify transition specs or state configurations.

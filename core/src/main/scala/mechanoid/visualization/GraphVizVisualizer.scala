@@ -210,7 +210,7 @@ object GraphVizVisualizer:
   def timeline[S, E](
       trace: ExecutionTrace[S, E],
       stateEnum: Finite[S],
-      eventEnum: Finite[E],
+      @scala.annotation.nowarn("msg=unused") eventEnum: Finite[E],
       name: String = "Timeline",
   ): String =
     val sb = StringBuilder()

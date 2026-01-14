@@ -1,6 +1,5 @@
 package mechanoid.persistence
 
-import mechanoid.core.*
 import java.time.Instant
 
 /** A persisted event wrapper for event sourcing.

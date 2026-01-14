@@ -1,10 +1,9 @@
 # Order 4 Execution Trace
 
-**Final State:** Paid
+**Final State:** Cancelled
 
 ## Command Summary
 
-- Completed: 3
 - Failed: 1
 
 ## FSM + Commands Sequence Diagram
@@ -20,24 +19,12 @@ sequenceDiagram
     FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
     FSM->>CQ: enqueue(ProcessPayment)
-    Note right of CQ: orderId=4<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>amount=75.0<br/>paymentMethod={redacted}
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>FSM: PaymentSucceeded(...)
-    Note over FSM: Paid
-    FSM->>CQ: enqueue(RequestShipping)
-    Note right of CQ: orderId=4<br/>petName=Tweety<br/>customerName={redacted}<br/>customerAddress={redacted}<br/>correlationId=0c6c0788-9c70-4398-a69e-5624886f70f4
+    Note right of CQ: orderId=4<br/>customerId={redacted}<br/>customerName={redacted}<br/>petName=Hoppy<br/>amount=100.0<br/>paymentMethod={redacted}
     CQ->>W: claim
     W->>CQ: ❌ Failed
-    FSM->>CQ: enqueue(SendNotification)
-    Note right of CQ: orderId=4<br/>customerEmail={redacted}<br/>customerName={redacted}<br/>petName=Tweety<br/>notificationType=order_confirmed<br/>messageId=811ece04-268d-4801-9db3-a80e335426fc
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    FSM->>CQ: enqueue(NotificationCallback)
-    Note right of CQ: messageId=811ece04-268d-4801-9db3-a80e335426fc<br/>delivered=true<br/>error=None
-    CQ->>W: claim
-    W->>CQ: ✅ Completed
-    Note over FSM: Current: Paid
+    FSM->>FSM: PaymentFailed(4,CardDeclined(Generic decline))
+    Note over FSM: Cancelled
+    Note over FSM: Current: Cancelled
 ```
 
 ## FSM-Only Sequence Diagram
@@ -48,9 +35,9 @@ sequenceDiagram
     Note over FSM: Created
     FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded(...)
-    Note over FSM: Paid
-    Note over FSM: Current: Paid
+    FSM->>FSM: PaymentFailed(4,CardDeclined(Generic decline))
+    Note over FSM: Cancelled
+    Note over FSM: Current: Cancelled
 ```
 
 ## Flowchart with Commands
@@ -94,6 +81,6 @@ flowchart TB
 
     style Created fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
     style PaymentProcessing fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Paid fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
-    style Paid fill:#90EE90,stroke:#228B22,stroke-width:4px
+    style Cancelled fill:#ADD8E6,stroke:#4169E1,stroke-width:3px
+    style Cancelled fill:#90EE90,stroke:#228B22,stroke-width:4px
 ```
