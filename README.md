@@ -56,7 +56,6 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 - [Durable Timeouts](docs/DOCUMENTATION.md#durable-timeouts) - TimeoutStore, sweepers, leader election
 - [Distributed Locking](docs/DOCUMENTATION.md#distributed-locking) - Exactly-once transitions, FSMInstanceLock
 - [Command Queue](docs/DOCUMENTATION.md#command-queue) - Transactional outbox for side effects
-- [Type-Level Safety](docs/DOCUMENTATION.md#type-level-safety) - Compile-time transition validation
 
 ## Key Components
 

@@ -32,6 +32,11 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [TimeoutSweeper](#timeoutsweeper)
   - [Sweeper Configuration](#sweeper-configuration)
   - [Leader Election](#leader-election)
+- [Distributed Architecture](#distributed-architecture)
+  - [Load-on-Demand Model](#load-on-demand-model)
+  - [When Does a Node See Updates?](#when-does-a-node-see-updates)
+  - [Design Benefits](#design-benefits)
+  - [Conflict Handling](#conflict-handling)
 - [Distributed Locking](#distributed-locking)
   - [Why Use Locking](#why-use-locking)
   - [FSMInstanceLock](#fsminstancelock)
@@ -50,9 +55,6 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [GraphVizVisualizer](#graphvizvisualizer)
   - [CommandVisualizer](#commandvisualizer)
   - [Generating Visualizations](#generating-visualizations)
-- [Type-Level Safety](#type-level-safety)
-  - [ValidTransition](#validtransition)
-  - [TransitionSpec](#transitionspec)
 - [Error Handling](#error-handling)
 - [Complete Example](#complete-example)
 
@@ -808,6 +810,70 @@ Only the leader node performs sweeps. If the leader fails, another node acquires
 
 ---
 
+## Distributed Architecture
+
+### Load-on-Demand Model
+
+Mechanoid uses a **database as source of truth** pattern rather than in-memory cluster coordination. This means:
+
+- **Nodes don't notify each other** - There's no pub/sub or cluster membership
+- **State lives in the database** - The EventStore is the single source of truth
+- **Load fresh on each operation** - FSMs are loaded from the database when needed
+- **Stateless application nodes** - Any node can handle any FSM instance
+
+```
+Node A                    EventStore (DB)                 Node B
+   │                           │                            │
+   │── load events ───────────>│                            │
+   │<── [event1, event2] ──────│                            │
+   │                           │                            │
+   │   (process event)         │                            │
+   │                           │                            │
+   │── append(event3, seq=2) ─>│                            │
+   │<── success (seq=3) ───────│                            │
+   │                           │                            │
+   │                           │<── load events ────────────│
+   │                           │──> [event1, event2, event3]│
+```
+
+### When Does a Node See Updates?
+
+A node sees updates when it **next loads the FSM from the database**:
+
+| Scenario | What Happens |
+|----------|--------------|
+| New request arrives | Loads latest events from EventStore |
+| FSM already in scope | Uses cached state until scope closes |
+| Timeout sweeper fires | Loads FSM fresh, checks state, fires if valid |
+| After scope closes | Next request loads fresh state |
+
+### Design Benefits
+
+This architecture provides several advantages:
+
+1. **Simplicity** - No cluster coordination protocol needed
+2. **Horizontal scaling** - Add nodes without configuration changes
+3. **Fault tolerance** - Node failures don't affect other nodes
+4. **Consistency** - Database provides strong consistency guarantees
+5. **Debugging** - All state changes are in the EventStore
+
+### Conflict Handling
+
+When two nodes try to modify the same FSM concurrently:
+
+1. **Optimistic locking (always active)** - Sequence numbers detect conflicts at write time
+2. **Distributed locking (optional)** - Prevents conflicts before they happen
+
+```scala
+// Without distributed locking: conflict detected at write time
+SequenceConflictError(expected = 5, actual = 6, instanceId = orderId)
+
+// With distributed locking: conflict prevented upfront
+FSMRuntime.withLocking(orderId, machine, initialState)
+```
+
+---
+
 ## Distributed Locking
 
 ### Why Use Locking
@@ -1366,46 +1432,6 @@ See the [visualizations directory](visualizations/) for complete examples:
 - [Order 1 Trace](visualizations/order-1-trace.md) - Successful order execution trace
 - [Order 5 Trace](visualizations/order-5-trace.md) - Failed order (payment declined) trace
 - [Command Queue Report](visualizations/command-queue.md) - Command processing summary and details
-
----
-
-## Type-Level Safety
-
-### ValidTransition
-
-Enforce valid transitions at compile time:
-
-```scala
-def processPayment[Id, S, E, Cmd](fsm: FSMRuntime[Id, S, E, Cmd], event: E)
-                                  (using ValidTransition[S, E]): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
-  fsm.send(event)
-```
-
-### TransitionSpec
-
-Define allowed transitions as a type:
-
-```scala
-import mechanoid.typelevel.*
-
-type OrderTransitions =
-  Allow[Pending, Pay, Paid] ::
-  Allow[Paid, Ship, Shipped] ::
-  Allow[Shipped, Deliver, Delivered] ::
-  TNil
-
-// Derive ValidTransition instances
-given ValidTransition[Pending, Pay] = TransitionSpec.derive[OrderTransitions, Pending, Pay]
-```
-
-Or use the builder API:
-
-```scala
-val spec = TransitionSpecBuilder.start
-  .allow[Pending, Pay, Paid]
-  .allow[Paid, Ship, Shipped]
-  .allow[Shipped, Deliver, Delivered]
-```
 
 ---
 

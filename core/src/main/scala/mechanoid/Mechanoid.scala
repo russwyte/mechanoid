@@ -77,14 +77,6 @@ export machine.AnyOfEventMatcher
 // Re-export runtime
 export runtime.FSMRuntime
 
-// Re-export type-level
-export typelevel.ValidTransition
-export typelevel.TransitionSpec
-export typelevel.Allow
-export typelevel.TNil
-export typelevel.::
-export typelevel.TransitionSpecBuilder
-
 // Re-export persistence
 export persistence.StoredEvent
 export persistence.FSMSnapshot
