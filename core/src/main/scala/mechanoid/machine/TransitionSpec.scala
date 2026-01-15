@@ -1,7 +1,7 @@
 package mechanoid.machine
 
 import mechanoid.core.*
-import scala.concurrent.duration.Duration
+import zio.Duration
 
 /** Handler for what happens when a transition fires.
   *
@@ -97,6 +97,30 @@ final case class TransitionSpec[+S, +E, +Cmd](
   /** Configure timeout when entering target state. */
   def withTimeout(duration: Duration): TransitionSpec[S, E, Cmd] =
     copy(targetTimeout = Some(duration))
+
+  /** Apply an aspect to this transition spec.
+    *
+    * @example
+    *   {{{
+    * val override_ = (A via E1 to B) @@ Aspect.overriding
+    * val timed = (A via E1 to B) @@ Aspect.timeout(30.seconds, TimeoutEvent)
+    *   }}}
+    */
+  infix def @@(aspect: Aspect): TransitionSpec[S, E, Cmd] = aspect match
+    case Aspect.overriding               => copy(isOverride = true)
+    case Aspect.timeout(duration, event) =>
+      // Compute hash at runtime using the same logic as anyOf matchers
+      val className = event.getClass.getName.stripSuffix("$").replace('$', '.')
+      val hash      = event match
+        case _: scala.reflect.Enum =>
+          val caseName = event.toString
+          s"$className.$caseName".hashCode
+        case _ =>
+          className.hashCode
+      copy(
+        targetTimeout = Some(duration),
+        targetTimeoutConfig = Some(TimeoutEventConfig(event, hash)),
+      )
 end TransitionSpec
 
 object TransitionSpec:

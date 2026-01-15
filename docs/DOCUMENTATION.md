@@ -12,10 +12,10 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [FSM State Container](#fsm-state-container)
 - [Defining FSMs](#defining-fsms)
   - [Basic Definition](#basic-definition)
-  - [The buildAll Block Syntax](#the-buildall-block-syntax)
+  - [The assemblyAll Block Syntax](#the-assemblyall-block-syntax)
   - [Entry and Exit Actions](#entry-and-exit-actions)
   - [Timeouts](#timeouts)
-  - [Machine Composition](#machine-composition)
+  - [Assembly Composition](#assembly-composition)
 - [Running FSMs](#running-fsms)
   - [Simple Runtime](#simple-runtime)
   - [Persistent Runtime](#persistent-runtime)
@@ -64,7 +64,7 @@ Mechanoid provides a declarative DSL for defining finite state machines with:
 
 - **Type-safe states and events** using Scala 3 enums
 - **Ergonomic infix syntax** - `State via Event to Target`
-- **Composable machines** - build reusable FSM fragments and combine them
+- **Composable assemblies** - build reusable FSM fragments and combine them with full compile-time validation
 - **Effectful transitions** via ZIO
 - **Optional persistence** through event sourcing
 - **Durable timeouts** that survive node failures
@@ -75,18 +75,20 @@ import mechanoid.*
 import zio.*
 
 // Define states and events as plain enums
-enum OrderState:
+enum OrderState derives Finite:
   case Pending, Paid, Shipped, Delivered
 
-enum OrderEvent:
+enum OrderEvent derives Finite:
   case Pay, Ship, Deliver
 
-// Build FSM with clean infix syntax
-val orderMachine = build(
+import OrderState.*, OrderEvent.*
+
+// Create FSM with clean infix syntax
+val orderMachine = Machine(assembly[OrderState, OrderEvent](
   Pending via Pay to Paid,
   Paid via Ship to Shipped,
   Shipped via Deliver to Delivered,
-)
+))
 
 // Run the FSM
 val program = ZIO.scoped {
@@ -251,33 +253,27 @@ fsm.state.map { s =>
 
 ### Basic Definition
 
-Use the `build` function to create FSM definitions with clean infix syntax:
+Create FSM definitions using `assembly` to define transitions and `Machine` to make them runnable:
 
 ```scala
 import mechanoid.*
 
-val machine = build(
+val machine = Machine(assembly[MyState, MyEvent](
   State1 via Event1 to State2,
   State1 via Event2 to stay,
   State2 via Event3 to State3,
-)
+))
 ```
 
-Type parameters are inferred from the transitions. If you need to specify them explicitly:
-
-```scala
-val machine = build[MyState, MyEvent](
-  State1 via Event1 to State2,
-)
-```
+The `assembly` macro performs compile-time validation of transitions, and `Machine(assembly)` creates the runnable FSM.
 
 **Compile-time Validation:**
 
-The `build` macro detects duplicate transitions at compile time:
+The `assembly` macro detects duplicate transitions at compile time:
 
 ```scala
 // This will fail at compile time:
-val bad = build(
+val bad = assembly[MyState, MyEvent](
   State1 via Event1 to State2,
   State1 via Event1 to State3,  // Error: Duplicate transition
 )
@@ -286,20 +282,34 @@ val bad = build(
 To intentionally override a transition (e.g., after using `all[T]`), use `@@ Aspect.overriding`:
 
 ```scala
-val machine = build(
+val machine = Machine(assembly[MyState, MyEvent](
   all[Processing] via Cancel to Cancelled,
   (SpecialState via Cancel to Special) @@ Aspect.overriding,  // Intentional override
-)
+))
 ```
 
-When overrides are detected, the compiler emits informational messages showing which transitions are being overridden.
+**Orphan Override Warnings:**
 
-### The buildAll Block Syntax
-
-For more complex definitions with local helper values, use `buildAll`:
+If you mark a transition with `@@ Aspect.overriding` but there's nothing to override, the compiler emits a warning:
 
 ```scala
-val machine = buildAll[OrderState, OrderEvent]:
+// This will emit a compile-time warning:
+val machine = Machine(assembly[MyState, MyEvent](
+  (State1 via Event1 to State2) @@ Aspect.overriding,  // Warning: no duplicate to override
+))
+// Warning: MyState.State1 via MyEvent.Event1: marked @@ Aspect.overriding but no duplicate to override
+```
+
+This helps catch typos or refactoring issues where an override becomes orphaned.
+
+When legitimate overrides are detected, the compiler emits informational messages showing which transitions are being overridden.
+
+### The assemblyAll Block Syntax
+
+For more complex definitions with local helper values, use `assemblyAll`:
+
+```scala
+val machine = Machine(assemblyAll[OrderState, OrderEvent]:
   // Local helper vals at the top
   val buildPaymentCommand: (OrderEvent, OrderState) => List[Command] = { (event, _) =>
     event match
@@ -311,18 +321,22 @@ val machine = buildAll[OrderState, OrderEvent]:
   Created via event[InitiatePayment] to PaymentProcessing emitting buildPaymentCommand
   PaymentProcessing via event[PaymentSucceeded] to Paid
   PaymentProcessing via event[PaymentFailed] to Cancelled
+)
 ```
 
-The `buildAll` block allows mixing val definitions with transition expressions. The vals are available for use in emitting functions and other parts of the definition.
+The `assemblyAll` block allows mixing val definitions with transition expressions. The vals are available for use in emitting functions and other parts of the definition. No commas are needed between transition specs.
 
-**Important:** When including val references to `Machine` or `TransitionSpec` in a `buildAll` block, use the `include()` wrapper to avoid compiler warnings:
+**Important:** When including val references to `Assembly` in an `assemblyAll` block, use the `include()` wrapper:
 
 ```scala
-val baseMachine = build(...)
+val baseAssembly = assembly[OrderState, OrderEvent](
+  Pending via Pay to Paid,
+)
 
-val fullMachine = buildAll[OrderState, OrderEvent]:
-  include(baseMachine)  // Use include() for val references
-  AdditionalState via Event to Target
+val fullMachine = Machine(assemblyAll[OrderState, OrderEvent]:
+  include(baseAssembly)  // Use include() for assembly references
+  Paid via Ship to Shipped
+)
 ```
 
 ### Entry and Exit Actions
@@ -330,11 +344,11 @@ val fullMachine = buildAll[OrderState, OrderEvent]:
 Define actions that run when entering or leaving a state using the `withEntry` and `withExit` methods on `Machine`:
 
 ```scala
-val machine = build(
+val machine = Machine(assembly[MyState, MyEvent](
   Idle via Start to Running,
   Running via Stop to Idle,
-).withEntry(Running)(ZIO.logInfo("Entered Running state"))
- .withExit(Running)(ZIO.logInfo("Exiting Running state"))
+)).withEntry(Running)(ZIO.logInfo("Entered Running state"))
+  .withExit(Running)(ZIO.logInfo("Exiting Running state"))
 ```
 
 ### Timeouts
@@ -344,22 +358,24 @@ Mechanoid provides a flexible timeout strategy where you define your own timeout
 #### Basic Timeout Usage
 
 ```scala
-import scala.concurrent.duration.*
+import zio.Duration
 
-enum OrderEvent:
+enum OrderEvent derives Finite:
   case Pay, PaymentTimeout  // User-defined timeout event
 
-// Create a timed target - when entering this state, a timeout is scheduled
-val timedWaiting = WaitingForPayment @@ timeout(30.minutes, PaymentTimeout)
+import OrderEvent.*
 
-val machine = build(
+// Create a timed target - when entering this state, a timeout is scheduled
+val timedWaiting = WaitingForPayment @@ Aspect.timeout(Duration.fromMinutes(30), PaymentTimeout)
+
+val machine = Machine(assembly[OrderState, OrderEvent](
   Created via Pay to timedWaiting,           // Enter timed state
   WaitingForPayment via PaymentTimeout to Cancelled,  // Handle timeout
   WaitingForPayment via Paid to Confirmed,   // Or complete before timeout
-)
+))
 ```
 
-The `@@ timeout(duration, event)` syntax creates a `TimedTarget` that:
+The `@@ Aspect.timeout(duration, event)` syntax creates a `TimedTarget` that:
 1. Schedules a timeout when the FSM enters the state
 2. Fires the specified event when the timeout expires
 3. Cancels the timeout if another event is processed first
@@ -369,24 +385,28 @@ The `@@ timeout(duration, event)` syntax creates a `TimedTarget` that:
 A key feature is that **different states can use different timeout events**. This enables rich timeout handling:
 
 ```scala
-enum OrderState:
-  case Created, PaymentPending, ShipmentPending, Delivered
+import zio.Duration
 
-enum OrderEvent:
-  case Pay, Ship, Deliver
+enum OrderState derives Finite:
+  case Created, PaymentPending, ShipmentPending, Delivered, Cancelled, Refunded
+
+enum OrderEvent derives Finite:
+  case Pay, Ship, Deliver, Confirm
   case PaymentTimeout     // Fired after 30 minutes in PaymentPending
   case ShipmentTimeout    // Fired after 7 days in ShipmentPending
 
-val timedPayment = PaymentPending @@ timeout(30.minutes, PaymentTimeout)
-val timedShipment = ShipmentPending @@ timeout(7.days, ShipmentTimeout)
+import OrderState.*, OrderEvent.*
 
-val machine = build(
+val timedPayment = PaymentPending @@ Aspect.timeout(Duration.fromMinutes(30), PaymentTimeout)
+val timedShipment = ShipmentPending @@ Aspect.timeout(Duration.fromDays(7), ShipmentTimeout)
+
+val machine = Machine(assembly[OrderState, OrderEvent](
   Created via Pay to timedPayment,
   PaymentPending via PaymentTimeout to Cancelled,      // Cancel if payment times out
   PaymentPending via Confirm to timedShipment,
   ShipmentPending via ShipmentTimeout to Refunded,     // Refund if shipment times out
   ShipmentPending via Ship to Delivered,
-)
+))
 ```
 
 #### Timeout Events with Data
@@ -394,14 +414,19 @@ val machine = build(
 Since timeout events are regular events in your enum, they can carry data:
 
 ```scala
-enum SessionEvent:
+import zio.Duration
+import java.time.Instant
+
+enum SessionEvent derives Finite:
   case Action(userId: String)
   case IdleTimeout(lastActivity: Instant)  // Carries the last activity time
   case AbsoluteTimeout(sessionStart: Instant)  // Carries session start time
 
+import SessionEvent.*
+
 // Different timeouts with different data
-val idleTimedSession = Active @@ timeout(15.minutes, IdleTimeout(Instant.now()))
-val absoluteTimedSession = Active @@ timeout(8.hours, AbsoluteTimeout(Instant.now()))
+val idleTimedSession = Active @@ Aspect.timeout(Duration.fromMinutes(15), IdleTimeout(Instant.now()))
+val absoluteTimedSession = Active @@ Aspect.timeout(Duration.fromHours(8), AbsoluteTimeout(Instant.now()))
 ```
 
 #### Different Outcomes for Same State
@@ -409,21 +434,26 @@ val absoluteTimedSession = Active @@ timeout(8.hours, AbsoluteTimeout(Instant.no
 You can have multiple timeout types affecting the same state with different outcomes:
 
 ```scala
-enum AuctionState:
-  case Bidding, Extended, Sold, Expired
+import zio.Duration
 
-enum AuctionEvent:
+enum AuctionState derives Finite:
+  case Pending, Bidding, Extended, Sold, Expired
+
+enum AuctionEvent derives Finite:
   case Bid(amount: BigDecimal)
+  case StartAuction
   case ExtensionTimeout   // Short timeout - extends auction on late bids
   case FinalTimeout       // Long timeout - auction ends
 
+import AuctionState.*, AuctionEvent.*
+
 // Start with extension timeout (5 minutes)
-val biddingWithExtension = Bidding @@ timeout(5.minutes, ExtensionTimeout)
+val biddingWithExtension = Bidding @@ Aspect.timeout(Duration.fromMinutes(5), ExtensionTimeout)
 
 // After extension, use final timeout (1 minute)
-val extendedBidding = Extended @@ timeout(1.minute, FinalTimeout)
+val extendedBidding = Extended @@ Aspect.timeout(Duration.fromMinutes(1), FinalTimeout)
 
-val machine = build(
+val machine = Machine(assembly[AuctionState, AuctionEvent](
   Pending via StartAuction to biddingWithExtension,
 
   // Late bid extends the auction
@@ -433,7 +463,7 @@ val machine = build(
   // Final phase
   Extended via event[Bid] to extendedBidding,      // Reset 1-minute timer
   Extended via FinalTimeout to Sold,               // Auction ends
-)
+))
 ```
 
 #### Why User-Defined Timeout Events?
@@ -446,60 +476,96 @@ This design provides several advantages over a built-in `Timeout` singleton:
 4. **Clear intent** - Reading `PaymentTimeout` is clearer than `Timeout`
 5. **Event sourcing** - All timeout events are persisted like regular events
 
-### Machine Composition
+### Assembly Composition
 
-Machines can be composed by including them in other `build` or `buildAll` calls:
+Use `assembly` to create reusable transition fragments that can be composed with full compile-time validation:
 
 ```scala
-// Reusable behaviors
-val cancelableBehaviors = build(
+// Reusable behaviors defined as assemblies
+val cancelableBehaviors = assembly[DocumentState, DocumentEvent](
   all[InReview] via CancelReview to Draft,
   all[Approval] via Abandon to Cancelled,
 )
 
-// Compose with specific transitions
-val fullWorkflow = buildAll[DocumentState, DocumentEvent]:
-  include(cancelableBehaviors)  // Include all transitions from base machine
+// Compose assemblies with specific transitions using assemblyAll
+val fullWorkflow = Machine(assemblyAll[DocumentState, DocumentEvent]:
+  include(cancelableBehaviors)  // Include all transitions from assembly
 
   Draft via SubmitForReview to PendingReview
   PendingReview via AssignReviewer to UnderReview
+)
+
+// Or compose using assembly with include
+val fullWorkflow2 = Machine(assembly[DocumentState, DocumentEvent](
+  include(cancelableBehaviors),
+  Draft via SubmitForReview to PendingReview,
+  PendingReview via AssignReviewer to UnderReview,
+))
 ```
+
+**Key difference between `Assembly` and `Machine`:**
+- `Assembly` is a reusable fragment that **cannot be run** directly
+- `Machine(assembly)` creates a complete `Machine` that **can be run**
 
 **Duplicate Detection:**
 
-Mechanoid detects duplicate transitions (same state + event combination) at different stages depending on what can be analyzed at compile time:
+Mechanoid detects duplicate transitions (same state + event combination) at compile time in all scenarios:
 
 | Scenario | Detection | When |
 |----------|-----------|------|
 | Inline specs (`A via E to B`) | **Compile time** | Macro can inspect AST |
-| Same val used twice (`build(t1, t1)`) | **Compile time** | Symbol tracking |
-| Machine composition (`build(baseMachine, ...)`) | **Runtime** | Macro cannot see inside opaque Machine values |
+| Same val used twice | **Compile time** | Symbol tracking |
+| Assembly composition with `include()` | **Compile time** | Assembly specs are extracted at macro expansion |
 
-**Why runtime for machines?** The `build` macro receives `baseMachine` as an opaque expression - it cannot inspect its contents. Runtime detection happens immediately at machine construction (not when events are sent), so you'll get a clear error at application startup:
+**Two-Level Validation:**
+
+1. **Level 1 (Assembly scope)**: Duplicates within a single `assembly()` call are detected
+2. **Level 2 (Machine scope)**: Duplicates across multiple included assemblies and inline specs are detected
 
 ```scala
-// Compile-time detection for inline specs
-val machine = build(
+// Level 1 - Compile ERROR within assembly
+val bad = assembly[S, E](
   A via E1 to B,
   A via E1 to C,  // Compile ERROR: duplicate transition
 )
 
-// Compile-time detection for same val reference
-val t1 = A via E1 to B
-build(t1, t1)  // Compile ERROR: val 't1' used twice
+// Level 2 - Compile ERROR across assemblies
+val a1 = assembly[S, E](A via E1 to B)
+val a2 = assembly[S, E](A via E1 to C)
+val machine = Machine(assembly[S, E](
+  include(a1),
+  include(a2),  // Compile ERROR: duplicate A via E1
+))
 
-// Runtime detection for machine composition
-val extended = build(
-  baseMachine,
-  SpecificState via Cancel to Special,  // Throws IllegalArgumentException at construction
-)                                        // if baseMachine already has this transition
+// Use @@ Aspect.overriding to allow intentional overrides at the transition level
+val a2WithOverride = assembly[S, E]((A via E1 to C) @@ Aspect.overriding)
+val machine = Machine(assembly[S, E](
+  include(a1),
+  include(a2WithOverride),  // OK: a2's transitions override a1's
+))
 
-// Use @@ Aspect.overriding to allow intentional overrides
-val extended = build(
-  baseMachine,
-  (SpecificState via Cancel to Special) @@ Aspect.overriding,  // OK: intentional override
-)
+// Or override directly in the composed assembly
+val machine = Machine(assembly[S, E](
+  include(a1),
+  (A via E1 to C) @@ Aspect.overriding,  // OK: inline override wins
+))
 ```
+
+When overrides are detected, the compiler emits informational messages showing which transitions are being overridden.
+
+**Orphan Override Detection:**
+
+If an assembly or transition is marked with `@@ Aspect.overriding` but doesn't actually override anything, the compiler emits a warning when `Machine(assembly)` is called:
+
+```scala
+val orphanAssembly = assembly[S, E](
+  (A via E1 to B) @@ Aspect.overriding,  // No duplicate to override!
+)
+val machine = Machine(orphanAssembly)
+// Warning: S.A via E.E1: marked @@ Aspect.overriding but no duplicate to override
+```
+
+This helps catch refactoring issues where an override becomes orphaned after the original transition is removed.
 
 ---
 
@@ -891,11 +957,11 @@ enum OrderCommand:
   case SendNotification(message: String)
   case NotifyWarehouse(orderId: String)
 
-val machine = buildAll[OrderState, OrderEvent]:
+val machine = Machine(assemblyAll[OrderState, OrderEvent]:
   // Helper function for payment commands
   val buildPaymentCommand: (OrderEvent, OrderState) => List[OrderCommand] = { (event, _) =>
     event match
-      case e: InitiatePayment => List(ProcessPayment(e.orderId, e.amount))
+      case e: InitiatePayment => List(OrderCommand.ProcessPayment(e.orderId, e.amount))
       case _ => Nil
   }
 
@@ -905,10 +971,11 @@ val machine = buildAll[OrderState, OrderEvent]:
   // Or inline
   Paid via Ship to Shipped emitting { (event, state) =>
     List(
-      SendNotification(s"Order shipped!"),
-      NotifyWarehouse(state.orderId)
+      OrderCommand.SendNotification(s"Order shipped!"),
+      OrderCommand.NotifyWarehouse(state.orderId)
     )
   }
+)
 ```
 
 **`emitting` vs `emittingBefore`:**
@@ -1365,14 +1432,15 @@ import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 import zio.*
 import java.time.Instant
-import scala.concurrent.duration.*
 
-// Domain - plain enums, no marker traits needed
-enum OrderState:
+// Domain - plain enums with Finite derivation
+enum OrderState derives Finite:
   case Pending, AwaitingPayment, Paid, Shipped, Delivered, Cancelled
 
-enum OrderEvent:
+enum OrderEvent derives Finite:
   case Create, RequestPayment, ConfirmPayment, Ship, Deliver, Cancel, PaymentTimeout
+
+import OrderState.*, OrderEvent.*
 
 // Commands for side effects
 enum OrderCommand:
@@ -1381,10 +1449,10 @@ enum OrderCommand:
   case NotifyWarehouse(orderId: String)
 
 // Timed state - will timeout after 30 minutes
-val awaitingWithTimeout = AwaitingPayment @@ timeout(30.minutes, PaymentTimeout)
+val awaitingWithTimeout = AwaitingPayment @@ Aspect.timeout(Duration.fromMinutes(30), PaymentTimeout)
 
-// FSM Definition with new DSL
-val orderMachine = buildAll[OrderState, OrderEvent]:
+// FSM Definition
+val orderMachine = Machine(assemblyAll[OrderState, OrderEvent]:
   // Happy path
   Pending via RequestPayment to awaitingWithTimeout
   AwaitingPayment via ConfirmPayment to Paid emitting { (_, _) =>
@@ -1402,6 +1470,7 @@ val orderMachine = buildAll[OrderState, OrderEvent]:
 
   // Cancellation from multiple states
   anyOf(Pending, AwaitingPayment) via Cancel to Cancelled
+)
 
 // Add lifecycle actions
 val machineWithActions = orderMachine
@@ -1438,7 +1507,7 @@ val sweeperProgram = ZIO.scoped {
     eventStore <- ZIO.service[EventStore[String, OrderState, OrderEvent]]
 
     config = TimeoutSweeperConfig()
-      .withSweepInterval(Duration.fromSeconds(5))
+      .withSweepInterval(zio.Duration.fromSeconds(5))
       .withJitterFactor(0.2)
 
     onTimeout = TimeoutFiring.makeCallback(eventStore)

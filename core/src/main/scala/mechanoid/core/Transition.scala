@@ -1,7 +1,6 @@
 package mechanoid.core
 
 import zio.*
-import scala.concurrent.duration.Duration
 
 /** A transition definition from one state to another via an event.
   *

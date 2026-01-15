@@ -141,8 +141,11 @@ object DocumentWorkflowFSM:
   /** Group transitions that apply to entire state hierarchies.
     *
     * These are the "catch-all" behaviors that can be overridden by more specific transitions.
+    *
+    * Uses `assembly` to create a compile-time composable fragment that can be included in other machines with full
+    * duplicate detection at compile time.
     */
-  val groupBehaviors = build[DocumentState, DocumentEvent](
+  val groupBehaviors = assembly[DocumentState, DocumentEvent](
     // Any state in the review phase can be cancelled, returning to Draft
     // This single line applies to: PendingReview, UnderReview, ChangesRequested
     all[InReview] via CancelReview to Draft,
@@ -158,12 +161,13 @@ object DocumentWorkflowFSM:
 
   /** The complete workflow FSM composed using buildAll.
     *
-    * Uses `include` to incorporate the reusable `groupBehaviors` machine, then adds individual state transitions.
+    * Uses `include` to incorporate the reusable `groupBehaviors` assembly, then adds individual state transitions.
+    * Assembly composition provides full compile-time duplicate detection.
     *
     * Override semantics: Last transition wins. If a more specific transition needs to override a group behavior, use
     * `@@ Aspect.overriding`.
     */
-  val definition = buildAll[DocumentState, DocumentEvent]:
+  val definition = Machine(assemblyAll[DocumentState, DocumentEvent]:
     // Include the group behaviors (cancelable review states, abandonable approval states)
     include:
       groupBehaviors
@@ -187,6 +191,6 @@ object DocumentWorkflowFSM:
 
     // ===== Final States =====
     // Published documents can be archived
-    Published via Archive to Archived
+    Published via Archive to Archived)
 
 end DocumentWorkflowFSM

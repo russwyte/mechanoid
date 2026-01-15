@@ -100,3 +100,12 @@ lazy val examples = project
       "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
     ),
   )
+
+lazy val compileExperiments = project
+  .in(file("compile-experiments"))
+  .dependsOn(core)
+  .settings(commonSettings)
+  .settings(
+    name           := "compile-experiments",
+    publish / skip := true,
+  )

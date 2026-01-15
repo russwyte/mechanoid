@@ -1,6 +1,6 @@
 package mechanoid.visualization
 
-import scala.concurrent.duration.Duration
+import zio.Duration
 import java.time.Instant
 
 /** The kind of transition for visualization purposes. */

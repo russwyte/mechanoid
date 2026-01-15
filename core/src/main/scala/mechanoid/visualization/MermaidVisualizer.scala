@@ -3,7 +3,7 @@ package mechanoid.visualization
 import mechanoid.core.*
 import mechanoid.machine.Machine
 import mechanoid.persistence.command.*
-import scala.concurrent.duration.Duration
+import zio.Duration
 
 /** Generates Mermaid diagram syntax for FSM visualization. */
 object MermaidVisualizer:
