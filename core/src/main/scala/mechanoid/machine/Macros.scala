@@ -248,20 +248,110 @@ end extension
 // Top-level DSL functions
 // ============================================
 
-/** Match ALL children of a sealed parent type. */
+/** Match ALL children of a sealed parent type.
+  *
+  * Useful for defining transitions that apply to all subtypes of a sealed trait or enum.
+  *
+  * @example
+  *   {{{
+  * sealed trait ProcessingState extends State
+  * case object Validating extends ProcessingState
+  * case object Charging extends ProcessingState
+  *
+  * // All processing states can be cancelled
+  * all[ProcessingState] via Cancel to Cancelled
+  *   }}}
+  *
+  * @tparam T
+  *   A sealed trait, sealed class, or enum
+  * @return
+  *   A matcher that matches all leaf case children of T
+  */
 inline def all[T]: AllMatcher[T] = ${ Macros.allImpl[T] }
 
-/** Create a type-based event matcher for parameterized case classes. */
+/** Create a type-based event matcher for parameterized case classes.
+  *
+  * Useful for matching events by type rather than by value, especially for events that carry data.
+  *
+  * @example
+  *   {{{
+  * enum OrderEvent derives Finite:
+  *   case Pay(amount: BigDecimal)
+  *   case Ship
+  *
+  * // Match any Pay event, regardless of amount
+  * Pending via event[Pay] to Processing
+  *   }}}
+  *
+  * @tparam E
+  *   The event type to match
+  * @return
+  *   An EventMatcher that matches by type
+  */
 inline def event[E]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
 
-/** Create a type-based state matcher for parameterized case classes. */
+/** Create a type-based state matcher for parameterized case classes.
+  *
+  * Useful for matching states by type rather than by value, especially for states that carry data.
+  *
+  * @example
+  *   {{{
+  * enum OrderState derives Finite:
+  *   case Pending
+  *   case Failed(reason: String)
+  *
+  * // Match any Failed state, regardless of reason
+  * state[Failed] via Retry to Processing
+  *   }}}
+  *
+  * @tparam S
+  *   The state type to match
+  * @return
+  *   A StateMatcher that matches by type
+  */
 inline def state[S]: StateMatcher[S] = ${ Macros.stateMatcherImpl[S] }
 
-/** Match multiple specific state values in a single transition. */
+/** Match multiple specific state values in a single transition.
+  *
+  * Useful when several states that don't share a common parent should have the same transition.
+  *
+  * @example
+  *   {{{
+  * // Multiple states can be archived
+  * anyOf(Created, Completed, Cancelled) via Archive to Archived
+  *   }}}
+  *
+  * @tparam S
+  *   The state type
+  * @param first
+  *   The first state value to match
+  * @param rest
+  *   Additional state values to match
+  * @return
+  *   A matcher for the specified states
+  */
 inline def anyOf[S](inline first: S, inline rest: S*): AnyOfMatcher[S] =
   Macros.anyOfStatesImpl(first, rest*)
 
-/** Match multiple specific event values in a single transition. */
+/** Match multiple specific event values in a single transition.
+  *
+  * Useful when several events should trigger the same transition.
+  *
+  * @example
+  *   {{{
+  * // Multiple events trigger the same transition
+  * Idle via anyOfEvents(Click, Tap, Swipe) to Active
+  *   }}}
+  *
+  * @tparam E
+  *   The event type
+  * @param first
+  *   The first event value to match
+  * @param rest
+  *   Additional event values to match
+  * @return
+  *   A matcher for the specified events
+  */
 inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
   Macros.anyOfEventsImpl(first, rest*)
 
@@ -270,17 +360,38 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   * Assembly provides a way to define reusable transition fragments that can be composed together with full compile-time
   * validation.
   *
-  * @example
-  *   {{{
-  * import mechanoid.Mechanoid.*
+  * ==Compile-time Validation==
   *
-  * val transitions = assembly[State, Event](
+  * The macro validates transitions at compile time:
+  *   - Detects duplicate transitions (same state + event combination)
+  *   - Allows intentional overrides via `@@ Aspect.overriding`
+  *   - Tracks orphan overrides (overrides with nothing to override)
+  *
+  * ==Usage with Machine==
+  *
+  * To create a runnable FSM, wrap the assembly in `Machine(...)`:
+  * {{{
+  * val machine = Machine(assembly[State, Event](
   *   Idle via Start to Running,
   *   Running via Stop to Idle,
-  * )
+  * ))
+  * }}}
   *
-  * val machine = Machine(transitions)
-  *   }}}
+  * @tparam S
+  *   The state type (must derive Finite)
+  * @tparam E
+  *   The event type (must derive Finite)
+  * @param args
+  *   Transition specs or included assemblies
+  * @return
+  *   A composable Assembly
+  *
+  * @see
+  *   [[Machine.apply]] for creating runnable FSMs
+  * @see
+  *   [[assemblyAll]] for block syntax without commas
+  * @see
+  *   [[include]] for including other assemblies
   */
 transparent inline def assembly[S, E](
     inline args: (TransitionSpec[S, E, ?] | Included[S, E, ?])*
@@ -289,17 +400,32 @@ transparent inline def assembly[S, E](
 
 /** Create an assembly using block syntax (no commas between specs).
   *
+  * This variant allows mixing val definitions with transition specs. Useful for complex definitions where helper
+  * functions are needed.
+  *
   * @example
   *   {{{
-  * val base = assembly[S, E](A via E1 to B)
+  * val machine = Machine(assemblyAll[State, Event]:
+  *   val helper: (Event, State) => List[Cmd] = ...
   *
-  * val combined = assemblyAll[S, E]:
-  *   include(base)
-  *   B via E1 to C
-  *   C via E1 to A
-  *
-  * val machine = Machine(combined)
+  *   Idle via Start to Running emitting helper
+  *   Running via Stop to Idle
+  * )
   *   }}}
+  *
+  * @tparam S
+  *   The state type (must derive Finite)
+  * @tparam E
+  *   The event type (must derive Finite)
+  * @param block
+  *   A block containing transition specs and optional val definitions
+  * @return
+  *   A composable Assembly
+  *
+  * @see
+  *   [[assembly]] for comma-separated syntax
+  * @see
+  *   [[include]] for including other assemblies
   */
 transparent inline def assemblyAll[S, E](
     inline block: Any
@@ -308,14 +434,30 @@ transparent inline def assemblyAll[S, E](
 
 /** Include an assembly's specs in another assembly.
   *
+  * Use this to compose multiple assemblies together. The included assembly's specs are flattened into the parent
+  * assembly at compile time, enabling full duplicate detection across composed assemblies.
+  *
   * @example
   *   {{{
-  * val base = assembly[S, E](A via E1 to B)
-  * val combined = assembly[S, E](
-  *   include(base),
-  *   B via E1 to C,
-  * )
+  * val errorHandling = assembly[S, E](all[Error] via Reset to Idle)
+  * val happyPath = assembly[S, E](Idle via Start to Running)
+  *
+  * val combined = Machine(assembly[S, E](
+  *   include(errorHandling),
+  *   include(happyPath),
+  * ))
   *   }}}
+  *
+  * @tparam S
+  *   The state type
+  * @tparam E
+  *   The event type
+  * @tparam Cmd
+  *   The command type
+  * @param a
+  *   The assembly to include
+  * @return
+  *   An Included wrapper for compile-time tracking
   */
 transparent inline def include[S, E, Cmd](
     inline a: Assembly[S, E, Cmd]

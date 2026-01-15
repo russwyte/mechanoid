@@ -20,17 +20,19 @@ import mechanoid.*
 import zio.*
 
 // Define states and events as plain enums
-enum OrderState:
+enum OrderState derives Finite:
   case Pending, Paid, Shipped
 
-enum OrderEvent:
+enum OrderEvent derives Finite:
   case Pay, Ship
 
-// Build FSM with clean infix syntax and compile-time validation
-val orderMachine = build(
+import OrderState.*, OrderEvent.*
+
+// Create FSM with clean infix syntax and compile-time validation
+val orderMachine = Machine(assembly[OrderState, OrderEvent](
   Pending via Pay to Paid,
   Paid via Ship to Shipped,
-)
+))
 
 // Run
 val program = ZIO.scoped {
@@ -60,9 +62,10 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 | Component | Description |
 |-----------|-------------|
-| `build(...)` | Build a runnable Machine from transitions with compile-time validation |
-| `buildAll { ... }` | Block syntax for complex definitions with helper vals |
-| `assembly(...)` | Create reusable transition fragments for composition |
+| `assembly[S, E](...)` | Create reusable transition fragments with compile-time validation |
+| `assemblyAll[S, E]: ...` | Block syntax for assemblies (no commas between specs) |
+| `Machine(assembly)` | Create a runnable Machine from a validated Assembly |
+| `include(assembly)` | Include an assembly's specs in another assembly |
 | `Machine[S, E, Cmd]` | The FSM definition that can be started and run |
 | `Assembly[S, E, Cmd]` | Composable transition fragments (cannot run directly) |
 | `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
@@ -91,22 +94,24 @@ val program = ZIO.scoped {
 import mechanoid.*
 import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
-import scala.concurrent.duration.*
+import zio.Duration
 
-enum PaymentState:
+enum PaymentState derives Finite:
   case Pending, AwaitingPayment, Paid, Cancelled
 
-enum PaymentEvent:
+enum PaymentEvent derives Finite:
   case StartPayment, ConfirmPayment, PaymentTimeout
 
-// FSM with timeout that survives node failures
-val timedAwaiting = AwaitingPayment @@ timeout(30.minutes, PaymentTimeout)
+import PaymentState.*, PaymentEvent.*
 
-val paymentMachine = build(
+// FSM with timeout that survives node failures
+val timedAwaiting = AwaitingPayment @@ Aspect.timeout(Duration.fromMinutes(30), PaymentTimeout)
+
+val paymentMachine = Machine(assembly[PaymentState, PaymentEvent](
   Pending via StartPayment to timedAwaiting,
   AwaitingPayment via ConfirmPayment to Paid,
   AwaitingPayment via PaymentTimeout to Cancelled,
-)
+))
 
 val program = ZIO.scoped {
   for
@@ -119,7 +124,7 @@ val program = ZIO.scoped {
 // Run sweeper (typically separate process)
 val sweeper = TimeoutSweeper.make(
   TimeoutSweeperConfig()
-    .withSweepInterval(5.seconds)
+    .withSweepInterval(Duration.fromSeconds(5))
     .withJitterFactor(0.2),
   timeoutStore,
   TimeoutFiring.makeCallback(eventStore)
