@@ -670,6 +670,7 @@ private[machine] object MacroUtils:
       case Ident(name)         => name == "@@"
       case Select(_, "@@")     => true
       case TypeApply(inner, _) => isAtAtMethod(inner)
+      case Apply(inner, _)     => isAtAtMethod(inner)
       case _                   => false
 
   /** Get the base symbol from a term (handling @@ extension method patterns). */
@@ -693,6 +694,10 @@ private[machine] object MacroUtils:
   def hasOverrideAtCallSite(using Quotes)(term: quotes.reflect.Term): Boolean =
     import quotes.reflect.*
     term match
+      // Handle wrapper nodes first
+      case Inlined(_, _, inner) => hasOverrideAtCallSite(inner)
+      case Typed(inner, _)      => hasOverrideAtCallSite(inner)
+      case Block(_, expr)       => hasOverrideAtCallSite(expr)
       // Extension method pattern with double Apply
       case Apply(Apply(inner, _), aspectArgs) if isAtAtMethod(inner) && aspectArgs.nonEmpty =>
         aspectArgs.head.show.contains("overriding")
@@ -700,6 +705,7 @@ private[machine] object MacroUtils:
       case Apply(Select(_, "@@"), List(aspectArg)) =>
         aspectArg.show.contains("overriding")
       case _ => false
+    end match
   end hasOverrideAtCallSite
 
   // ====== Duplicate Detection Logic ======
@@ -744,6 +750,9 @@ private[machine] object MacroUtils:
     for (_, specList) <- registry if specList.size > 1 do
       val (first, firstIdx) = specList.head
 
+      // Check each later duplicate - the LATER spec must have override to be valid
+      // This enforces order: include(base), then (spec @@ overriding) works
+      // But: (spec @@ overriding), then include(base) fails (non-override after override)
       for (info, idx) <- specList.tail do
         if !info.isOverride then
           // Compile error for duplicate without override

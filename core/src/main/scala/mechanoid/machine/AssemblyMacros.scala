@@ -68,10 +68,8 @@ private[machine] object AssemblyMacros:
           // Match new Included(assembly, hashInfos) - without type args
           case Apply(Select(New(tpt), "<init>"), args) if tpt.show.contains("Included") && args.length >= 2 =>
             extractHashInfoList(args(1))
-          case Apply(_, List(_, hashInfosArg)) =>
-            extractHashInfoList(hashInfosArg)
-          case Apply(_, _) =>
-            Nil
+          case Apply(_, args) =>
+            if args.length >= 2 then extractHashInfoList(args(1)) else Nil
           case Inlined(_, _, inner) =>
             extractFromIncludedConstructor(inner)
           case Block(_, expr) =>
@@ -141,12 +139,10 @@ private[machine] object AssemblyMacros:
       extractFromIncludedConstructor(term)
     end extractHashInfosFromIncluded
 
-    // Get hash info from Included terms
-    val includedHashInfos: List[MacroUtils.SpecHashInfo] = includedTerms.flatMap(extractHashInfosFromIncluded)
-
-    // For direct specs, extract hash info as before
+    // For direct specs, extract hash info
     def getSpecInfo(term: Term, idx: Int): MacroUtils.SpecHashInfo =
-      val hasOverrideAtCallSite = term.show.contains("overriding")
+      val termShowStr           = term.show
+      val hasOverrideAtCallSite = termShowStr.contains("overriding")
       MacroUtils.extractHashInfo(term) match
         case Some(h) =>
           val sourceDesc =
@@ -162,26 +158,33 @@ private[machine] object AssemblyMacros:
       end match
     end getSpecInfo
 
-    val directSpecInfos = specTerms.zipWithIndex.map { case (term, idx) =>
-      val info       = getSpecInfo(term, idx)
-      val sourceDesc =
-        if info.stateNames.nonEmpty && info.eventNames.nonEmpty then
-          s"${info.stateNames.mkString(",")} via ${info.eventNames.mkString(",")}"
-        else s"spec #${idx + 1}"
-      (info.copy(sourceDesc = sourceDesc), idx)
+    // Build allSpecInfos in SOURCE ORDER by iterating over argTerms
+    // This preserves the order: include(base), then spec @@ overriding
+    var globalIdx    = 0
+    val allSpecInfos = argTerms.flatMap { term =>
+      if isTransitionSpecType(term.tpe) then
+        val info       = getSpecInfo(term, globalIdx)
+        val sourceDesc =
+          if info.stateNames.nonEmpty && info.eventNames.nonEmpty then
+            s"${info.stateNames.mkString(",")} via ${info.eventNames.mkString(",")}"
+          else s"spec #${globalIdx + 1}"
+        val result = List((info.copy(sourceDesc = sourceDesc), globalIdx))
+        globalIdx += 1
+        result
+      else if isIncludedType(term.tpe) then
+        // Extract hash infos from this Included and add them in order
+        val includedInfos = extractHashInfosFromIncluded(term)
+        includedInfos.map { info =>
+          val sourceDesc =
+            if info.stateNames.nonEmpty && info.eventNames.nonEmpty then
+              s"${info.stateNames.mkString(",")} via ${info.eventNames.mkString(",")}"
+            else s"included spec #${globalIdx + 1}"
+          val result = (info.copy(sourceDesc = sourceDesc), globalIdx)
+          globalIdx += 1
+          result
+        }
+      else Nil
     }
-
-    // Add source descriptions to included infos
-    val includedInfosWithDesc = includedHashInfos.zipWithIndex.map { case (info, idx) =>
-      val sourceDesc =
-        if info.stateNames.nonEmpty && info.eventNames.nonEmpty then
-          s"${info.stateNames.mkString(",")} via ${info.eventNames.mkString(",")}"
-        else s"included spec #${idx + 1}"
-      (info.copy(sourceDesc = sourceDesc), specTerms.size + idx)
-    }
-
-    // Combine all spec infos for validation
-    val allSpecInfos = directSpecInfos ++ includedInfosWithDesc
 
     if argTerms.isEmpty then '{ Assembly.empty[S, E] }
     else
@@ -260,10 +263,14 @@ private[machine] object AssemblyMacros:
             term.symbol.tree match
               case ValDef(_, _, Some(rhs)) => extractAssemblyHashInfos(rhs)
               case _                       => Nil
-          catch case _: Exception => Nil
-        case _ => Nil
+          catch
+            case _: Exception =>
+              Nil
+        case _ =>
+          Nil
 
-    val hashInfoTerms = extractAssemblyHashInfos(assemblyExpr.asTerm)
+    val term          = assemblyExpr.asTerm
+    val hashInfoTerms = extractAssemblyHashInfos(term)
 
     if hashInfoTerms.nonEmpty then
       // Convert the literal IncludedHashInfo constructors to expressions
