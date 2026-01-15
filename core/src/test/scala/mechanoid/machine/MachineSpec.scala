@@ -365,31 +365,31 @@ object MachineSpec extends ZIOSpecDefault:
           broaderMachine.specs.size == 2,
         )
       },
-      test("buildAll supports machine composition") {
-        // Base machine
-        val baseMachine = build[TestState, TestEvent](
+      test("buildAll supports assembly composition") {
+        // Base assembly (compile-time composable)
+        val baseAssembly = assembly[TestState, TestEvent](
           A via E1 to B
         )
 
         // Compose with additional specs using buildAll
         val combined = buildAll[TestState, TestEvent]:
           include:
-            baseMachine
+            baseAssembly
           B via E1 to C
 
         assertTrue(combined.specs.size == 2)
       },
-      test("buildAll with only machines") {
-        // Two different machines
-        val machine1 = build[TestState, TestEvent](A via E1 to B)
-        val machine2 = build[TestState, TestEvent](B via E1 to C)
+      test("buildAll with only assemblies") {
+        // Two different assemblies
+        val assembly1 = assembly[TestState, TestEvent](A via E1 to B)
+        val assembly2 = assembly[TestState, TestEvent](B via E1 to C)
 
-        // Compose both machines
+        // Compose both assemblies
         val combined = buildAll[TestState, TestEvent]:
           include:
-            machine1
+            assembly1
           include:
-            machine2
+            assembly2
 
         assertTrue(combined.specs.size == 2)
       },
@@ -406,13 +406,13 @@ object MachineSpec extends ZIOSpecDefault:
 
         assertTrue(combined.specs.size == 2)
       },
-      test("buildAll with mixed Machine and TransitionSpec vals") {
-        val baseMachine = build[TestState, TestEvent](A via E1 to B)
-        val t1          = B via E1 to C
+      test("buildAll with mixed Assembly and TransitionSpec vals") {
+        val baseAssembly = assembly[TestState, TestEvent](A via E1 to B)
+        val t1           = B via E1 to C
 
         val combined = buildAll[TestState, TestEvent]:
           include:
-            baseMachine
+            baseAssembly
           include:
             t1
 
@@ -587,26 +587,26 @@ object MachineSpec extends ZIOSpecDefault:
         )
       },
     ),
-    suite("machine composition")(
-      test("build with nested machine - combines specs") {
-        val baseMachine = build[TestState, TestEvent](
+    suite("assembly composition")(
+      test("build with assembly - combines specs") {
+        val baseAssembly = assembly[TestState, TestEvent](
           A via E1 to B
         )
 
         val combined = build[TestState, TestEvent](
-          baseMachine,
+          baseAssembly,
           B via E1 to C,
         )
 
         assertTrue(combined.specs.size == 2)
       },
-      test("build with nested machine - transitions work") {
-        val baseMachine = build[TestState, TestEvent](
+      test("build with assembly - transitions work") {
+        val baseAssembly = assembly[TestState, TestEvent](
           A via E1 to B
         )
 
         val combined = build[TestState, TestEvent](
-          baseMachine,
+          baseAssembly,
           B via E1 to C,
         )
 
@@ -619,13 +619,13 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == C)
         }
       },
-      test("build with nested machine and override - override wins") {
-        val baseMachine = build[TestState, TestEvent](
+      test("build with assembly and override - override wins") {
+        val baseAssembly = assembly[TestState, TestEvent](
           A via E1 to B
         )
 
         val combined = build[TestState, TestEvent](
-          baseMachine,
+          baseAssembly,
           (A via E1 to C) @@ Aspect.overriding, // Override: A -> C instead of A -> B
         )
 
@@ -637,18 +637,18 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == C) // Override wins
         }
       },
-      test("build with multiple nested machines") {
-        val machine1 = build[TestState, TestEvent](
+      test("build with multiple assemblies") {
+        val assembly1 = assembly[TestState, TestEvent](
           A via E1 to B
         )
 
-        val machine2 = build[TestState, TestEvent](
+        val assembly2 = assembly[TestState, TestEvent](
           B via E1 to C
         )
 
         val combined = build[TestState, TestEvent](
-          machine1,
-          machine2,
+          assembly1,
+          assembly2,
         )
 
         ZIO.scoped {
@@ -660,13 +660,13 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == C)
         }
       },
-      test("build with nested machine preserves commands") {
-        val baseMachine = build[TestState, TestEvent](
+      test("build with assembly preserves commands") {
+        val baseAssembly = assembly[TestState, TestEvent](
           (A via E1 to B).emitting((_, _) => List(SendEmail("from-base@example.com")))
         )
 
         val combined = build[TestState, TestEvent](
-          baseMachine,
+          baseAssembly,
           B via E1 to C,
         )
 
@@ -675,33 +675,16 @@ object MachineSpec extends ZIOSpecDefault:
           combined.specs.size == 2,
         )
       },
-      test("build with nested machine - duplicate without override fails at construction") {
-        val baseMachine = build[TestState, TestEvent](
-          A via E1 to B
-        )
+      // Note: "duplicate without override fails" is now a compile-time error for assemblies,
+      // so we can't test it at runtime. This is the benefit of Assembly composition.
 
-        // This should throw IllegalArgumentException when constructing
-        val result = ZIO.attempt {
-          build[TestState, TestEvent](
-            baseMachine,
-            A via E1 to C, // Duplicate without override!
-          )
-        }
-
-        result.flip.map { error =>
-          assertTrue(
-            error.isInstanceOf[IllegalArgumentException],
-            error.getMessage.contains("Duplicate transition"),
-          )
-        }
-      },
-      test("build with hierarchical states in nested machine") {
-        val baseMachine = build[ParentState, InputEvent](
+      test("build with hierarchical states in assembly") {
+        val baseAssembly = assembly[ParentState, InputEvent](
           all[ParentState] via Click to ChildC // Default: all children go to ChildC
         )
 
         val combined = build[ParentState, InputEvent](
-          baseMachine,
+          baseAssembly,
           (ChildA via Click to ChildB) @@ Aspect.overriding, // Override: ChildA goes to ChildB
         )
 
@@ -717,6 +700,29 @@ object MachineSpec extends ZIOSpecDefault:
             state1 == ChildB, // ChildA uses override -> ChildB
             state2 == ChildC, // ChildB uses default -> ChildC
           )
+        }
+      },
+      test("assembly marked as overriding overrides previous assembly") {
+        val assembly1 = assembly[TestState, TestEvent](
+          A via E1 to B
+        )
+
+        val assembly2 = assembly[TestState, TestEvent](
+          A via E1 to C
+        )
+
+        // assembly2 is marked as overriding, so A via E1 -> C wins
+        val combined = build[TestState, TestEvent](
+          assembly1,
+          assembly2 @@ Aspect.overriding,
+        )
+
+        ZIO.scoped {
+          for
+            fsm   <- combined.start(A)
+            _     <- fsm.send(E1)
+            state <- fsm.currentState
+          yield assertTrue(state == C)
         }
       },
     ),
@@ -756,13 +762,13 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == C) // Last override wins: A -> C
         }
       },
-      test("composed machine - override in child machine overrides parent") {
-        val baseMachine = build[TestState, TestEvent](
+      test("composed assembly - override in child assembly overrides parent") {
+        val baseAssembly = assembly[TestState, TestEvent](
           A via E1 to B // Base: A -> B
         )
 
         val extendedMachine = build[TestState, TestEvent](
-          baseMachine,
+          baseAssembly,
           (A via E1 to C) @@ Aspect.overriding, // Override: A -> C
         )
 
@@ -774,19 +780,19 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == C) // Override wins
         }
       },
-      test("composed machine - later machine's transitions override earlier") {
-        val machine1 = build[TestState, TestEvent](
-          A via E1 to B // machine1: A -> B
+      test("composed assembly - later assembly's transitions override earlier") {
+        val assembly1 = assembly[TestState, TestEvent](
+          A via E1 to B // assembly1: A -> B
         )
 
-        val machine2 = build[TestState, TestEvent](
-          (A via E1 to C) @@ Aspect.overriding // machine2: A -> C (override)
+        val assembly2 = assembly[TestState, TestEvent](
+          (A via E1 to C) @@ Aspect.overriding // assembly2: A -> C (override)
         )
 
-        // Order matters - machine2 specs come after machine1 specs
+        // Order matters - assembly2 specs come after assembly1 specs
         val combined = build[TestState, TestEvent](
-          machine1,
-          machine2,
+          assembly1,
+          assembly2,
         )
 
         ZIO.scoped {
@@ -794,49 +800,41 @@ object MachineSpec extends ZIOSpecDefault:
             fsm   <- combined.start(A)
             _     <- fsm.send(E1)
             state <- fsm.currentState
-          yield assertTrue(state == C) // machine2's override wins
+          yield assertTrue(state == C) // assembly2's override wins
         }
       },
-      test("composed machine - reversing order changes winner") {
-        val machine1 = build[TestState, TestEvent](
-          (A via E1 to B) @@ Aspect.overriding // machine1: A -> B (override)
+      test("composed assembly - assembly with override wins when last") {
+        val assembly1 = assembly[TestState, TestEvent](
+          (A via E1 to B) @@ Aspect.overriding // assembly1: A -> B (override)
         )
 
-        val machine2 = build[TestState, TestEvent](
-          A via E1 to C // machine2: A -> C (not override - will fail without override)
+        // assembly1 marked as override, combined with another assembly
+        // Note: With Assembly, we need @@ Aspect.overriding for conflicting transitions
+        val combined = build[TestState, TestEvent](
+          A via E1 to C, // First: A -> C
+          assembly1,     // Second: assembly1's A -> B override wins
         )
 
-        // machine1 comes second, but machine2 doesn't have override so it fails
-        val result = ZIO.attempt {
-          build[TestState, TestEvent](
-            machine2,
-            machine1, // machine1 has override, so it will win
-          )
+        ZIO.scoped {
+          for
+            fsm   <- combined.start(A)
+            _     <- fsm.send(E1)
+            state <- fsm.currentState
+          yield assertTrue(state == B) // assembly1's override wins (it comes last)
         }
-
-        // This should succeed because machine1 has override
-        result.map { combined =>
-          ZIO.scoped {
-            for
-              fsm   <- combined.start(A)
-              _     <- fsm.send(E1)
-              state <- fsm.currentState
-            yield assertTrue(state == B) // machine1's override wins (it comes last)
-          }
-        }.flatten
       },
-      test("deeply nested composition - last in flattened tree wins") {
-        // Three levels of composition
-        val base = build[TestState, TestEvent](
+      test("deeply nested assembly composition - last override wins") {
+        // Three assemblies composed together
+        val base = assembly[TestState, TestEvent](
           A via E1 to B // Base: A -> B
         )
 
-        val middle = build[TestState, TestEvent](
-          base,
-          (A via E1 to C) @@ Aspect.overriding, // Middle override: A -> C
+        val middle = assembly[TestState, TestEvent](
+          (A via E1 to C) @@ Aspect.overriding // Middle override: A -> C
         )
 
         val top = build[TestState, TestEvent](
+          base,
           middle,
           (A via E1 to A) @@ Aspect.overriding, // Top override: A -> A
         )
@@ -851,13 +849,13 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == A) // Top override wins
         }
       },
-      test("composed machine with hierarchical states - override specific child") {
-        val baseMachine = build[ParentState, InputEvent](
+      test("composed assembly with hierarchical states - override specific child") {
+        val baseAssembly = assembly[ParentState, InputEvent](
           all[ParentState] via Click to ChildC // Default: all children -> ChildC
         )
 
         val extended = build[ParentState, InputEvent](
-          baseMachine,
+          baseAssembly,
           (ChildA via Click to ChildA) @@ Aspect.overriding, // ChildA stays
           (ChildB via Click to ChildB) @@ Aspect.overriding, // ChildB stays
         )
@@ -894,39 +892,28 @@ object MachineSpec extends ZIOSpecDefault:
           yield assertTrue(state == A) // Last override wins
         }
       },
-      test("buildAll with machines - last in flattened list wins") {
-        val machine1 = build[TestState, TestEvent](A via E1 to B)
-        val machine2 = build[TestState, TestEvent]((A via E1 to C))
+      test("buildAll with assemblies - inline override wins") {
+        // With Assembly, we use @@ Aspect.overriding to handle duplicate transitions
+        val assembly1 = assembly[TestState, TestEvent](A via E1 to B)
+        val assembly2 = assembly[TestState, TestEvent]((A via E1 to C))
 
+        // assembly2 is marked as overriding to resolve conflict, then inline override is last
         val combined = buildAll[TestState, TestEvent]:
           include:
-            machine1
+            assembly1
           include:
-            machine2                           // Last
-          (A via E1 to A) @@ Aspect.overriding // Even later
+            assembly2 @@ Aspect.overriding     // Override assembly1
+          (A via E1 to A) @@ Aspect.overriding // Even later override
 
-        // Without override, this should fail at construction time
-        // (wrap in ZIO.attempt to verify the failure)
-        val combinedShouldFailResult = ZIO.attempt {
-          buildAll[TestState, TestEvent]:
-            include:
-              machine1
-            include:
-              machine2
-        }
+        // Note: Without @@ Aspect.overriding on assembly2, this would be a COMPILE-TIME error
+        // (the benefit of Assembly over Machine composition)
 
         ZIO.scoped {
           for
-            // Verify the override version works
             fsm   <- combined.start(A)
             _     <- fsm.send(E1)
             state <- fsm.currentState
-            // Verify the non-override version fails
-            shouldFailError <- combinedShouldFailResult.flip
-          yield assertTrue(
-            state == A, // Inline override is last
-            shouldFailError.getMessage.contains("Duplicate transition"),
-          )
+          yield assertTrue(state == A) // Inline override is last
         }
       },
     ),

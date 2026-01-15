@@ -426,17 +426,18 @@ object Macros:
   /** Implementation of `build` macro with inferred command type.
     *
     * This macro:
-    *   1. Accepts both TransitionSpec and Machine arguments
-    *   2. Extracts specs from nested machines at runtime
-    *   3. Performs compile-time duplicate detection for inline specs
-    *   4. Extracts command types from `emitting` and `emittingBefore` calls
-    *   5. Computes the LUB (least upper bound) of all command types
-    *   6. Returns Machine[S, E, Cmd] with the inferred Cmd type
+    *   1. Accepts TransitionSpec, Assembly, and Machine arguments
+    *   2. Extracts specs from Assembly at compile time (Level 2 validation)
+    *   3. Extracts specs from nested machines at runtime
+    *   4. Performs compile-time duplicate detection for inline specs and assemblies
+    *   5. Extracts command types from `emitting` and `emittingBefore` calls
+    *   6. Computes the LUB (least upper bound) of all command types
+    *   7. Returns Machine[S, E, Cmd] with the inferred Cmd type
     *
     * Note: Duplicate detection across nested machines happens at runtime in fromSpecs.
     */
   def buildWithInferredCmdImpl[S: Type, E: Type](
-      args: Expr[Seq[TransitionSpec[S, E, ?] | Machine[S, E, ?]]]
+      args: Expr[Seq[TransitionSpec[S, E, ?] | Assembly[S, E, ?]]]
   )(using Quotes): Expr[Machine[S, E, ?]] =
     import quotes.reflect.*
 
@@ -445,6 +446,13 @@ object Macros:
       tpe.dealias.widen match
         case AppliedType(base, _) =>
           base.typeSymbol.fullName == "mechanoid.machine.Machine"
+        case _ => false
+
+    // Check if a type is Assembly[_, _, _]
+    def isAssemblyType(tpe: TypeRepr): Boolean =
+      tpe.dealias.widen match
+        case AppliedType(base, _) =>
+          base.typeSymbol.fullName == "mechanoid.machine.Assembly"
         case _ => false
 
     // Check if a type is TransitionSpec[_, _, _]
@@ -460,18 +468,140 @@ object Macros:
       case other          =>
         report.errorAndAbort(s"Expected varargs, got: ${other.show}")
 
-    // Separate machines from inline specs
-    val (machineExprs, specExprs): (List[Expr[Machine[S, E, ?]]], List[Expr[TransitionSpec[S, E, ?]]]) =
-      (rawExprs.foldLeft((List.empty[Expr[Machine[S, E, ?]]], List.empty[Expr[TransitionSpec[S, E, ?]]])) {
-        case ((machines, specs), expr) =>
-          val tpe = expr.asTerm.tpe.widen
-          if isMachineType(tpe) then (machines :+ expr.asInstanceOf[Expr[Machine[S, E, ?]]], specs)
-          else if isTransitionSpecType(tpe) then (machines, specs :+ expr.asInstanceOf[Expr[TransitionSpec[S, E, ?]]])
-          else
-            report.errorAndAbort(
-              s"build() expects TransitionSpec or Machine arguments, got: ${tpe.show}"
-            )
-      }): @unchecked
+    // Separate assemblies and inline specs, reject Machines with helpful error
+    case class SeparatedArgs(
+        assemblies: List[Expr[Assembly[S, E, ?]]],
+        specs: List[Expr[TransitionSpec[S, E, ?]]],
+    )
+
+    val separated = rawExprs.foldLeft(SeparatedArgs(Nil, Nil)) { case (acc, expr) =>
+      val tpe = expr.asTerm.tpe.widen
+      if isAssemblyType(tpe) then acc.copy(assemblies = acc.assemblies :+ expr.asInstanceOf[Expr[Assembly[S, E, ?]]])
+      else if isMachineType(tpe) then
+        report.errorAndAbort(
+          s"""Machine composition is not supported. Use Assembly instead.
+             |
+             |  BEFORE (no longer works):
+             |    val base = build[S, E](...)
+             |    val extended = build[S, E](base, ...)
+             |
+             |  AFTER (use Assembly for reusable fragments):
+             |    val base = assembly[S, E](...)
+             |    val extended = build[S, E](base, ...)
+             |
+             |Assembly provides compile-time duplicate detection that Machine composition cannot.""".stripMargin
+        )
+      else if isTransitionSpecType(tpe) then
+        acc.copy(specs = acc.specs :+ expr.asInstanceOf[Expr[TransitionSpec[S, E, ?]]])
+      else
+        report.errorAndAbort(
+          s"build() expects TransitionSpec or Assembly arguments, got: ${tpe.show}"
+        )
+      end if
+    }
+
+    val assemblyExprs = separated.assemblies
+    val specExprs     = separated.specs
+
+    // ============================================
+    // Extract specs from Assemblies at compile time (Level 2 validation)
+    // ============================================
+
+    // Extract specs from Assembly constructor: Assembly.apply(List(...)) or new Assembly(List(...))
+    def extractAssemblySpecTerms(term: Term): List[Term] =
+      def extractListElements(listTerm: Term): List[Term] =
+        listTerm match
+          case Apply(TypeApply(Select(Ident("List"), "apply"), _), elems)                  => elems
+          case Apply(TypeApply(Select(Select(Ident("scala"), "List"), "apply"), _), elems) => elems
+          case Apply(TypeApply(Select(Ident("Nil"), ":::"), _), List(other))               => extractListElements(other)
+          case Apply(Select(Ident("List"), "apply"), elems)                                => elems
+          case Apply(Select(Select(Ident("scala"), "List"), "apply"), elems)               => elems
+          case Select(Ident("scala"), "Nil")                                               => Nil
+          case Ident("Nil")                                                                => Nil
+          case Typed(inner, _)                                                             => extractListElements(inner)
+          case Inlined(_, _, inner)                                                        => extractListElements(inner)
+          case _                                                                           => Nil
+
+      term match
+        // Assembly.apply(List(...)) - various patterns
+        case Apply(TypeApply(Select(Ident("Assembly"), "apply"), _), List(listArg)) =>
+          extractListElements(listArg)
+        case Apply(TypeApply(Select(Select(_, "Assembly"), "apply"), _), List(listArg)) =>
+          extractListElements(listArg)
+        case Apply(Select(Ident("Assembly"), "apply"), List(listArg)) =>
+          extractListElements(listArg)
+        case Apply(Select(Select(_, "Assembly"), "apply"), List(listArg)) =>
+          extractListElements(listArg)
+        // Match by type - if term shows Assembly.apply
+        case Apply(fn, List(listArg)) if fn.show.contains("Assembly") && fn.show.contains("apply") =>
+          extractListElements(listArg)
+        // new Assembly(List(...))
+        case Apply(Select(New(tpt), "<init>"), List(listArg)) if tpt.show.contains("Assembly") =>
+          extractListElements(listArg)
+        case Apply(TypeApply(Select(New(tpt), "<init>"), _), List(listArg)) if tpt.show.contains("Assembly") =>
+          extractListElements(listArg)
+        // Inlined wrapper
+        case Inlined(_, _, inner) => extractAssemblySpecTerms(inner)
+        // Block wrapper
+        case Block(_, expr) => extractAssemblySpecTerms(expr)
+        // Typed wrapper
+        case Typed(inner, _) => extractAssemblySpecTerms(inner)
+        // Val reference
+        case Ident(_) =>
+          try
+            term.symbol.tree match
+              case ValDef(_, _, Some(rhs)) => extractAssemblySpecTerms(rhs)
+              case _                       => Nil
+          catch
+            case _: Exception => Nil
+        // Assembly with @@ applied
+        case Apply(Select(base, "@@"), _) => extractAssemblySpecTerms(base)
+        case _                            => Nil
+      end match
+    end extractAssemblySpecTerms
+
+    // Check if assembly has @@ Aspect.overriding applied
+    def hasAssemblyOverride(term: Term): Boolean =
+      term match
+        case Apply(Select(_, "@@"), List(aspectArg)) => aspectArg.show.contains("overriding")
+        case Inlined(_, _, inner)                    => hasAssemblyOverride(inner)
+        case _                                       => false
+
+    // Extract specs from each assembly and track override status
+    case class AssemblySpecInfo(
+        specTerms: List[Term],
+        isOverriding: Boolean,
+        sourceName: String,
+    )
+
+    val assemblySpecInfos: List[AssemblySpecInfo] = assemblyExprs.zipWithIndex.map { case (expr, idx) =>
+      val term         = expr.asTerm
+      val specTerms    = extractAssemblySpecTerms(term)
+      val isOverriding = hasAssemblyOverride(term)
+      val sourceName   = term match
+        case Ident(name) => name
+        case _           => s"assembly${idx + 1}"
+      AssemblySpecInfo(specTerms, isOverriding, sourceName)
+    }
+
+    // Build map from spec index to assembly override status
+    var assemblySpecOverrideFlags: Map[Int, (Boolean, String)] = Map.empty
+    var assemblySpecIdx                                        = specExprs.size
+    for info <- assemblySpecInfos do
+      for _ <- info.specTerms do
+        assemblySpecOverrideFlags =
+          assemblySpecOverrideFlags + (assemblySpecIdx -> (info.isOverriding, info.sourceName))
+        assemblySpecIdx += 1
+
+    // Flatten all assembly spec terms
+    val assemblySpecTerms: List[Term] = assemblySpecInfos.flatMap(_.specTerms)
+
+    // Convert to expressions for unified processing
+    val assemblySpecExprs: List[Expr[TransitionSpec[S, E, ?]]] =
+      assemblySpecTerms.map(_.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, ?]]])
+
+    // Combine inline specs with assembly specs for duplicate detection
+    val allSpecExprsForValidation = specExprs ++ assemblySpecExprs
 
     // Compile-time duplicate detection based on state/event hashes
     // Works for both inline expressions AND val references by looking up val definitions
@@ -603,24 +733,39 @@ object Macros:
       // Check for override at the call site (e.g., t1 @@ Aspect.overriding)
       val hasOverrideAtCallSite = term.show.contains("overriding")
 
+      // Check if this spec came from an overriding assembly
+      val (hasOverrideFromAssembly, assemblySourceName) =
+        assemblySpecOverrideFlags.getOrElse(idx, (false, ""))
+
+      val isOverrideMarked = hasOverrideAtCallSite || hasOverrideFromAssembly
+
       info match
         case Some(h) =>
           val sourceDesc =
-            if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
+            if assemblySourceName.nonEmpty then
+              val transitionDesc =
+                if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
+                  s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
+                else s"spec #${idx + 1}"
+              s"$transitionDesc ($assemblySourceName)"
+            else if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
               s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
             else s"spec #${idx + 1}"
           h.copy(
-            isOverride = h.isOverride || hasOverrideAtCallSite,
+            isOverride = h.isOverride || isOverrideMarked,
             sourceDesc = sourceDesc,
           )
         case None =>
           // Fallback - couldn't extract hashes, runtime detection will catch duplicates
-          SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", hasOverrideAtCallSite, s"spec #${idx + 1}")
+          val sourceDesc =
+            if assemblySourceName.nonEmpty then s"spec #${idx + 1} ($assemblySourceName)"
+            else s"spec #${idx + 1}"
+          SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", isOverrideMarked, sourceDesc)
       end match
     end getSpecInfo
 
-    // Extract info from all specs
-    val specInfos = specExprs.zipWithIndex.map { case (expr, idx) =>
+    // Extract info from all specs (inline + assembly)
+    val specInfos = allSpecExprsForValidation.zipWithIndex.map { case (expr, idx) =>
       (getSpecInfo(expr, idx), idx)
     }
 
@@ -731,8 +876,8 @@ object Macros:
         s"[mechanoid] Val override (${symbolOverrideInfos.size} overrides):\n${symbolOverrideInfos.mkString("\n")}"
       )
 
-    // Extract command type from TransitionSpec[S, E, Cmd] type
-    def extractCmdTypeFromSpec(expr: Expr[TransitionSpec[S, E, ?]]): Option[TypeRepr] =
+    // Extract command type from TransitionSpec[S, E, Cmd] or Assembly[S, E, Cmd] type
+    def extractCmdType(expr: Expr[?]): Option[TypeRepr] =
       val tpe = expr.asTerm.tpe.widen
       tpe match
         case AppliedType(_, List(_, _, cmdType)) =>
@@ -741,19 +886,10 @@ object Macros:
           else Some(cmdType)
         case _ => None
 
-    // Extract command type from Machine[S, E, Cmd] type
-    def extractCmdTypeFromMachine(expr: Expr[Machine[S, E, ?]]): Option[TypeRepr] =
-      val tpe = expr.asTerm.tpe.widen
-      tpe match
-        case AppliedType(_, List(_, _, cmdType)) =>
-          if cmdType =:= TypeRepr.of[Nothing] then None
-          else Some(cmdType)
-        case _ => None
-
-    // Collect all command types from specs and machines
-    val specCmdTypes    = specExprs.flatMap(extractCmdTypeFromSpec)
-    val machineCmdTypes = machineExprs.flatMap(extractCmdTypeFromMachine)
-    val allCmdTypes     = specCmdTypes ++ machineCmdTypes
+    // Collect all command types from specs and assemblies
+    val specCmdTypes     = specExprs.flatMap(extractCmdType)
+    val assemblyCmdTypes = assemblyExprs.flatMap(extractCmdType)
+    val allCmdTypes      = specCmdTypes ++ assemblyCmdTypes
 
     // Compute LUB (least upper bound / nearest common ancestor) of all command types
     val inferredCmdType: TypeRepr =
@@ -788,42 +924,39 @@ object Macros:
     // Build with the inferred command type
     inferredCmdType.asType match
       case '[cmd] =>
-        // Create expressions for inline specs list
-        val inlineSpecsExpr: Expr[List[TransitionSpec[S, E, cmd]]] =
-          Expr.ofList(specExprs.map(_.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]]))
+        // Generate the Machine creation expression
+        // Preserve original argument order - iterate through rawExprs and expand each in place
+        val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, cmd]]]] = rawExprs.map { expr =>
+          val tpe = expr.asTerm.tpe.widen
+          if isAssemblyType(tpe) then
+            // Assembly - access .specs at runtime
+            '{ ${ expr.asExprOf[Assembly[S, E, cmd]] }.specs }
+          else
+            // TransitionSpec - wrap in single-element list
+            '{ List(${ expr.asExprOf[TransitionSpec[S, E, cmd]] }) }
+        }
+        val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, cmd]]]] =
+          Expr.ofList(orderedSpecLists)
 
-        // Create expression that extracts and combines all specs
-        if machineExprs.isEmpty then
-          // No machines - just use inline specs
-          '{
-            given Finite[S] = $stateEnumExpr
-            given Finite[E] = $eventEnumExpr
-            Machine.fromSpecs[S, E, cmd]($inlineSpecsExpr)
-          }
-        else
-          // Has machines - combine machine specs with inline specs
-          val machineListExpr: Expr[List[Machine[S, E, ?]]] = Expr.ofList(machineExprs)
-          '{
-            given Finite[S]  = $stateEnumExpr
-            given Finite[E]  = $eventEnumExpr
-            val machineSpecs = $machineListExpr.flatMap(_.specs.asInstanceOf[List[TransitionSpec[S, E, cmd]]])
-            val allSpecs     = machineSpecs ++ $inlineSpecsExpr
-            Machine.fromSpecs[S, E, cmd](allSpecs)
-          }
-        end if
+        '{
+          given Finite[S] = $stateEnumExpr
+          given Finite[E] = $eventEnumExpr
+          val allSpecs    = $orderedSpecListsExpr.flatten
+          Machine.fromSpecs[S, E, cmd](allSpecs)
+        }
     end match
   end buildWithInferredCmdImpl
 
-  /** Implementation of `buildAll` macro - collects specs and machines from a block.
+  /** Implementation of `buildAll` macro - collects specs and assemblies from a block.
     *
     * This macro has full parity with `build`:
     *   1. Pattern matches on Block(statements, finalExpr)
     *   2. Preserves local val definitions in the generated code
-    *   3. Extracts all TransitionSpec AND Machine expressions from the block
-    *   4. Performs hash-based duplicate detection at compile time
+    *   3. Extracts all TransitionSpec AND Assembly expressions from the block
+    *   4. Performs hash-based duplicate detection at compile time (Level 2 validation)
     *   5. Performs symbol-based duplicate detection (same val used twice)
     *   6. Emits override info messages via report.info()
-    *   7. Infers command type from emitting/emittingBefore calls and machines
+    *   7. Infers command type from specs and assemblies
     *   8. Returns Machine[S, E, Cmd]
     *   9. Requires include() wrapper for val references (enforced at compile time)
     *
@@ -838,6 +971,7 @@ object Macros:
     val term                   = block.asTerm
     val transitionSpecTypeName = "TransitionSpec"
     val machineTypeName        = "mechanoid.machine.Machine"
+    val assemblyTypeName       = "mechanoid.machine.Assembly"
 
     // Check if a term has TransitionSpec type
     def isTransitionSpec(term: Term): Boolean =
@@ -851,6 +985,13 @@ object Macros:
       term.tpe.dealias.widen match
         case AppliedType(base, _) =>
           base.typeSymbol.fullName == machineTypeName
+        case _ => false
+
+    // Check if a term has Assembly type
+    def isAssembly(term: Term): Boolean =
+      term.tpe.dealias.widen match
+        case AppliedType(base, _) =>
+          base.typeSymbol.fullName == assemblyTypeName
         case _ => false
 
     // Check if a term is wrapped in include()
@@ -867,24 +1008,24 @@ object Macros:
         case Inlined(None, _, inner) => isIncludeCall(inner)
         case _                       => false
 
-    // Check if a term is a simple val reference (Ident) to a Machine or TransitionSpec
-    // that is NOT wrapped in include()
+    // Check if a term is a simple val reference (Ident) to an Assembly or TransitionSpec
+    // that is NOT wrapped in include(). Machine check kept for error detection.
     def isUnwrappedValRef(term: Term): Boolean =
       // First check if this is an include() call - if so, it's not unwrapped
       if isIncludeCall(term) then false
       else
         term match
           case Ident(_) =>
-            isMachine(term) || isTransitionSpec(term)
+            isMachine(term) || isAssembly(term) || isTransitionSpec(term)
           // Handle inlined expressions - look inside
           case Inlined(_, _, inner) =>
             isUnwrappedValRef(inner)
           case _ => false
 
-    // Check if a statement is a ValDef that is neither TransitionSpec nor Machine
-    // These are helper vals that should be preserved
+    // Check if a statement is a ValDef that is neither TransitionSpec nor Assembly
+    // These are helper vals that should be preserved. Machine check kept for filtering.
     def isHelperValDef(stmt: Statement): Boolean = stmt match
-      case ValDef(_, _, Some(rhs)) => !isTransitionSpec(rhs) && !isMachine(rhs)
+      case ValDef(_, _, Some(rhs)) => !isTransitionSpec(rhs) && !isMachine(rhs) && !isAssembly(rhs)
       case _                       => false
 
     // Validate statements - val refs must use include()
@@ -903,8 +1044,17 @@ object Macros:
         )
       case _ => () // OK - inline expression or already wrapped
 
-    // Collect TransitionSpec expressions, Machine expressions, and helper vals from the block
-    def processBlock(t: Term): (List[Statement], List[Term], List[Term]) = t match
+    // Result type for processBlock
+    // orderedTerms preserves the original order of specs and assemblies for code generation
+    case class BlockContents(
+        helperVals: List[Statement],
+        specTerms: List[Term],
+        assemblyTerms: List[Term],
+        orderedTerms: List[Term], // All specs and assemblies in original order
+    )
+
+    // Collect TransitionSpec, Machine, Assembly expressions, and helper vals from the block
+    def processBlock(t: Term): BlockContents = t match
       case Block(statements, finalExpr) =>
         // Validate each statement - val refs must use include()
         statements.foreach(validateStatement)
@@ -913,14 +1063,13 @@ object Macros:
           case term: Term if isUnwrappedValRef(term) => validateStatement(term)
           case _                                     => ()
 
-        // Collect helper vals (non-TransitionSpec, non-Machine vals)
+        // Collect helper vals (non-TransitionSpec, non-Machine, non-Assembly vals)
         val helperVals = statements.filter(isHelperValDef)
 
         // Collect TransitionSpec expressions
         val specTerms = statements.flatMap {
           case term: Term if isTransitionSpec(term)                => List(term)
           case ValDef(name, _, Some(rhs)) if isTransitionSpec(rhs) =>
-            // Create reference to the val (so the spec is captured properly)
             List(
               Ref(Symbol.requiredModule("scala.Predef"))
                 .select(Symbol.requiredMethod("identity"))
@@ -930,10 +1079,47 @@ object Macros:
           case _ => Nil
         }
 
-        // Collect Machine expressions
-        val machineTerms = statements.flatMap {
-          case term: Term if isMachine(term)                => List(term)
+        // Check for Machine expressions and emit error
+        statements.foreach {
+          case term: Term if isMachine(term) =>
+            report.errorAndAbort(
+              s"""Machine composition is not supported. Use Assembly instead.
+                 |
+                 |  BEFORE (no longer works):
+                 |    buildAll[S, E]:
+                 |      include(someMachine)
+                 |
+                 |  AFTER (use Assembly for reusable fragments):
+                 |    val reusable = assembly[S, E](...)
+                 |    buildAll[S, E]:
+                 |      include(reusable)
+                 |
+                 |Assembly provides compile-time duplicate detection that Machine composition cannot.""".stripMargin,
+              term.pos,
+            )
           case ValDef(name, _, Some(rhs)) if isMachine(rhs) =>
+            report.errorAndAbort(
+              s"""Machine composition is not supported. Use Assembly instead.
+                 |
+                 |  BEFORE (no longer works):
+                 |    buildAll[S, E]:
+                 |      val m = someMachine
+                 |
+                 |  AFTER (use Assembly for reusable fragments):
+                 |    val reusable = assembly[S, E](...)
+                 |    buildAll[S, E]:
+                 |      include(reusable)
+                 |
+                 |Assembly provides compile-time duplicate detection that Machine composition cannot.""".stripMargin,
+              rhs.pos,
+            )
+          case _ => ()
+        }
+
+        // Collect Assembly expressions
+        val assemblyTerms = statements.flatMap {
+          case term: Term if isAssembly(term)                => List(term)
+          case ValDef(name, _, Some(rhs)) if isAssembly(rhs) =>
             List(
               Ref(Symbol.requiredModule("scala.Predef"))
                 .select(Symbol.requiredMethod("identity"))
@@ -943,30 +1129,165 @@ object Macros:
           case _ => Nil
         }
 
-        val finalSpecs    = if isTransitionSpec(finalExpr) then List(finalExpr) else Nil
-        val finalMachines = if isMachine(finalExpr) then List(finalExpr) else Nil
+        // Collect ordered terms (specs and assemblies in original order)
+        val orderedTerms = statements.flatMap { stmt =>
+          stmt match
+            case term: Term if isTransitionSpec(term)                                   => List(term)
+            case term: Term if isAssembly(term)                                         => List(term)
+            case ValDef(name, _, Some(rhs)) if isTransitionSpec(rhs) || isAssembly(rhs) =>
+              List(
+                Ref(Symbol.requiredModule("scala.Predef"))
+                  .select(Symbol.requiredMethod("identity"))
+                  .appliedToType(rhs.tpe)
+                  .appliedTo(rhs)
+              )
+            case _ => Nil
+        }
 
-        (helperVals, specTerms ++ finalSpecs, machineTerms ++ finalMachines)
+        val finalSpecs      = if isTransitionSpec(finalExpr) then List(finalExpr) else Nil
+        val finalAssemblies = if isAssembly(finalExpr) then List(finalExpr) else Nil
+        val finalOrdered    = if isTransitionSpec(finalExpr) || isAssembly(finalExpr) then List(finalExpr) else Nil
+
+        // Check for Machine in final expression
+        if isMachine(finalExpr) then
+          report.errorAndAbort(
+            s"""Machine composition is not supported. Use Assembly instead.
+               |
+               |Assembly provides compile-time duplicate detection that Machine composition cannot.""".stripMargin,
+            finalExpr.pos,
+          )
+
+        BlockContents(
+          helperVals,
+          specTerms ++ finalSpecs,
+          assemblyTerms ++ finalAssemblies,
+          orderedTerms ++ finalOrdered,
+        )
 
       case Inlined(_, bindings, inner) =>
-        val (innerVals, innerSpecs, innerMachines) = processBlock(inner)
-        (bindings ++ innerVals, innerSpecs, innerMachines)
+        val BlockContents(innerVals, innerSpecs, innerAssemblies, innerOrdered) = processBlock(inner)
+        BlockContents(bindings.toList ++ innerVals, innerSpecs, innerAssemblies, innerOrdered)
 
       case other if isTransitionSpec(other) =>
-        (Nil, List(other), Nil)
+        BlockContents(Nil, List(other), Nil, List(other))
 
       case other if isMachine(other) =>
-        (Nil, Nil, List(other))
+        report.errorAndAbort(
+          s"""Machine composition is not supported. Use Assembly instead.
+             |
+             |Assembly provides compile-time duplicate detection that Machine composition cannot.""".stripMargin,
+          other.pos,
+        )
 
-      case _ => (Nil, Nil, Nil)
+      case other if isAssembly(other) =>
+        BlockContents(Nil, Nil, List(other), List(other))
 
-    val (helperVals, specTerms, machineTerms) = processBlock(term)
+      case _ => BlockContents(Nil, Nil, Nil, Nil)
 
-    if specTerms.isEmpty && machineTerms.isEmpty then
+    val BlockContents(helperVals, specTerms, assemblyTerms, orderedTerms) = processBlock(term)
+
+    if specTerms.isEmpty && assemblyTerms.isEmpty then
       report.errorAndAbort(
-        "No TransitionSpec or Machine expressions found in block. " +
-          "Each line should be a transition (State via Event to Target) or a Machine."
+        "No TransitionSpec or Assembly expressions found in block. " +
+          "Each line should be a transition (State via Event to Target) or an Assembly."
       )
+
+    // ============================================
+    // Extract specs from Assemblies at compile time (Level 2 validation)
+    // ============================================
+
+    // Extract specs from Assembly constructor: Assembly.apply(List(...)) or new Assembly(List(...))
+    def extractAssemblySpecTerms(term: Term): List[Term] =
+      def extractListElements(listTerm: Term): List[Term] =
+        listTerm match
+          case Apply(TypeApply(Select(Ident("List"), "apply"), _), elems)                  => elems
+          case Apply(TypeApply(Select(Select(Ident("scala"), "List"), "apply"), _), elems) => elems
+          case Apply(TypeApply(Select(Ident("Nil"), ":::"), _), List(other))               => extractListElements(other)
+          case Apply(Select(Ident("List"), "apply"), elems)                                => elems
+          case Apply(Select(Select(Ident("scala"), "List"), "apply"), elems)               => elems
+          case Select(Ident("scala"), "Nil")                                               => Nil
+          case Ident("Nil")                                                                => Nil
+          case Typed(inner, _)                                                             => extractListElements(inner)
+          case Inlined(_, _, inner)                                                        => extractListElements(inner)
+          case _                                                                           => Nil
+
+      term match
+        // Assembly.apply(List(...)) - various patterns
+        case Apply(TypeApply(Select(Ident("Assembly"), "apply"), _), List(listArg)) =>
+          extractListElements(listArg)
+        case Apply(TypeApply(Select(Select(_, "Assembly"), "apply"), _), List(listArg)) =>
+          extractListElements(listArg)
+        case Apply(Select(Ident("Assembly"), "apply"), List(listArg)) =>
+          extractListElements(listArg)
+        case Apply(Select(Select(_, "Assembly"), "apply"), List(listArg)) =>
+          extractListElements(listArg)
+        // Match by type - if term shows Assembly.apply
+        case Apply(fn, List(listArg)) if fn.show.contains("Assembly") && fn.show.contains("apply") =>
+          extractListElements(listArg)
+        // new Assembly(List(...))
+        case Apply(Select(New(tpt), "<init>"), List(listArg)) if tpt.show.contains("Assembly") =>
+          extractListElements(listArg)
+        case Apply(TypeApply(Select(New(tpt), "<init>"), _), List(listArg)) if tpt.show.contains("Assembly") =>
+          extractListElements(listArg)
+        // Inlined wrapper
+        case Inlined(_, _, inner) => extractAssemblySpecTerms(inner)
+        // Block wrapper
+        case Block(_, expr) => extractAssemblySpecTerms(expr)
+        // Typed wrapper
+        case Typed(inner, _) => extractAssemblySpecTerms(inner)
+        // Val reference
+        case Ident(_) =>
+          try
+            term.symbol.tree match
+              case ValDef(_, _, Some(rhs)) => extractAssemblySpecTerms(rhs)
+              case _                       => Nil
+          catch
+            case _: Exception => Nil
+        // Assembly with @@ applied
+        case Apply(Select(base, "@@"), _) => extractAssemblySpecTerms(base)
+        case _                            => Nil
+      end match
+    end extractAssemblySpecTerms
+
+    // Check if assembly has @@ Aspect.overriding applied
+    def hasAssemblyOverride(term: Term): Boolean =
+      term match
+        case Apply(Select(_, "@@"), List(aspectArg)) => aspectArg.show.contains("overriding")
+        case Inlined(_, _, inner)                    => hasAssemblyOverride(inner)
+        case _                                       => false
+
+    // Extract specs from each assembly and track override status
+    case class AssemblySpecInfo(
+        specTerms: List[Term],
+        isOverriding: Boolean,
+        sourceName: String,
+    )
+
+    val assemblySpecInfos: List[AssemblySpecInfo] = assemblyTerms.zipWithIndex.map { case (term, idx) =>
+      val extractedSpecs = extractAssemblySpecTerms(term)
+      val isOverriding   = hasAssemblyOverride(term)
+      val sourceName     = term match
+        case Ident(name)          => name
+        case Inlined(_, _, inner) =>
+          inner match
+            case Ident(name) => name
+            case _           => s"assembly${idx + 1}"
+        case _ => s"assembly${idx + 1}"
+      AssemblySpecInfo(extractedSpecs, isOverriding, sourceName)
+    }
+
+    // Build map from spec index to assembly override status
+    // Index starts after inline specs
+    var assemblySpecOverrideFlags: Map[Int, (Boolean, String)] = Map.empty
+    var assemblySpecIdx                                        = specTerms.size
+    for info <- assemblySpecInfos do
+      for _ <- info.specTerms do
+        assemblySpecOverrideFlags =
+          assemblySpecOverrideFlags + (assemblySpecIdx -> (info.isOverriding, info.sourceName))
+        assemblySpecIdx += 1
+
+    // Flatten all assembly spec terms
+    val flattenedAssemblySpecTerms: List[Term] = assemblySpecInfos.flatMap(_.specTerms)
 
     // Summon the required instances
     val stateEnumExpr = Expr
@@ -1171,19 +1492,34 @@ object Macros:
       // Check for override at the call site (e.g., t1 @@ Aspect.overriding)
       val hasOverrideAtCallSiteTerm = term.show.contains("overriding")
 
+      // Check if this spec came from an overriding assembly
+      val (hasOverrideFromAssembly, assemblySourceName) =
+        assemblySpecOverrideFlags.getOrElse(idx, (false, ""))
+
+      val isOverrideMarked = hasOverrideAtCallSiteTerm || hasOverrideFromAssembly
+
       info match
         case Some(h) =>
           val sourceDesc =
-            if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
+            if assemblySourceName.nonEmpty then
+              val transitionDesc =
+                if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
+                  s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
+                else s"spec #${idx + 1}"
+              s"$transitionDesc ($assemblySourceName)"
+            else if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
               s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
             else s"spec #${idx + 1}"
           h.copy(
-            isOverride = h.isOverride || hasOverrideAtCallSiteTerm,
+            isOverride = h.isOverride || isOverrideMarked,
             sourceDesc = sourceDesc,
           )
         case None =>
           // Fallback - couldn't extract hashes, runtime detection will catch duplicates
-          SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", hasOverrideAtCallSiteTerm, s"spec #${idx + 1}")
+          val sourceDesc =
+            if assemblySourceName.nonEmpty then s"spec #${idx + 1} ($assemblySourceName)"
+            else s"spec #${idx + 1}"
+          SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", isOverrideMarked, sourceDesc)
       end match
     end getSpecInfo
 
@@ -1191,14 +1527,21 @@ object Macros:
     // cyclic macro dependencies. When we try to look up a machine val's definition via sym.tree,
     // and that machine was created with build(), the compiler needs to expand that build() first,
     // creating a cycle. Runtime detection in Machine.fromSpecs handles this case.
+    // However, Assembly specs ARE validated at compile time since they're extracted directly.
 
-    // Extract info from all inline specs
-    val specInfos = specTerms.zipWithIndex.map { case (term, idx) =>
+    // Extract info from inline specs
+    val inlineSpecInfos = specTerms.zipWithIndex.map { case (term, idx) =>
       (getSpecInfo(term, idx), idx)
     }
 
-    // Only inline specs are validated at compile time
-    val allSpecInfos: List[(SpecHashInfo, Int)] = specInfos
+    // Extract info from assembly specs (index continues after inline specs)
+    val assemblySpecInfosForValidation = flattenedAssemblySpecTerms.zipWithIndex.map { case (term, idx) =>
+      val actualIdx = specTerms.size + idx
+      (getSpecInfo(term, actualIdx), actualIdx)
+    }
+
+    // Combine inline specs and assembly specs for validation
+    val allSpecInfos: List[(SpecHashInfo, Int)] = inlineSpecInfos ++ assemblySpecInfosForValidation
 
     // Build registry: (stateHash, eventHash) -> List[(SpecHashInfo, index)]
     val registry = scala.collection.mutable.Map[(Int, Int), List[(SpecHashInfo, Int)]]()
@@ -1318,10 +1661,10 @@ object Macros:
           else Some(cmdType)
         case _ => None
 
-    // Collect command types from specs and machines
-    val specCmdTypes    = specTerms.flatMap(extractCmdTypeFromTerm)
-    val machineCmdTypes = machineTerms.flatMap(extractCmdTypeFromTerm)
-    val allCmdTypes     = specCmdTypes ++ machineCmdTypes
+    // Collect command types from inline specs and assembly terms
+    val specCmdTypes     = specTerms.flatMap(extractCmdTypeFromTerm)
+    val assemblyCmdTypes = assemblyTerms.flatMap(extractCmdTypeFromTerm)
+    val allCmdTypes      = specCmdTypes ++ assemblyCmdTypes
 
     val inferredCmdType: TypeRepr =
       if allCmdTypes.isEmpty then TypeRepr.of[Nothing]
@@ -1345,30 +1688,26 @@ object Macros:
 
     inferredCmdType.asType match
       case '[cmd] =>
-        // Use quote interpolation to generate the code properly
-        val specExprs = specTerms.map(_.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]])
-        val specsListExpr: Expr[List[TransitionSpec[S, E, cmd]]] = Expr.ofList(specExprs)
-
         // Generate the Machine creation expression
-        val fromSpecsExpr: Expr[Machine[S, E, cmd]] =
-          if machineTerms.isEmpty then
-            // No machines - just use inline specs
-            '{
-              given Finite[S] = $stateEnumExpr
-              given Finite[E] = $eventEnumExpr
-              Machine.fromSpecs[S, E, cmd]($specsListExpr)
-            }
+        // Preserve original order - iterate through orderedTerms and expand each in place
+        val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, cmd]]]] = orderedTerms.map { term =>
+          if isAssembly(term) then
+            // Assembly - access .specs at runtime
+            '{ ${ term.asExpr.asInstanceOf[Expr[Assembly[S, E, cmd]]] }.specs }
           else
-            // Has machines - combine machine specs with inline specs
-            val machineExprs = machineTerms.map(_.asExpr.asInstanceOf[Expr[Machine[S, E, ?]]])
-            val machineListExpr: Expr[List[Machine[S, E, ?]]] = Expr.ofList(machineExprs)
-            '{
-              given Finite[S]  = $stateEnumExpr
-              given Finite[E]  = $eventEnumExpr
-              val machineSpecs = $machineListExpr.flatMap(_.specs.asInstanceOf[List[TransitionSpec[S, E, cmd]]])
-              val allSpecs     = machineSpecs ++ $specsListExpr
-              Machine.fromSpecs[S, E, cmd](allSpecs)
-            }
+            // TransitionSpec - wrap in single-element list
+            '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]] }) }
+        }
+        val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, cmd]]]] =
+          Expr.ofList(orderedSpecLists)
+
+        val fromSpecsExpr: Expr[Machine[S, E, cmd]] =
+          '{
+            given Finite[S] = $stateEnumExpr
+            given Finite[E] = $eventEnumExpr
+            val allSpecs    = $orderedSpecListsExpr.flatten
+            Machine.fromSpecs[S, E, cmd](allSpecs)
+          }
 
         // If there are helper vals, wrap in a block; otherwise just return the expression
         if helperVals.nonEmpty then
@@ -1395,6 +1734,311 @@ object Macros:
     val hash = sym.fullName.hashCode
     val name = sym.name
     '{ new StateMatcher[S](${ Expr(hash) }, ${ Expr(name) }) }
+
+  /** Implementation of `assembly` macro - creates a compile-time composable collection of specs.
+    *
+    * This macro:
+    *   1. Accepts TransitionSpec and Assembly arguments (flattens nested assemblies)
+    *   2. Performs Level 1 duplicate detection (within this assembly)
+    *   3. Infers command type from all specs
+    *   4. Generates a literal `new Assembly(List(...))` expression for compile-time visibility
+    *
+    * Key insight: The generated expression is a literal constructor call, allowing other macros (like `build`) to
+    * pattern match on the AST and extract specs without cyclic dependencies.
+    */
+  def assemblyImpl[S: Type, E: Type](
+      args: Expr[Seq[TransitionSpec[S, E, ?] | Assembly[S, E, ?]]]
+  )(using Quotes): Expr[Assembly[S, E, ?]] =
+    import quotes.reflect.*
+
+    val assemblyTypeName       = "mechanoid.machine.Assembly"
+    val transitionSpecTypeName = "TransitionSpec"
+
+    // Check if a type is Assembly
+    def isAssemblyType(tpe: TypeRepr): Boolean =
+      tpe.dealias.widen match
+        case AppliedType(base, _) =>
+          base.typeSymbol.fullName == assemblyTypeName
+        case _ => false
+
+    // Check if a type is TransitionSpec
+    def isTransitionSpecType(tpe: TypeRepr): Boolean =
+      tpe.dealias.widen match
+        case AppliedType(base, _) =>
+          base.typeSymbol.fullName.contains(transitionSpecTypeName)
+        case _ => false
+
+    // Extract individual arg expressions from varargs
+    val argTerms: List[Term] = args match
+      case Varargs(exprs) => exprs.toList.map(_.asTerm)
+      case other          =>
+        report.errorAndAbort(s"Expected varargs, got: ${other.show}")
+
+    // Separate specs and assemblies
+    val specTerms     = argTerms.filter(t => isTransitionSpecType(t.tpe))
+    val assemblyTerms = argTerms.filter(t => isAssemblyType(t.tpe))
+
+    // Extract specs from nested assemblies at compile time
+    // Pattern matches on: new Assembly(List(spec1, spec2, ...))
+    def extractAssemblySpecTerms(term: Term): List[Term] =
+      def extractListElements(listTerm: Term): List[Term] =
+        listTerm match
+          // List(elem1, elem2, ...)
+          case Apply(TypeApply(Select(Ident("List"), "apply"), _), elems) =>
+            elems
+          // List.apply(elem1, elem2, ...)
+          case Apply(TypeApply(Select(Select(Ident("scala"), "List"), "apply"), _), elems) =>
+            elems
+          // Nil
+          case Select(Ident("scala"), "Nil") => Nil
+          case Ident("Nil")                  => Nil
+          // Typed wrapper
+          case Typed(inner, _) => extractListElements(inner)
+          case _               => Nil
+
+      term match
+        // new Assembly(List(...))
+        case Apply(Select(New(tpt), "<init>"), List(listArg)) if tpt.show.contains("Assembly") =>
+          extractListElements(listArg)
+        // new Assembly[S, E, Cmd](List(...))
+        case Apply(TypeApply(Select(New(tpt), "<init>"), _), List(listArg)) if tpt.show.contains("Assembly") =>
+          extractListElements(listArg)
+        // Handle Inlined wrappers
+        case Inlined(_, _, inner) =>
+          extractAssemblySpecTerms(inner)
+        // Handle Block wrappers
+        case Block(_, expr) =>
+          extractAssemblySpecTerms(expr)
+        // Val reference - try to look up definition
+        case Ident(_) =>
+          try
+            term.symbol.tree match
+              case ValDef(_, _, Some(rhs)) => extractAssemblySpecTerms(rhs)
+              case _                       => Nil
+          catch
+            case _: Exception => Nil
+        // Assembly with @@ applied
+        case Apply(Select(base, "@@"), _) =>
+          extractAssemblySpecTerms(base)
+        case _ => Nil
+      end match
+    end extractAssemblySpecTerms
+
+    // Check if assembly has @@ Aspect.overriding applied
+    def hasAssemblyOverride(term: Term): Boolean =
+      term match
+        case Apply(Select(_, "@@"), List(aspectArg)) =>
+          aspectArg.show.contains("overriding")
+        case Inlined(_, _, inner) => hasAssemblyOverride(inner)
+        case _                    => false
+
+    // Mark extracted specs as overrides if the assembly was marked
+    // Note: Instead of wrapping with @@, we track override status separately during info extraction
+    val assemblyOverrideStatus  = assemblyTerms.map(hasAssemblyOverride)
+    val markedAssemblySpecTerms = assemblyTerms.zip(assemblyOverrideStatus).flatMap { case (assemblyTerm, _) =>
+      extractAssemblySpecTerms(assemblyTerm)
+    }
+
+    // Track which specs came from overriding assemblies
+    var assemblySpecOverrideFlags: Map[Int, Boolean] = Map.empty
+    var specIdx                                      = specTerms.size
+    for (assemblyTerm, isOverride) <- assemblyTerms.zip(assemblyOverrideStatus) do
+      val specs = extractAssemblySpecTerms(assemblyTerm)
+      for _ <- specs do
+        assemblySpecOverrideFlags = assemblySpecOverrideFlags + (specIdx -> isOverride)
+        specIdx += 1
+
+    // Combine all spec terms for duplicate detection
+    val allSpecTerms = specTerms ++ markedAssemblySpecTerms
+
+    if allSpecTerms.isEmpty then
+      // Return empty assembly
+      '{ Assembly.empty[S, E] }
+    else
+      // ============================================
+      // Hash-based duplicate detection (Level 1 - Assembly scope)
+      // ============================================
+
+      // Helper to extract int literals from a Set expression
+      def extractSetInts(setTerm: Term): Set[Int] =
+        val ints = scala.collection.mutable.Set[Int]()
+        object Collector extends TreeAccumulator[Unit]:
+          def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+            tree match
+              case Literal(IntConstant(v)) => ints += v
+              case _                       => foldOverTree((), tree)(owner)
+        Collector.foldTree((), setTerm)(Symbol.spliceOwner)
+        ints.toSet
+
+      // Extract string literals from a List expression
+      def extractListStrings(listTerm: Term): List[String] =
+        val strs = scala.collection.mutable.ListBuffer[String]()
+        object Collector extends TreeAccumulator[Unit]:
+          def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+            tree match
+              case Literal(StringConstant(v)) if v.nonEmpty => strs += v
+              case _                                        => foldOverTree((), tree)(owner)
+        Collector.foldTree((), listTerm)(Symbol.spliceOwner)
+        strs.toList
+
+      case class SpecHashInfo(
+          stateHashes: Set[Int],
+          eventHashes: Set[Int],
+          stateNames: List[String],
+          eventNames: List[String],
+          targetDesc: String,
+          isOverride: Boolean,
+          sourceDesc: String,
+      )
+
+      // Extract hash info from a TransitionSpec term
+      def extractHashInfo(term: Term): Option[SpecHashInfo] =
+        object HashFinder extends TreeAccumulator[Option[SpecHashInfo]]:
+          def foldTree(found: Option[SpecHashInfo], tree: Tree)(owner: Symbol): Option[SpecHashInfo] =
+            found.orElse {
+              tree match
+                // Match @@ extension method call
+                case Apply(Select(base, "@@"), List(aspectArg)) =>
+                  val isOverride = aspectArg.show.contains("overriding")
+                  foldTree(None, base)(owner).map(_.copy(isOverride = isOverride))
+
+                // Match TransitionSpec constructor: TransitionSpec(stateHashes, eventHashes, stateNames, eventNames, targetDesc, ...)
+                case Apply(Apply(TypeApply(Select(Ident("TransitionSpec"), "apply"), _), args), _)
+                    if args.length >= 5 =>
+                  val stateHashes = extractSetInts(args(0))
+                  val eventHashes = extractSetInts(args(1))
+                  val stateNames  = extractListStrings(args(2))
+                  val eventNames  = extractListStrings(args(3))
+                  val targetDesc  = args(4) match
+                    case Literal(StringConstant(s)) => s
+                    case _                          => "?"
+                  Some(SpecHashInfo(stateHashes, eventHashes, stateNames, eventNames, targetDesc, false, "?"))
+
+                // Match new TransitionSpec(...)
+                case Apply(Select(New(_), "<init>"), args) if args.length >= 5 =>
+                  val stateHashes = extractSetInts(args(0))
+                  val eventHashes = extractSetInts(args(1))
+                  val stateNames  = extractListStrings(args(2))
+                  val eventNames  = extractListStrings(args(3))
+                  val targetDesc  = args(4) match
+                    case Literal(StringConstant(s)) => s
+                    case _                          => "?"
+                  Some(SpecHashInfo(stateHashes, eventHashes, stateNames, eventNames, targetDesc, false, "?"))
+
+                case _ => foldOverTree(None, tree)(owner)
+            }
+        end HashFinder
+        HashFinder.foldTree(None, term)(Symbol.spliceOwner)
+      end extractHashInfo
+
+      // Get spec info for each term
+      def getSpecInfo(term: Term, idx: Int): SpecHashInfo =
+        val hasOverrideAtCallSite   = term.show.contains("overriding")
+        val hasOverrideFromAssembly = assemblySpecOverrideFlags.getOrElse(idx, false)
+        val isOverrideMarked        = hasOverrideAtCallSite || hasOverrideFromAssembly
+        extractHashInfo(term) match
+          case Some(h) =>
+            val sourceDesc =
+              if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
+                s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
+              else s"spec #${idx + 1}"
+            h.copy(
+              isOverride = h.isOverride || isOverrideMarked,
+              sourceDesc = sourceDesc,
+            )
+          case None =>
+            SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", isOverrideMarked, s"spec #${idx + 1}")
+        end match
+      end getSpecInfo
+
+      val specInfos = allSpecTerms.zipWithIndex.map { case (term, idx) =>
+        (getSpecInfo(term, idx), idx)
+      }
+
+      // Build registry: (stateHash, eventHash) -> List[(SpecHashInfo, index)]
+      val registry = scala.collection.mutable.Map[(Int, Int), List[(SpecHashInfo, Int)]]()
+
+      for (info, idx) <- specInfos do
+        for
+          stateHash <- info.stateHashes
+          eventHash <- info.eventHashes
+        do
+          val key = (stateHash, eventHash)
+          registry(key) = registry.getOrElse(key, Nil) :+ (info, idx)
+
+      // Check for duplicates at compile time
+      val overrideInfos = scala.collection.mutable.ListBuffer[String]()
+
+      for (_, specList) <- registry if specList.size > 1 do
+        val (first, firstIdx) = specList.head
+
+        for (info, idx) <- specList.tail do
+          if !info.isOverride then
+            // Compile error for duplicate without override
+            report.errorAndAbort(
+              s"""Duplicate transition in assembly without override!
+                 |  Transition: ${info.sourceDesc} ${info.targetDesc}
+                 |  First defined at spec #${firstIdx + 1}: ${first.targetDesc}
+                 |  Duplicate at spec #${idx + 1}: ${info.targetDesc}
+                 |
+                 |  To override, use: (...) @@ Aspect.overriding""".stripMargin
+            )
+          else
+            // Track override for info message
+            val prevTarget = first.targetDesc.stripPrefix("-> ")
+            val newTarget  = info.targetDesc.stripPrefix("-> ")
+            overrideInfos += s"  ${info.sourceDesc}: $prevTarget (spec #${firstIdx + 1}) -> $newTarget (spec #${idx + 1})"
+        end for
+      end for
+
+      // Emit info about overrides if any
+      if overrideInfos.nonEmpty then
+        report.info(s"[mechanoid] Override in assembly (${overrideInfos.size}):\n${overrideInfos.mkString("\n")}")
+
+      // ============================================
+      // Command type inference
+      // ============================================
+
+      def extractCmdTypeFromTerm(term: Term): Option[TypeRepr] =
+        val tpe = term.tpe.dealias.widen
+        tpe match
+          case AppliedType(_, List(_, _, cmdType)) =>
+            if cmdType =:= TypeRepr.of[Nothing] then None
+            else Some(cmdType)
+          case _ => None
+
+      val allCmdTypes = allSpecTerms.flatMap(extractCmdTypeFromTerm)
+
+      val inferredCmdType: TypeRepr =
+        if allCmdTypes.isEmpty then TypeRepr.of[Nothing]
+        else if allCmdTypes.size == 1 then allCmdTypes.head
+        else
+          def baseClasses(tpe: TypeRepr): List[Symbol] = tpe.baseClasses
+          val baseClassLists                           = allCmdTypes.map(baseClasses)
+          val commonBases                              = baseClassLists.reduce { (a, b) =>
+            a.filter(sym => b.contains(sym))
+          }
+          val skipSymbols = Set("scala.Any", "scala.AnyRef", "scala.Matchable", "java.lang.Object")
+          val usefulBases = commonBases.filterNot(sym => skipSymbols.contains(sym.fullName))
+
+          if usefulBases.nonEmpty then usefulBases.head.typeRef
+          else if commonBases.nonEmpty then TypeRepr.of[Any]
+          else TypeRepr.of[Any]
+
+      // ============================================
+      // Code generation - create Assembly.apply(List(...))
+      // ============================================
+
+      inferredCmdType.asType match
+        case '[cmd] =>
+          val specExprs = allSpecTerms.map(_.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]])
+          val specsListExpr: Expr[List[TransitionSpec[S, E, cmd]]] = Expr.ofList(specExprs)
+
+          // Use factory method for compile-time visibility
+          '{ Assembly.apply[S, E, cmd]($specsListExpr) }
+      end match
+    end if
+  end assemblyImpl
 
 end Macros
 
@@ -1553,16 +2197,16 @@ inline def anyOf[S](inline first: S, inline rest: S*): AnyOfMatcher[S] =
 inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E] =
   Macros.anyOfEventsImpl(first, rest*)
 
-/** Build a Machine from transition specs and/or other machines with duplicate detection.
+/** Build a Machine from transition specs and/or assemblies with compile-time duplicate detection.
   *
-  * Accepts both `TransitionSpec` and `Machine` arguments for composition:
+  * Accepts `TransitionSpec` and `Assembly` arguments for composition:
   *   - TransitionSpec: inline transition definitions
-  *   - Machine: nested machines whose specs are merged
+  *   - Assembly: reusable transition fragments (compile-time composable)
   *
-  * Duplicate detection:
-  *   - Inline specs: COMPILE-TIME detection
-  *   - Across machines: RUNTIME detection (at machine construction)
-  *   - Duplicates without `@@ Aspect.overriding` cause an error
+  * '''Two-Level Compile-Time Validation:'''
+  *   - Level 1 (Assembly scope): Each assembly validates its own specs at compile time
+  *   - Level 2 (Build scope): This macro validates across all assemblies + inline specs
+  *   - Duplicates without `@@ Aspect.overriding` cause a compile error
   *   - Duplicates with `@@ Aspect.overriding` are allowed; last one wins
   *
   * Usage:
@@ -1573,20 +2217,24 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   *   Running via Stop to Idle,
   * )
   *
-  * // Composition with nested machines
-  * val baseMachine = build[State, Event](
+  * // Composition with assemblies (compile-time validated!)
+  * val baseAssembly = assembly[State, Event](
   *   all[State] via Reset to Idle,  // Default reset behavior
   * )
   *
   * val fullMachine = build[State, Event](
-  *   baseMachine,
+  *   baseAssembly,
   *   Idle via Start to Running,
   *   (Running via Reset to stay) @@ Aspect.overriding,  // Override reset for Running
   * )
   * }}}
+  *
+  * @note
+  *   Machine composition is not supported. Use `assembly[S, E](...)` instead of `build[S, E](...)` for reusable
+  *   fragments. Assemblies provide full compile-time duplicate detection that Machine composition cannot.
   */
 transparent inline def build[S, E](
-    inline args: (TransitionSpec[S, E, ?] | Machine[S, E, ?])*
+    inline args: (TransitionSpec[S, E, ?] | Assembly[S, E, ?])*
 ): Machine[S, E, ?] =
   ${ Macros.buildWithInferredCmdImpl[S, E]('args) }
 
@@ -1618,6 +2266,81 @@ transparent inline def buildAll[S, E](
     inline block: Any
 ): Machine[S, E, ?] =
   ${ Macros.buildAllImpl[S, E]('block) }
+
+/** Create a compile-time composable collection of transition specifications.
+  *
+  * Assembly provides a way to define reusable transition fragments that can be composed together with full compile-time
+  * validation. Unlike Machine composition, Assembly holds specs directly and can be analyzed at compile time.
+  *
+  * ==Two-Level Validation==
+  *
+  * '''Level 1 (Assembly scope)''': This macro validates specs within the assembly:
+  * {{{
+  * // COMPILE ERROR - duplicate without override
+  * val bad = assembly[S, E](
+  *   A via E1 to B,
+  *   A via E1 to C,  // ERROR: Duplicate transition
+  * )
+  *
+  * // OK - override explicitly requested
+  * val ok = assembly[S, E](
+  *   A via E1 to B,
+  *   (A via E1 to C) @@ Aspect.overriding,
+  * )
+  * }}}
+  *
+  * '''Level 2 (Build scope)''': The `build` macro validates across all assemblies when composing.
+  *
+  * ==Nested Composition==
+  *
+  * Assemblies can include other assemblies, flattened at compile time:
+  * {{{
+  * val errors = assembly[S, E](all[Error] via Reset to Idle)
+  * val happy = assembly[S, E](Idle via Start to Running)
+  *
+  * // Compose assemblies
+  * val combined = assembly[S, E](errors, happy, Running via Complete to Done)
+  * }}}
+  *
+  * @example
+  *   {{{
+  * import mechanoid.Mechanoid.*
+  *
+  * val cancelBehaviors = assembly[State, Event](
+  *   all[InProgress] via Cancel to Cancelled,
+  *   all[Pending] via Timeout to Failed,
+  * )
+  *
+  * val happyPath = assembly[State, Event](
+  *   Idle via Start to Running,
+  *   Running via Complete to Done,
+  * )
+  *
+  * // Compose into a runnable machine
+  * val machine = build[State, Event](
+  *   cancelBehaviors,
+  *   happyPath,
+  * )
+  *   }}}
+  *
+  * @tparam S
+  *   The state type
+  * @tparam E
+  *   The event type
+  * @param args
+  *   TransitionSpec or Assembly arguments (assemblies are flattened)
+  * @return
+  *   An Assembly containing all specs, validated at compile time
+  *
+  * @see
+  *   [[mechanoid.machine.Assembly]] for the resulting type
+  * @see
+  *   [[mechanoid.machine.build]] for creating runnable Machines from assemblies
+  */
+transparent inline def assembly[S, E](
+    inline args: (TransitionSpec[S, E, ?] | Assembly[S, E, ?])*
+): Assembly[S, E, ?] =
+  ${ Macros.assemblyImpl[S, E]('args) }
 
 /** Include a Machine or TransitionSpec in a buildAll block.
   *

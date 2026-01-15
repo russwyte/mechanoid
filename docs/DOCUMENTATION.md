@@ -15,7 +15,7 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [The buildAll Block Syntax](#the-buildall-block-syntax)
   - [Entry and Exit Actions](#entry-and-exit-actions)
   - [Timeouts](#timeouts)
-  - [Machine Composition](#machine-composition)
+  - [Assembly Composition](#assembly-composition)
 - [Running FSMs](#running-fsms)
   - [Simple Runtime](#simple-runtime)
   - [Persistent Runtime](#persistent-runtime)
@@ -64,7 +64,7 @@ Mechanoid provides a declarative DSL for defining finite state machines with:
 
 - **Type-safe states and events** using Scala 3 enums
 - **Ergonomic infix syntax** - `State via Event to Target`
-- **Composable machines** - build reusable FSM fragments and combine them
+- **Composable assemblies** - build reusable FSM fragments and combine them with full compile-time validation
 - **Effectful transitions** via ZIO
 - **Optional persistence** through event sourcing
 - **Durable timeouts** that survive node failures
@@ -315,14 +315,16 @@ val machine = buildAll[OrderState, OrderEvent]:
 
 The `buildAll` block allows mixing val definitions with transition expressions. The vals are available for use in emitting functions and other parts of the definition.
 
-**Important:** When including val references to `Machine` or `TransitionSpec` in a `buildAll` block, use the `include()` wrapper to avoid compiler warnings:
+**Important:** When including val references to `Assembly` or `TransitionSpec` in a `buildAll` block, use the `include()` wrapper to avoid compiler warnings:
 
 ```scala
-val baseMachine = build(...)
+val baseAssembly = assembly[OrderState, OrderEvent](
+  Pending via Pay to Paid,
+)
 
 val fullMachine = buildAll[OrderState, OrderEvent]:
-  include(baseMachine)  // Use include() for val references
-  AdditionalState via Event to Target
+  include(baseAssembly)  // Use include() for val references
+  Paid via Ship to Shipped
 ```
 
 ### Entry and Exit Actions
@@ -446,60 +448,70 @@ This design provides several advantages over a built-in `Timeout` singleton:
 4. **Clear intent** - Reading `PaymentTimeout` is clearer than `Timeout`
 5. **Event sourcing** - All timeout events are persisted like regular events
 
-### Machine Composition
+### Assembly Composition
 
-Machines can be composed by including them in other `build` or `buildAll` calls:
+Use `assembly` to create reusable transition fragments that can be composed with full compile-time validation:
 
 ```scala
-// Reusable behaviors
-val cancelableBehaviors = build(
+// Reusable behaviors defined as assemblies
+val cancelableBehaviors = assembly[DocumentState, DocumentEvent](
   all[InReview] via CancelReview to Draft,
   all[Approval] via Abandon to Cancelled,
 )
 
-// Compose with specific transitions
+// Compose assemblies with specific transitions
 val fullWorkflow = buildAll[DocumentState, DocumentEvent]:
-  include(cancelableBehaviors)  // Include all transitions from base machine
+  include(cancelableBehaviors)  // Include all transitions from assembly
 
   Draft via SubmitForReview to PendingReview
   PendingReview via AssignReviewer to UnderReview
 ```
 
+**Key difference between `assembly` and `build`:**
+- `assembly` creates a reusable fragment that **cannot be run** directly
+- `build` creates a complete `Machine` that **can be run**
+
 **Duplicate Detection:**
 
-Mechanoid detects duplicate transitions (same state + event combination) at different stages depending on what can be analyzed at compile time:
+Mechanoid detects duplicate transitions (same state + event combination) at compile time in all scenarios:
 
 | Scenario | Detection | When |
 |----------|-----------|------|
 | Inline specs (`A via E to B`) | **Compile time** | Macro can inspect AST |
 | Same val used twice (`build(t1, t1)`) | **Compile time** | Symbol tracking |
-| Machine composition (`build(baseMachine, ...)`) | **Runtime** | Macro cannot see inside opaque Machine values |
+| Assembly composition (`build(myAssembly, ...)`) | **Compile time** | Assembly specs are extracted at macro expansion |
 
-**Why runtime for machines?** The `build` macro receives `baseMachine` as an opaque expression - it cannot inspect its contents. Runtime detection happens immediately at machine construction (not when events are sent), so you'll get a clear error at application startup:
+**Two-Level Validation:**
+
+1. **Level 1 (Assembly scope)**: Duplicates within a single `assembly()` call are detected
+2. **Level 2 (Build scope)**: Duplicates across multiple assemblies and inline specs are detected
 
 ```scala
-// Compile-time detection for inline specs
-val machine = build(
+// Level 1 - Compile ERROR within assembly
+val bad = assembly[S, E](
   A via E1 to B,
   A via E1 to C,  // Compile ERROR: duplicate transition
 )
 
-// Compile-time detection for same val reference
-val t1 = A via E1 to B
-build(t1, t1)  // Compile ERROR: val 't1' used twice
-
-// Runtime detection for machine composition
-val extended = build(
-  baseMachine,
-  SpecificState via Cancel to Special,  // Throws IllegalArgumentException at construction
-)                                        // if baseMachine already has this transition
+// Level 2 - Compile ERROR across assemblies
+val a1 = assembly[S, E](A via E1 to B)
+val a2 = assembly[S, E](A via E1 to C)
+val machine = build[S, E](a1, a2)  // Compile ERROR: duplicate A via E1
 
 // Use @@ Aspect.overriding to allow intentional overrides
-val extended = build(
-  baseMachine,
-  (SpecificState via Cancel to Special) @@ Aspect.overriding,  // OK: intentional override
+val machine = build[S, E](
+  a1,
+  a2 @@ Aspect.overriding,  // OK: a2's transitions override a1's
+)
+
+// Or override at the spec level
+val machine = build[S, E](
+  a1,
+  (A via E1 to C) @@ Aspect.overriding,  // OK: inline override wins
 )
 ```
+
+When overrides are detected, the compiler emits informational messages showing which transitions are being overridden.
 
 ---
 

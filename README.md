@@ -4,9 +4,10 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 
 ## Features
 
-- **Declarative DSL** - Fluent builder API for defining state machines
+- **Declarative DSL** - Clean infix syntax: `State via Event to Target`
 - **Type-safe** - States and events are Scala 3 enums or sealed traits with compile-time validation
 - **Hierarchical states** - Organize complex state spaces with nested sealed traits
+- **Composable assemblies** - Build reusable FSM fragments and compose them with full compile-time validation
 - **Effectful** - All transitions are ZIO effects with full environment and error support
 - **Event sourcing** - Optional persistence with snapshots and optimistic locking
 - **Durable timeouts** - Timeouts that survive node failures via database persistence
@@ -18,27 +19,27 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 import mechanoid.*
 import zio.*
 
-// Define states and events
-enum OrderState extends MState:
+// Define states and events as plain enums
+enum OrderState:
   case Pending, Paid, Shipped
 
-enum OrderEvent extends MEvent:
+enum OrderEvent:
   case Pay, Ship
 
-// Build FSM definition with compile-time validation
-val orderFSM = build[OrderState, OrderEvent] {
-  _.when(Pending).on(Pay).goto(Paid)
-    .when(Paid).on(Ship).goto(Shipped)
-}
+// Build FSM with clean infix syntax and compile-time validation
+val orderMachine = build(
+  Pending via Pay to Paid,
+  Paid via Ship to Shipped,
+)
 
 // Run
 val program = ZIO.scoped {
   for
-    runtime <- orderFSM.build(Pending)
-    _   <- runtime.send(Pay)
-    _   <- runtime.send(Ship)
-    s   <- runtime.currentState
-  yield s // Shipped
+    fsm   <- orderMachine.start(Pending)
+    _     <- fsm.send(Pay)
+    _     <- fsm.send(Ship)
+    state <- fsm.currentState
+  yield state // Shipped
 }
 ```
 
@@ -59,10 +60,11 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 | Component | Description |
 |-----------|-------------|
-| `build[S, E] { ... }` | Entry point with compile-time validation (recommended) |
-| `build[S, E, Cmd] { ... }` | Entry point for FSMs with commands (recommended) |
-| `FSMDefinition[S, E]` | Direct construction without validation |
-| `FSMDefinition.withCommands[S, E, Cmd]` | Direct construction for FSMs with commands |
+| `build(...)` | Build a runnable Machine from transitions with compile-time validation |
+| `buildAll { ... }` | Block syntax for complex definitions with helper vals |
+| `assembly(...)` | Create reusable transition fragments for composition |
+| `Machine[S, E, Cmd]` | The FSM definition that can be started and run |
+| `Assembly[S, E, Cmd]` | Composable transition fragments (cannot run directly) |
 | `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
 | `TimeoutSweeper` | Background service for durable timeouts |
 | `FSMInstanceLock` | Distributed locking for exactly-once transitions |
@@ -76,7 +78,7 @@ import mechanoid.runtime.FSMRuntime
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime(orderId, orderDefinition, Pending)
+    fsm <- FSMRuntime(orderId, orderMachine, Pending)
     _   <- fsm.send(Pay)      // Persisted to EventStore
     _   <- fsm.saveSnapshot   // Optional: snapshot for faster recovery
   yield ()
@@ -86,18 +88,29 @@ val program = ZIO.scoped {
 ## Example with Durable Timeouts
 
 ```scala
+import mechanoid.*
 import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
+import scala.concurrent.duration.*
+
+enum PaymentState:
+  case Pending, AwaitingPayment, Paid, Cancelled
+
+enum PaymentEvent:
+  case StartPayment, ConfirmPayment, PaymentTimeout
 
 // FSM with timeout that survives node failures
-val definition = build[State, Event] {
-  _.when(AwaitingPayment).onTimeout.goto(Cancelled)
-    .withTimeout(AwaitingPayment, 30.minutes)
-}
+val timedAwaiting = AwaitingPayment @@ timeout(30.minutes, PaymentTimeout)
+
+val paymentMachine = build(
+  Pending via StartPayment to timedAwaiting,
+  AwaitingPayment via ConfirmPayment to Paid,
+  AwaitingPayment via PaymentTimeout to Cancelled,
+)
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withDurableTimeouts(id, definition, Pending)
+    fsm <- FSMRuntime.withDurableTimeouts(id, paymentMachine, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout persisted - another node's sweeper will fire it if this node dies
   yield ()
@@ -122,7 +135,7 @@ import mechanoid.persistence.lock.*
 // Exactly-once transitions across multiple nodes
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withLocking(orderId, definition, Pending)
+    fsm <- FSMRuntime.withLocking(orderId, orderMachine, Pending)
     _   <- fsm.send(Pay)  // Lock acquired automatically
   yield ()
 }.provide(eventStoreLayer, lockLayer)
@@ -131,7 +144,7 @@ val program = ZIO.scoped {
 val robustProgram = ZIO.scoped {
   for
     fsm <- FSMRuntime.withLockingAndTimeouts(
-      orderId, definition, Pending, LockConfig.default
+      orderId, paymentMachine, Pending, LockConfig.default
     )
     _   <- fsm.send(StartPayment)
   yield ()

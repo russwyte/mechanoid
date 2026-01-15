@@ -58,8 +58,10 @@ export core.CaseHasher
 
 // Re-export suite-style DSL
 export machine.Machine
+export machine.Assembly
 export machine.build
 export machine.buildAll
+export machine.assembly
 export machine.all
 export machine.anyOf
 export machine.Aspect
