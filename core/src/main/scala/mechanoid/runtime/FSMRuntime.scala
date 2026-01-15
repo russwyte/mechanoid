@@ -628,7 +628,7 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
         case None =>
           // In-memory timeout: use fiber-based approach
           // Fire user-defined event when timeout expires
-          (ZIO.sleep(zio.Duration.fromScala(duration)) *>
+          (ZIO.sleep(duration) *>
             stateRef.get.flatMap { currentFsmState =>
               // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
               ZIO.when(machine.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(

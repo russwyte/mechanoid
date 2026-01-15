@@ -167,7 +167,7 @@ object DocumentWorkflowFSM:
     * Override semantics: Last transition wins. If a more specific transition needs to override a group behavior, use
     * `@@ Aspect.overriding`.
     */
-  val definition = buildAll[DocumentState, DocumentEvent]:
+  val definition = Machine(assemblyAll[DocumentState, DocumentEvent]:
     // Include the group behaviors (cancelable review states, abandonable approval states)
     include:
       groupBehaviors
@@ -191,6 +191,6 @@ object DocumentWorkflowFSM:
 
     // ===== Final States =====
     // Published documents can be archived
-    Published via Archive to Archived
+    Published via Archive to Archived)
 
 end DocumentWorkflowFSM

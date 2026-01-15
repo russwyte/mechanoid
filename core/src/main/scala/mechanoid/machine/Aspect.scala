@@ -1,6 +1,6 @@
 package mechanoid.machine
 
-import scala.concurrent.duration.Duration
+import zio.Duration
 
 /** Aspect that can modify transition specs or state configurations.
   *
@@ -18,22 +18,21 @@ object Aspect:
 
   /** Configure a timeout for a target state with a user-defined timeout event.
     *
-    * Use with a state to create a `TimedTarget` that can be used in transitions. When the FSM enters the target state
-    * via such a transition, a timeout timer starts. If no other transition occurs before the duration, the specified
-    * event is automatically fired.
+    * Apply to a transition using `@@`. When the FSM enters the target state via such a transition, a timeout timer
+    * starts. If no other transition occurs before the duration, the specified event is automatically fired.
     *
     * Usage:
     * {{{
+    * import zio.Duration
+    *
     * enum OrderEvent derives Finite:
     *   case Pay, PaymentTimeout
     *
-    * val timedProcessing = Processing @@ timeout(30.seconds, PaymentTimeout)
-    *
-    * build[State, OrderEvent](
-    *   Pending via Pay to timedProcessing,        // Timer starts when entering Processing
+    * val machine = Machine(assembly[State, OrderEvent](
+    *   (Pending via Pay to Processing) @@ Aspect.timeout(30.seconds, PaymentTimeout),
     *   Processing via Complete to Done,
     *   Processing via PaymentTimeout to TimedOut, // Handle the timeout with user event
-    * )
+    * ))
     * }}}
     *
     * @param duration
@@ -44,12 +43,14 @@ object Aspect:
   case class timeout[E](duration: Duration, event: E) extends Aspect
 end Aspect
 
-/** Wrapper for a state with timeout configuration.
+/** Internal wrapper for timeout configuration on a target state.
   *
-  * Created via `State @@ timeout(duration, event)`. Use as target in transitions: `Source via Event to timedTarget`
+  * This is used internally by the assembly macros when processing transitions to `TimedTarget` values. Prefer using `@@
+  * Aspect.timeout(duration, event)` on transitions instead:
   *
-  * When a transition targets a TimedTarget, the timeout timer starts when entering that state. After the duration
-  * elapses, the specified event is fired.
+  * {{{
+  * (A via E1 to B) @@ Aspect.timeout(30.seconds, TimeoutEvent)
+  * }}}
   *
   * @tparam S
   *   The state type

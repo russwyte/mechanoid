@@ -2,7 +2,7 @@ package mechanoid.visualization
 
 import mechanoid.core.*
 import mechanoid.machine.Machine
-import scala.concurrent.duration.Duration
+import zio.Duration
 
 /** Generates GraphViz DOT syntax for FSM visualization. */
 object GraphVizVisualizer:

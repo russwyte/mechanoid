@@ -3,43 +3,46 @@ package mechanoid.machine
 /** A compile-time composable collection of transition specifications.
   *
   * Assembly provides a way to define reusable transition fragments that can be composed together with full compile-time
-  * validation. Unlike Machine composition, which suffers from cyclic macro dependencies, Assembly holds specs directly
-  * and can be analyzed at compile time.
+  * validation.
   *
   * ==Key Properties==
   *
-  *   - '''Compile-time composable''': Assemblies can be combined in `build` or `buildAll` with full duplicate detection
-  *     at compile time
-  *   - '''Cannot run''': Assemblies are fragments, not complete FSMs. Use `build` to create a runnable Machine
+  *   - '''Compile-time composable''': Assemblies can be combined with `include` with full duplicate detection at
+  *     compile time
+  *   - '''Cannot run''': Assemblies are fragments, not complete FSMs. Use `Machine(assembly)` to create a runnable
+  *     Machine
   *   - '''Nested composition''': Assemblies can include other assemblies, flattened at compile time
   *
-  * ==Two-Level Validation==
+  * ==Duplicate Detection==
   *
-  * '''Level 1 (Assembly scope)''': The `assembly` macro validates specs within a single assembly:
+  * The `assembly` macro validates specs and detects duplicate transitions:
   * {{{
   * // COMPILE ERROR - duplicate without override
   * val bad = assembly[S, E](
   *   A via E1 to B,
-  *   A via E1 to C,  // ERROR
+  *   A via E1 to C,  // ERROR: duplicate
   * )
   *
-  * // OK - override explicitly requested
+  * // OK - override explicitly requested on the transition
   * val ok = assembly[S, E](
   *   A via E1 to B,
   *   (A via E1 to C) @@ Aspect.overriding,
   * )
   * }}}
   *
-  * '''Level 2 (Build scope)''': The `build` macro validates across all assemblies:
+  * ==Composition with Include==
+  *
+  * Assemblies can include other assemblies. Override conflicts must be resolved at the transition level:
   * {{{
-  * val a1 = assembly[S, E](A via E1 to B)
-  * val a2 = assembly[S, E](A via E1 to C)
+  * val base = assembly[S, E](A via E1 to B)
+  * val override_ = assembly[S, E](
+  *   (A via E1 to C) @@ Aspect.overriding  // Override at transition level
+  * )
   *
-  * // COMPILE ERROR - conflict between assemblies
-  * val bad = build[S, E](a1, a2)
-  *
-  * // OK - a2 overrides a1
-  * val ok = build[S, E](a1, a2 @@ Aspect.overriding)
+  * val combined = assembly[S, E](
+  *   include(base),
+  *   include(override_),
+  * )
   * }}}
   *
   * @example
@@ -58,12 +61,12 @@ package mechanoid.machine
   * )
   *
   * // Compose into a runnable machine
-  * val machine = build[State, Event](
-  *   errorHandling,
-  *   happyPath,
-  *   // Override specific behavior
+  * val machine = Machine(assembly[State, Event](
+  *   include(errorHandling),
+  *   include(happyPath),
+  *   // Override specific behavior at transition level
   *   (Running via Cancel to Cancelled) @@ Aspect.overriding,
-  * )
+  * ))
   *   }}}
   *
   * @tparam S
@@ -83,39 +86,72 @@ package mechanoid.machine
   *   [[mechanoid.machine.Aspect.overriding]] for the override aspect
   */
 final class Assembly[S, E, +Cmd] private[machine] (
-    val specs: List[TransitionSpec[S, E, Cmd]]
+    val specs: List[TransitionSpec[S, E, Cmd]],
+    val hashInfos: List[IncludedHashInfo],
 ):
 
-  /** Mark all specs in this assembly as overriding.
+  /** Validate the assembly for duplicate transitions.
     *
-    * When an assembly is marked with `@@ Aspect.overriding`, all its transitions will override any previous definitions
-    * for the same (state, event) pairs. This is useful when composing assemblies where one should take precedence.
+    * This performs runtime validation that complements compile-time detection. Use this when combining assemblies via
+    * `include()` to catch duplicates that can't be detected at compile time.
     *
-    * @example
-    *   {{{
-    * val base = assembly[S, E](A via E1 to B)
-    * val override = assembly[S, E](A via E1 to C)
-    *
-    * // override's transitions will replace base's
-    * val machine = build[S, E](base, override @@ Aspect.overriding)
-    *   }}}
-    *
-    * @param aspect
-    *   The aspect to apply (only `Aspect.overriding` has an effect)
+    * @throws IllegalArgumentException
+    *   if duplicate transitions are found without override markers
     * @return
-    *   A new Assembly with all specs marked as overriding
+    *   this assembly (for chaining)
     */
-  infix def @@(aspect: Aspect): Assembly[S, E, Cmd] = aspect match
-    case Aspect.overriding =>
-      new Assembly(specs.map(_.copy(isOverride = true)))
-    case _: Aspect.timeout[?] => this // timeout aspect doesn't apply to assemblies
+  def validated: Assembly[S, E, Cmd] =
+    // Track (stateHash, eventHash) -> (specIndex, description)
+    var seenTransitions = Map.empty[(Int, Int), (Int, String)]
+
+    // First pass: collect all pairs that have any override marker
+    val overridePairs: Set[(Int, Int)] = specs.zipWithIndex.flatMap { case (spec, _) =>
+      if spec.isOverride then
+        for
+          stateHash <- spec.stateHashes
+          eventHash <- spec.eventHashes
+        yield (stateHash, eventHash)
+      else Set.empty[(Int, Int)]
+    }.toSet
+
+    // Second pass: check for duplicates
+    for (spec, idx) <- specs.zipWithIndex do
+      val specDesc = s"${spec.stateNames.mkString(",")} via ${spec.eventNames.mkString(",")} ${spec.targetDesc}"
+
+      for
+        stateHash <- spec.stateHashes
+        eventHash <- spec.eventHashes
+      do
+        val key         = (stateHash, eventHash)
+        val hasOverride = spec.isOverride || overridePairs.contains(key)
+
+        seenTransitions.get(key) match
+          case Some((firstIdx, firstDesc)) if !hasOverride =>
+            throw new IllegalArgumentException(
+              s"""Duplicate transition without override!
+                 |  Transition: $specDesc
+                 |  First defined at spec #${firstIdx + 1}: $firstDesc
+                 |  Duplicate at spec #${idx + 1}: $specDesc
+                 |
+                 |  To override, use: (...) @@ Aspect.overriding""".stripMargin
+            )
+          case _ =>
+            seenTransitions = seenTransitions + (key -> (idx, specDesc))
+        end match
+      end for
+    end for
+
+    this
+  end validated
+
 end Assembly
 
 object Assembly:
 
-  /** Create an assembly from a list of specs.
+  /** Create an assembly from a list of specs with compile-time hash info.
     *
-    * This factory method is used by the `assembly` macro to construct Assembly instances.
+    * This factory method is used by the `assembly` macro to construct Assembly instances. The hashInfos parameter
+    * carries compile-time computed hash values for duplicate detection.
     *
     * @tparam S
     *   The state type
@@ -125,11 +161,16 @@ object Assembly:
     *   The command type
     * @param specs
     *   The list of transition specifications
+    * @param hashInfos
+    *   Compile-time computed hash info for duplicate detection in include()
     * @return
     *   An Assembly containing the specs
     */
-  def apply[S, E, Cmd](specs: List[TransitionSpec[S, E, Cmd]]): Assembly[S, E, Cmd] =
-    new Assembly(specs)
+  def apply[S, E, Cmd](
+      specs: List[TransitionSpec[S, E, Cmd]],
+      hashInfos: List[IncludedHashInfo],
+  ): Assembly[S, E, Cmd] =
+    new Assembly(specs, hashInfos)
 
   /** Create an empty assembly with no transitions.
     *
@@ -142,6 +183,47 @@ object Assembly:
     * @return
     *   An empty Assembly with no specs
     */
-  def empty[S, E]: Assembly[S, E, Nothing] = new Assembly(Nil)
+  def empty[S, E]: Assembly[S, E, Nothing] = new Assembly(Nil, Nil)
 
 end Assembly
+
+/** Hash info for a single transition spec, used for compile-time duplicate detection.
+  *
+  * This is stored in `Included` by the `include` macro so that the `assembly` macro can detect duplicates across
+  * included assemblies without needing to traverse val references.
+  */
+final case class IncludedHashInfo(
+    stateHashes: Set[Int],
+    eventHashes: Set[Int],
+    stateNames: List[String],
+    eventNames: List[String],
+    targetDesc: String,
+    isOverride: Boolean,
+)
+
+/** Wrapper for an assembly that has been explicitly included via `include()`.
+  *
+  * This type marker allows macros to distinguish between:
+  *   - Direct `Assembly` references (which require `include()` wrapper in buildAll blocks)
+  *   - Explicitly included assemblies via `include(assembly)`
+  *
+  * The wrapper preserves the assembly's type parameters and provides access to specs at runtime. It also carries
+  * compile-time hash info for duplicate detection across includes.
+  *
+  * @tparam S
+  *   The state type
+  * @tparam E
+  *   The event type
+  * @tparam Cmd
+  *   The command type (covariant)
+  * @param assembly
+  *   The wrapped assembly
+  * @param hashInfos
+  *   Hash info for each spec in the assembly, used for compile-time duplicate detection
+  */
+final class Included[S, E, +Cmd](
+    val assembly: Assembly[S, E, Cmd],
+    val hashInfos: List[IncludedHashInfo],
+):
+  /** Get the specs from the wrapped assembly. */
+  def specs: List[TransitionSpec[S, E, Cmd]] = assembly.specs

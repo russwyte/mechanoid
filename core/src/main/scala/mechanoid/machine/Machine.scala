@@ -4,7 +4,6 @@ import zio.*
 import mechanoid.core.*
 import mechanoid.runtime.FSMRuntime
 import mechanoid.visualization.{TransitionMeta, TransitionKind}
-import scala.concurrent.duration.Duration
 
 /** A finite state machine definition using the suite-style DSL.
   *
@@ -39,28 +38,6 @@ final class Machine[S, E, +Cmd] private[machine] (
     private[mechanoid] val stateEnum: Finite[S],
     private[mechanoid] val eventEnum: Finite[E], // Just E, no Timed wrapper
 ):
-
-  /** Apply an aspect to ALL transition specs in this machine.
-    *
-    * Usage: `myMachine @@ overriding` marks all transitions as overrides.
-    */
-  infix def @@(aspect: Aspect): Machine[S, E, Cmd] = aspect match
-    case Aspect.overriding =>
-      val newSpecs = specs.map(s => s.copy(isOverride = true).asInstanceOf[TransitionSpec[S, E, Cmd]])
-      new Machine(
-        transitions,
-        lifecycles,
-        timeouts,
-        timeoutEvents,
-        transitionMeta,
-        preCommandFactories,
-        postCommandFactories,
-        newSpecs,
-        timeoutSpecs,
-      )
-    case _: Aspect.timeout[?] =>
-      // timeout aspect doesn't apply to machines (only individual states)
-      this
 
   /** Build and start the FSM runtime with the given initial state.
     *
@@ -191,9 +168,45 @@ end Machine
 
 object Machine:
 
+  /** Create a Machine from a validated Assembly.
+    *
+    * This is the ONLY public way to create a Machine. The assembly must be created via the `assembly` or `assemblyAll`
+    * macros, which perform compile-time validation of transitions.
+    *
+    * @tparam S
+    *   The state type (must have Finite instance)
+    * @tparam E
+    *   The event type (must have Finite instance)
+    * @tparam Cmd
+    *   The command type for transactional outbox pattern
+    * @param assembly
+    *   A validated assembly created via `assembly()` or `assemblyAll()`
+    * @return
+    *   A runnable Machine
+    *
+    * @example
+    *   {{{
+    * import mechanoid.Mechanoid.*
+    *
+    * // Using assembly()
+    * val machine = Machine(assembly[State, Event](
+    *   Idle via Start to Running,
+    *   Running via Stop to Idle,
+    * ))
+    *
+    * // Using assemblyAll with block syntax
+    * val machine2 = Machine(assemblyAll[State, Event]:
+    *   Idle via Start to Running
+    *   Running via Stop to Idle
+    * )
+    *   }}}
+    */
+  def apply[S: Finite, E: Finite, Cmd](assembly: Assembly[S, E, Cmd]): Machine[S, E, Cmd] =
+    fromSpecs(assembly.specs)
+
   /** Create a Machine from validated specs.
     *
-    * This is called by the `build` macro after validation. It converts TransitionSpecs to runtime data.
+    * This is an internal method used by Machine.apply. It converts TransitionSpecs to runtime data.
     *
     * Performs runtime duplicate detection for machine composition:
     *   - Duplicates without isOverride = true cause an IllegalArgumentException

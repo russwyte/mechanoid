@@ -87,6 +87,10 @@ object PetStoreApp extends ZIOAppDefault:
         s"${Green}ShipmentDispatched${Reset}(${Bold}$trackingId${Reset}, $carrier, ETA: $eta)"
       case DeliveryConfirmed(orderId, timestamp) =>
         s"${Green}DeliveryConfirmed${Reset}(${dim(timestamp)})"
+      case PaymentTimeout =>
+        s"${Red}PaymentTimeout${Reset}(payment processing exceeded 5 minutes)"
+      case ShippingTimeout =>
+        s"${Yellow}ShippingTimeout${Reset}(shipping not dispatched within 24 hours)"
 
     /** Short format for compact display - just event name. */
     def shortFormat(event: OrderEvent): String = event match
@@ -96,6 +100,8 @@ object PetStoreApp extends ZIOAppDefault:
       case _: RequestShipping    => s"${Blue}RequestShipping${Reset}"
       case _: ShipmentDispatched => s"${Green}ShipmentDispatched${Reset}"
       case _: DeliveryConfirmed  => s"${Green}DeliveryConfirmed${Reset}"
+      case PaymentTimeout        => s"${Red}PaymentTimeout${Reset}"
+      case ShippingTimeout       => s"${Yellow}ShippingTimeout${Reset}"
   end EventDisplay
 
   // ============================================

@@ -32,10 +32,12 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   import OrderState.*
   import OrderEvent.*
 
-  val orderMachine = build[OrderState, OrderEvent](
-    Pending via Pay to Paid,
-    Paid via Ship to Shipped,
-    Shipped via Deliver to Delivered,
+  val orderMachine = Machine(
+    assembly[OrderState, OrderEvent](
+      Pending via Pay to Paid,
+      Paid via Ship to Shipped,
+      Shipped via Deliver to Delivered,
+    )
   )
 
   // Machine is used directly for FSMRuntime
@@ -726,8 +728,10 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
         }
         // Try to recover with a DIFFERENT machine that doesn't have Ship transition
         // We create a machine that only has Pending -> Paid
-        restrictedMachine = build[OrderState, OrderEvent](
-          Pending via Pay to Paid
+        restrictedMachine = Machine(
+          assembly[OrderState, OrderEvent](
+            Pending via Pay to Paid
+          )
         )
         restrictedDefinition = restrictedMachine
         // No Ship transition!
