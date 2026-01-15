@@ -45,4 +45,56 @@ object Experiment:
     val _ = combined // suppress unused warning
     ()
 
+  // Test case 4: Orphan override via inline def - should work!
+  inline def orphanAssemblyInline = assembly[TestState, TestEvent](
+    (A via E1 to B) @@ Aspect.overriding // No duplicate - orphan!
+  )
+  val machineWithOrphanInline = Machine(orphanAssemblyInline) // Should emit warning with inline def
+
+  // Test case 4a: Regular val would cause compile error (commented out to allow compilation)
+  // val orphanAssembly = assembly[TestState, TestEvent](
+  //   (A via E1 to B) @@ Aspect.overriding,
+  // )
+  // val machineWithOrphan = Machine(orphanAssembly) // ERROR: must use inline
+
+  // Test case 4b: Inline orphan override - should emit compile-time warning
+  val machineWithInlineOrphan = Machine(
+    assembly[TestState, TestEvent](
+      (A via E1 to B) @@ Aspect.overriding // No duplicate - orphan!
+    )
+  )
+
+  // Test case 4c: Local val with inline Machine call - should emit warning
+  def localOrphanTest(): Unit =
+    val localOrphan = assembly[TestState, TestEvent](
+      (B via E2 to C) @@ Aspect.overriding // No duplicate - orphan!
+    )
+    // Inline assembly in Machine - should warn
+    val localMachine = Machine(
+      assembly[TestState, TestEvent](
+        (B via E2 to C) @@ Aspect.overriding
+      )
+    )
+    val _ = (localOrphan, localMachine)
+    ()
+  end localOrphanTest
+
+  // Test case 5: Non-orphan override (composed) - should NOT warn
+  // Only the composed assembly needs to be inline! The included assemblies can be regular vals.
+  val baseForCompose          = assembly[TestState, TestEvent](A via E1 to B)
+  val overrideFragment        = assembly[TestState, TestEvent]((A via E1 to C) @@ Aspect.overriding)
+  inline def composedAssembly = assembly[TestState, TestEvent](
+    include(baseForCompose),
+    include(overrideFragment),
+  )
+  val machineComposed = Machine(composedAssembly) // No warning - orphan resolved!
+
+  // Test case 6: Inline composed assembly - should NOT warn (orphan resolved)
+  val machineInlineComposed = Machine(
+    assembly[TestState, TestEvent](
+      include(assembly[TestState, TestEvent](A via E2 to B)),
+      include(assembly[TestState, TestEvent]((A via E2 to C) @@ Aspect.overriding)),
+    )
+  )
+
 end Experiment

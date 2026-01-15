@@ -227,7 +227,31 @@ private[machine] object AssemblyMacros:
           }
           val hashInfosExpr = Expr.ofList(allHashInfoExprs)
 
-          '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr) }
+          // Compute orphan overrides: specs with isOverride=true that have no duplicate
+          val allKeys = allSpecInfos.flatMap { case (info, _) =>
+            for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
+          }
+          val keyCounts = allKeys.groupBy(identity).view.mapValues(_.size).toMap
+
+          val orphanInfoExprs: List[Expr[OrphanInfo]] = allSpecInfos.flatMap { case (info, _) =>
+            if info.isOverride then
+              // Check if ALL keys for this spec have count == 1 (no duplicate)
+              val specKeys = for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
+              val isOrphan = specKeys.forall(key => keyCounts.getOrElse(key, 0) == 1)
+
+              if isOrphan then
+                val stateHashesExpr = Expr(info.stateHashes)
+                val eventHashesExpr = Expr(info.eventHashes)
+                val stateNamesExpr  = Expr(info.stateNames)
+                val eventNamesExpr  = Expr(info.eventNames)
+                Some('{ OrphanInfo($stateHashesExpr, $eventHashesExpr, $stateNamesExpr, $eventNamesExpr) })
+              else None
+            else None
+          }
+
+          val orphansExpr = '{ Set(${ Varargs(orphanInfoExprs) }*) }
+
+          '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
       end match
     end if
   end assemblyImpl
@@ -584,7 +608,31 @@ private[machine] object AssemblyMacros:
         }
         val hashInfosExpr = Expr.ofList(allHashInfoExprs)
 
-        val assemblyExpr = '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr) }
+        // Compute orphan overrides: specs with isOverride=true that have no duplicate
+        val allKeys = specInfos.flatMap { case (info, _) =>
+          for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
+        }
+        val keyCounts = allKeys.groupBy(identity).view.mapValues(_.size).toMap
+
+        val orphanInfoExprs: List[Expr[OrphanInfo]] = specInfos.flatMap { case (info, _) =>
+          if info.isOverride then
+            // Check if ALL keys for this spec have count == 1 (no duplicate)
+            val specKeys = for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
+            val isOrphan = specKeys.forall(key => keyCounts.getOrElse(key, 0) == 1)
+
+            if isOrphan then
+              val stateHashesExpr = Expr(info.stateHashes)
+              val eventHashesExpr = Expr(info.eventHashes)
+              val stateNamesExpr  = Expr(info.stateNames)
+              val eventNamesExpr  = Expr(info.eventNames)
+              Some('{ OrphanInfo($stateHashesExpr, $eventHashesExpr, $stateNamesExpr, $eventNamesExpr) })
+            else None
+          else None
+        }
+
+        val orphansExpr = '{ Set(${ Varargs(orphanInfoExprs) }*) }
+
+        val assemblyExpr = '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
 
         if helperVals.nonEmpty then
           val assemblyTerm = assemblyExpr.asTerm

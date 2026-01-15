@@ -88,6 +88,7 @@ package mechanoid.machine
 final class Assembly[S, E, +Cmd] private[machine] (
     val specs: List[TransitionSpec[S, E, Cmd]],
     val hashInfos: List[IncludedHashInfo],
+    val orphanOverrides: Set[OrphanInfo] = Set.empty,
 ):
 
   /** Validate the assembly for duplicate transitions.
@@ -169,8 +170,9 @@ object Assembly:
   def apply[S, E, Cmd](
       specs: List[TransitionSpec[S, E, Cmd]],
       hashInfos: List[IncludedHashInfo],
+      orphanOverrides: Set[OrphanInfo] = Set.empty,
   ): Assembly[S, E, Cmd] =
-    new Assembly(specs, hashInfos)
+    new Assembly(specs, hashInfos, orphanOverrides)
 
   /** Create an empty assembly with no transitions.
     *
@@ -200,6 +202,20 @@ final case class IncludedHashInfo(
     targetDesc: String,
     isOverride: Boolean,
 )
+
+/** Info about an orphan override (a spec with `@@ Aspect.overriding` that doesn't override anything).
+  *
+  * Orphan overrides are tracked in Assembly and resolved when assemblies compose. At Machine construction, any
+  * remaining orphans trigger compile-time warnings.
+  */
+final case class OrphanInfo(
+    stateHashes: Set[Int],
+    eventHashes: Set[Int],
+    stateNames: List[String],
+    eventNames: List[String],
+):
+  /** Human-readable description for warning messages. */
+  def description: String = s"${stateNames.mkString(",")} via ${eventNames.mkString(",")}"
 
 /** Wrapper for an assembly that has been explicitly included via `include()`.
   *

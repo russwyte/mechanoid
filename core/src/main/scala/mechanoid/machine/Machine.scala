@@ -201,8 +201,11 @@ object Machine:
     * )
     *   }}}
     */
-  def apply[S: Finite, E: Finite, Cmd](assembly: Assembly[S, E, Cmd]): Machine[S, E, Cmd] =
-    fromSpecs(assembly.specs)
+  inline def apply[S, E, Cmd](inline assembly: Assembly[S, E, Cmd])(using
+      inline finiteS: Finite[S],
+      inline finiteE: Finite[E],
+  ): Machine[S, E, Cmd] =
+    ${ MachineMacros.applyImpl[S, E, Cmd]('assembly, 'finiteS, 'finiteE) }
 
   /** Create a Machine from validated specs.
     *

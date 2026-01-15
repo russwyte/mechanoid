@@ -61,16 +61,55 @@ private[machine] object MacroUtils:
 
   /** Extract string literals from a List expression like List("name1", "name2").
     *
-    * Uses a TreeAccumulator to find all non-empty StringConstant literals in the term.
+    * Uses a TreeAccumulator to find all non-empty StringConstant literals in the term. Also handles `.toString()` calls
+    * on enum values like `TestState.A.toString()` by extracting the symbol name.
     */
   def extractListStrings(using Quotes)(listTerm: quotes.reflect.Term): List[String] =
     import quotes.reflect.*
     val strs = scala.collection.mutable.ListBuffer[String]()
+
+    // Helper to unwrap Inlined/Typed wrappers
+    def unwrap(term: Term): Term =
+      term match
+        case Inlined(_, _, inner) => unwrap(inner)
+        case Typed(inner, _)      => unwrap(inner)
+        case Block(_, expr)       => unwrap(expr)
+        case other                => other
+
+    // Extract qualified name from a term using its symbol's full name
+    // Returns the last two meaningful parts (Type.Value) for enum values (e.g., "TestState.A")
+    def extractQualifiedName(base: Term): Option[String] =
+      val unwrapped = unwrap(base)
+      // Use symbol's full name to get the qualified path
+      val fullName =
+        if unwrapped.symbol.exists then unwrapped.symbol.fullName
+        else unwrapped.show // Fallback to show if no symbol
+
+      if fullName.isEmpty then None
+      else
+        // Split by . and take last 2 meaningful parts, clean up $ characters
+        val parts      = fullName.split('.').toList.map(_.replace("$", "").trim).filter(_.nonEmpty)
+        val meaningful = parts.takeRight(2)
+        Some(meaningful.mkString("."))
+    end extractQualifiedName
+
     object Collector extends TreeAccumulator[Unit]:
       def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
         tree match
           case Literal(StringConstant(v)) if v.nonEmpty => strs += v
-          case _                                        => foldOverTree((), tree)(owner)
+          // Handle EnumValue.toString() pattern - extract the qualified enum value name
+          // Pattern: Apply(Select(Select/Ident, "toString"), Nil)
+          case Apply(Select(base, "toString"), Nil) =>
+            extractQualifiedName(base) match
+              case Some(name) => strs += name
+              case None       => foldOverTree((), tree)(owner)
+          // Also handle toString with empty type args: Apply(TypeApply(Select(..., "toString"), _), Nil)
+          case Apply(TypeApply(Select(base, "toString"), _), Nil) =>
+            extractQualifiedName(base) match
+              case Some(name) => strs += name
+              case None       => foldOverTree((), tree)(owner)
+          case _ => foldOverTree((), tree)(owner)
+    end Collector
     Collector.foldTree((), listTerm)(Symbol.spliceOwner)
     strs.toList
   end extractListStrings
@@ -394,11 +433,16 @@ private[machine] object MacroUtils:
 
     DSLFinder.foldTree((), term)(Symbol.spliceOwner)
 
+    // Extract qualified name from symbol (last 2 parts of fullName, e.g., "TestState.A")
+    def qualifiedName(sym: Symbol): String =
+      val parts = sym.fullName.split('.').toList.map(_.replace("$", "").trim).filter(_.nonEmpty)
+      parts.takeRight(2).mkString(".")
+
     if foundTransition && (stateSymbols.nonEmpty || eventSymbols.nonEmpty) then
       val stateHashes = stateSymbols.map(computeSymbolHash)
       val eventHashes = eventSymbols.map(computeSymbolHash)
-      val stateNames  = stateSymbols.map(_.name).toList
-      val eventNames  = eventSymbols.map(_.name).toList
+      val stateNames  = stateSymbols.map(qualifiedName).toList
+      val eventNames  = eventSymbols.map(qualifiedName).toList
       Some(SpecHashInfo(stateHashes, eventHashes, stateNames, eventNames, targetDesc, isOverride, "?"))
     else None
   end extractHashInfoFromDSL
@@ -416,6 +460,32 @@ private[machine] object MacroUtils:
       case Some(info) => return Some(info)
       case None       => ()
 
+    // Helper to extract names from ViaBuilder constructor in a tree
+    def extractViaBuilderNames(t: Term): Option[(List[String], List[String])] =
+      var result: Option[(List[String], List[String])] = None
+      object ViaBuilderFinder extends TreeAccumulator[Unit]:
+        def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+          tree match
+            case Apply(TypeApply(Select(New(tpt), "<init>"), _), args)
+                if args.length >= 4 && tpt.show.contains("ViaBuilder") =>
+              val stateNames = extractListStrings(args(2))
+              val eventNames = extractListStrings(args(3))
+              if stateNames.nonEmpty || eventNames.nonEmpty then result = Some((stateNames, eventNames))
+              foldOverTree((), tree)(owner)
+            case Apply(Select(New(tpt), "<init>"), args) if args.length >= 4 && tpt.show.contains("ViaBuilder") =>
+              val stateNames = extractListStrings(args(2))
+              val eventNames = extractListStrings(args(3))
+              if stateNames.nonEmpty || eventNames.nonEmpty then result = Some((stateNames, eventNames))
+              foldOverTree((), tree)(owner)
+            case _ => foldOverTree((), tree)(owner)
+      end ViaBuilderFinder
+      ViaBuilderFinder.foldTree((), t)(Symbol.spliceOwner)
+      result
+    end extractViaBuilderNames
+
+    // Pre-collect ViaBuilder names from the entire term tree
+    val viaBuilderInfo = extractViaBuilderNames(term)
+
     object HashFinder extends TreeAccumulator[Option[SpecHashInfo]]:
       def foldTree(found: Option[SpecHashInfo], tree: Tree)(owner: Symbol): Option[SpecHashInfo] =
         found.orElse {
@@ -426,9 +496,15 @@ private[machine] object MacroUtils:
               if args.length >= 4 then
                 val stateHashes = extractSetInts(args(0))
                 val eventHashes = extractSetInts(args(1))
-                val stateNames  = extractListStrings(args(2))
-                val eventNames  = extractListStrings(args(3))
-                val targetDesc  = methodName match
+                var stateNames  = extractListStrings(args(2))
+                var eventNames  = extractListStrings(args(3))
+                // If names are empty, use ViaBuilder info if available
+                if stateNames.isEmpty && eventNames.isEmpty then
+                  viaBuilderInfo.foreach { case (sn, en) =>
+                    stateNames = sn
+                    eventNames = en
+                  }
+                val targetDesc = methodName match
                   case "goto" => if args.length >= 5 then s"-> ${extractTargetName(args(4))}" else "-> ?"
                   case "stay" => "stay"
                   case "stop" => "stop"
