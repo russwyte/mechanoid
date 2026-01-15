@@ -6,6 +6,16 @@ import scala.quoted.*
   *
   * This object provides common helpers for AST extraction, type checking, and validation that are used across
   * `assemblyImpl`, `buildWithInferredCmdImpl`, and `buildAllImpl` macros.
+  *
+  * ==Organization==
+  *
+  *   - Type Constants: Names for type checking
+  *   - Type Checking Predicates: `isAssemblyType`, `isMachineType`, etc.
+  *   - AST Unwrapping & Extraction: `unwrap`, `extractBoolean`, `qualifiedName`, etc.
+  *   - Hash Info Extraction: `SpecHashInfo`, `extractHashInfo`, etc.
+  *   - Expression Generation: `hashInfoToExpr`, `orphanInfoToExpr`, etc.
+  *   - Command Type Inference: `extractCmdType`, `inferCommandType`
+  *   - Duplicate Detection: `checkDuplicates` (wraps pure logic)
   */
 private[machine] object MacroUtils:
 
@@ -14,8 +24,9 @@ private[machine] object MacroUtils:
   val AssemblyTypeName: String       = "mechanoid.machine.Assembly"
   val MachineTypeName: String        = "mechanoid.machine.Machine"
   val TransitionSpecTypeName: String = "TransitionSpec"
+  val IncludedTypeName: String       = "mechanoid.machine.Included"
 
-  // ====== Type Checking Helpers ======
+  // ====== Type Checking Predicates ======
 
   /** Check if a type is Assembly[_, _, _] */
   def isAssemblyType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
@@ -40,6 +51,47 @@ private[machine] object MacroUtils:
       case AppliedType(base, _) =>
         base.typeSymbol.fullName.contains(TransitionSpecTypeName)
       case _ => false
+
+  /** Check if a type is Included[_, _, _] */
+  def isIncludedType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
+    import quotes.reflect.*
+    tpe.dealias.widen match
+      case AppliedType(base, _) =>
+        base.typeSymbol.fullName == IncludedTypeName
+      case _ => false
+
+  // ====== AST Unwrapping & Extraction ======
+
+  /** Unwrap Inlined/Typed/Block wrappers from a term.
+    *
+    * Many AST nodes come wrapped in layers of `Inlined`, `Typed`, or `Block` nodes. This helper recursively unwraps
+    * them to get to the underlying term.
+    */
+  def unwrap(using Quotes)(term: quotes.reflect.Term): quotes.reflect.Term =
+    import quotes.reflect.*
+    term match
+      case Inlined(_, _, inner) => unwrap(inner)
+      case Typed(inner, _)      => unwrap(inner)
+      case Block(_, expr)       => unwrap(expr)
+      case other                => other
+
+  /** Extract boolean value from a term.
+    *
+    * Handles wrapped boolean literals like `Inlined(_, _, Literal(BooleanConstant(true)))`.
+    */
+  def extractBoolean(using Quotes)(term: quotes.reflect.Term): Boolean =
+    import quotes.reflect.*
+    unwrap(term) match
+      case Literal(BooleanConstant(b)) => b
+      case _                           => false
+
+  /** Extract qualified name from a symbol (last 2 parts of fullName).
+    *
+    * For example, `experiments.TestState.A` becomes `TestState.A`.
+    */
+  def qualifiedName(using Quotes)(sym: quotes.reflect.Symbol): String =
+    val parts = sym.fullName.split('.').toList.map(_.replace("$", "").trim).filter(_.nonEmpty)
+    parts.takeRight(2).mkString(".")
 
   // ====== AST Extraction Helpers ======
 
@@ -67,14 +119,6 @@ private[machine] object MacroUtils:
   def extractListStrings(using Quotes)(listTerm: quotes.reflect.Term): List[String] =
     import quotes.reflect.*
     val strs = scala.collection.mutable.ListBuffer[String]()
-
-    // Helper to unwrap Inlined/Typed wrappers
-    def unwrap(term: Term): Term =
-      term match
-        case Inlined(_, _, inner) => unwrap(inner)
-        case Typed(inner, _)      => unwrap(inner)
-        case Block(_, expr)       => unwrap(expr)
-        case other                => other
 
     // Extract qualified name from a term using its symbol's full name
     // Returns the last two meaningful parts (Type.Value) for enum values (e.g., "TestState.A")
@@ -433,11 +477,6 @@ private[machine] object MacroUtils:
 
     DSLFinder.foldTree((), term)(Symbol.spliceOwner)
 
-    // Extract qualified name from symbol (last 2 parts of fullName, e.g., "TestState.A")
-    def qualifiedName(sym: Symbol): String =
-      val parts = sym.fullName.split('.').toList.map(_.replace("$", "").trim).filter(_.nonEmpty)
-      parts.takeRight(2).mkString(".")
-
     if foundTransition && (stateSymbols.nonEmpty || eventSymbols.nonEmpty) then
       val stateHashes = stateSymbols.map(computeSymbolHash)
       val eventHashes = eventSymbols.map(computeSymbolHash)
@@ -699,6 +738,104 @@ private[machine] object MacroUtils:
     seen.values.toList
   end collectAllHashInfos
 
+  // ====== Expression Generation Helpers ======
+
+  /** Generate IncludedHashInfo expression from SpecHashInfo.
+    *
+    * This creates a literal expression that can be embedded in generated code for compile-time extraction.
+    */
+  def hashInfoToExpr(using Quotes)(info: SpecHashInfo): Expr[IncludedHashInfo] =
+    val stateHashesExpr = Expr(info.stateHashes)
+    val eventHashesExpr = Expr(info.eventHashes)
+    val stateNamesExpr  = Expr(info.stateNames)
+    val eventNamesExpr  = Expr(info.eventNames)
+    val targetDescExpr  = Expr(info.targetDesc)
+    val isOverrideExpr  = Expr(info.isOverride)
+    '{
+      IncludedHashInfo(
+        $stateHashesExpr,
+        $eventHashesExpr,
+        $stateNamesExpr,
+        $eventNamesExpr,
+        $targetDescExpr,
+        $isOverrideExpr,
+      )
+    }
+  end hashInfoToExpr
+
+  /** Generate OrphanInfo expression from SpecHashInfo.
+    *
+    * Used to embed orphan override info in generated Assembly for Machine.apply to warn about.
+    */
+  def orphanInfoToExpr(using Quotes)(info: SpecHashInfo): Expr[OrphanInfo] =
+    val stateHashesExpr = Expr(info.stateHashes)
+    val eventHashesExpr = Expr(info.eventHashes)
+    val stateNamesExpr  = Expr(info.stateNames)
+    val eventNamesExpr  = Expr(info.eventNames)
+    '{ OrphanInfo($stateHashesExpr, $eventHashesExpr, $stateNamesExpr, $eventNamesExpr) }
+
+  /** Build source description from SpecHashInfo.
+    *
+    * Returns a human-readable description like "StateA,StateB via Event1" or falls back to "spec #N".
+    */
+  def sourceDescFromInfo(info: SpecHashInfo, fallbackIdx: Int): String =
+    DuplicateDetection.sourceDescFromNames(info.stateNames, info.eventNames, fallbackIdx)
+
+  /** Extract SpecHashInfo from a term with index, handling override detection.
+    *
+    * This is the shared logic used by both `assemblyImpl` and `assemblyAllImpl`.
+    */
+  def getSpecInfo(using Quotes)(term: quotes.reflect.Term, idx: Int): SpecHashInfo =
+    val hasOverrideAtCallSite = term.show.contains("overriding")
+    extractHashInfo(term) match
+      case Some(h) =>
+        h.copy(
+          isOverride = h.isOverride || hasOverrideAtCallSite,
+          sourceDesc = sourceDescFromInfo(h, idx),
+        )
+      case None =>
+        SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", hasOverrideAtCallSite, s"spec #${idx + 1}")
+  end getSpecInfo
+
+  /** Compute orphan override expressions from spec infos.
+    *
+    * Orphan overrides are specs marked with `@@ Aspect.overriding` that don't actually override anything.
+    */
+  def computeOrphanExprs(using Quotes)(specInfos: List[(SpecHashInfo, Int)]): List[Expr[OrphanInfo]] =
+    // Convert to pure data structure
+    val keys = specInfos.map { case (info, idx) =>
+      (
+        DuplicateDetection.TransitionKey(
+          stateHashes = info.stateHashes,
+          eventHashes = info.eventHashes,
+          stateNames = info.stateNames,
+          eventNames = info.eventNames,
+          targetDesc = info.targetDesc,
+          isOverride = info.isOverride,
+          sourceDesc = info.sourceDesc,
+        ),
+        idx,
+      )
+    }
+
+    // Find orphans using pure logic
+    val orphanKeys = DuplicateDetection.findOrphanOverrides(keys)
+
+    // Convert back to expressions
+    orphanKeys.map { key =>
+      val info = SpecHashInfo(
+        stateHashes = key.stateHashes,
+        eventHashes = key.eventHashes,
+        stateNames = key.stateNames,
+        eventNames = key.eventNames,
+        targetDesc = key.targetDesc,
+        isOverride = key.isOverride,
+        sourceDesc = key.sourceDesc,
+      )
+      orphanInfoToExpr(info)
+    }
+  end computeOrphanExprs
+
   // ====== Command Type Inference ======
 
   /** Extract command type from a TransitionSpec[S, E, Cmd] or Assembly[S, E, Cmd] type.
@@ -794,6 +931,9 @@ private[machine] object MacroUtils:
 
   /** Perform hash-based duplicate detection on a list of specs.
     *
+    * This is a thin wrapper around the pure `DuplicateDetection.detectDuplicates` that handles compilation error
+    * reporting.
+    *
     * @param specInfos
     *   List of (SpecHashInfo, index) pairs
     * @param errorPrefix
@@ -809,46 +949,32 @@ private[machine] object MacroUtils:
   ): DuplicateCheckResult =
     import quotes.reflect.*
 
-    // Build registry: (stateHash, eventHash) -> List[(SpecHashInfo, index)]
-    val registry = scala.collection.mutable.Map[(Int, Int), List[(SpecHashInfo, Int)]]()
+    // Convert to pure data structure
+    val keys = specInfos.map { case (info, idx) =>
+      (
+        DuplicateDetection.TransitionKey(
+          stateHashes = info.stateHashes,
+          eventHashes = info.eventHashes,
+          stateNames = info.stateNames,
+          eventNames = info.eventNames,
+          targetDesc = info.targetDesc,
+          isOverride = info.isOverride,
+          sourceDesc = info.sourceDesc,
+        ),
+        idx,
+      )
+    }
 
-    for (info, idx) <- specInfos do
-      for
-        stateHash <- info.stateHashes
-        eventHash <- info.eventHashes
-      do
-        val key = (stateHash, eventHash)
-        registry(key) = registry.getOrElse(key, Nil) :+ (info, idx)
+    // Run pure duplicate detection
+    val result = DuplicateDetection.detectDuplicates(keys)
 
-    // Check for duplicates at compile time
-    val overrideInfos = scala.collection.mutable.ListBuffer[String]()
-
-    for (_, specList) <- registry if specList.size > 1 do
-      val (first, firstIdx) = specList.head
-
-      // Check each later duplicate - the LATER spec must have override to be valid
-      // This enforces order: include(base), then (spec @@ overriding) works
-      // But: (spec @@ overriding), then include(base) fails (non-override after override)
-      for (info, idx) <- specList.tail do
-        if !info.isOverride then
-          // Compile error for duplicate without override
-          report.errorAndAbort(
-            s"""$errorPrefix without override!
-               |  Transition: ${info.sourceDesc} ${info.targetDesc}
-               |  First defined at spec #${firstIdx + 1}: ${first.targetDesc}
-               |  Duplicate at spec #${idx + 1}: ${info.targetDesc}
-               |
-               |  To override, use: (...) @@ Aspect.overriding""".stripMargin
-          )
-        else
-          // Track override for info message
-          val prevTarget = first.targetDesc.stripPrefix("-> ")
-          val newTarget  = info.targetDesc.stripPrefix("-> ")
-          overrideInfos += s"  ${info.sourceDesc}: $prevTarget (spec #${firstIdx + 1}) -> $newTarget (spec #${idx + 1})"
-      end for
-    end for
-
-    DuplicateCheckResult(overrideInfos.toList, Nil)
+    // Handle result
+    result.error match
+      case Some(err) =>
+        report.errorAndAbort(err.message(errorPrefix))
+      case None =>
+        val overrideInfos = result.overrideInfos.map(_.message)
+        DuplicateCheckResult(overrideInfos, Nil)
   end checkDuplicates
 
 end MacroUtils

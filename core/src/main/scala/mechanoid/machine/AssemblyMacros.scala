@@ -21,22 +21,9 @@ private[machine] object AssemblyMacros:
   )(using Quotes): Expr[Assembly[S, E, ?]] =
     import quotes.reflect.*
 
-    val transitionSpecTypeName = "TransitionSpec"
-    val includedTypeName       = "mechanoid.machine.Included"
-
-    // Check if a type is TransitionSpec
-    def isTransitionSpecType(tpe: TypeRepr): Boolean =
-      tpe.dealias.widen match
-        case AppliedType(base, _) =>
-          base.typeSymbol.fullName.contains(transitionSpecTypeName)
-        case _ => false
-
-    // Check if a type is Included[S, E, Cmd]
-    def isIncludedType(tpe: TypeRepr): Boolean =
-      tpe.dealias.widen match
-        case AppliedType(base, _) =>
-          base.typeSymbol.fullName == includedTypeName
-        case _ => false
+    // Use shared type checkers from MacroUtils
+    def isTransitionSpecType(tpe: TypeRepr): Boolean = MacroUtils.isTransitionSpecType(tpe)
+    def isIncludedType(tpe: TypeRepr): Boolean       = MacroUtils.isIncludedType(tpe)
 
     // Extract individual arg expressions from varargs
     val argTerms: List[Term] = args match
@@ -47,15 +34,6 @@ private[machine] object AssemblyMacros:
     // Separate individual specs from Included wrappers
     val specTerms     = argTerms.filter(t => isTransitionSpecType(t.tpe))
     val includedTerms = argTerms.filter(t => isIncludedType(t.tpe))
-
-    // Helper to extract boolean from term (handles Inlined wrapper)
-    def extractBoolean(term: Term): Boolean =
-      term match
-        case Literal(BooleanConstant(b)) => b
-        case Inlined(_, _, inner)        => extractBoolean(inner)
-        case Typed(inner, _)             => extractBoolean(inner)
-        case Block(_, expr)              => extractBoolean(expr)
-        case _                           => false
 
     // Extract hash info from Included terms' hashInfos field
     def extractHashInfosFromIncluded(term: Term): List[MacroUtils.SpecHashInfo] =
@@ -91,7 +69,7 @@ private[machine] object AssemblyMacros:
             val targetDesc  = args(4) match
               case Literal(StringConstant(s)) => s
               case _                          => "?"
-            val isOverride = extractBoolean(args(5))
+            val isOverride = MacroUtils.extractBoolean(args(5))
             if stateHashes.nonEmpty || eventHashes.nonEmpty then
               Some(
                 MacroUtils.SpecHashInfo(stateHashes, eventHashes, stateNames, eventNames, targetDesc, isOverride, "?")
@@ -114,7 +92,7 @@ private[machine] object AssemblyMacros:
                       val targetDesc  = args(4) match
                         case Literal(StringConstant(s)) => s
                         case _                          => "?"
-                      val isOverride = extractBoolean(args(5))
+                      val isOverride = MacroUtils.extractBoolean(args(5))
                       if stateHashes.nonEmpty || eventHashes.nonEmpty then
                         result = Some(
                           MacroUtils.SpecHashInfo(
@@ -139,47 +117,21 @@ private[machine] object AssemblyMacros:
       extractFromIncludedConstructor(term)
     end extractHashInfosFromIncluded
 
-    // For direct specs, extract hash info
-    def getSpecInfo(term: Term, idx: Int): MacroUtils.SpecHashInfo =
-      val termShowStr           = term.show
-      val hasOverrideAtCallSite = termShowStr.contains("overriding")
-      MacroUtils.extractHashInfo(term) match
-        case Some(h) =>
-          val sourceDesc =
-            if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
-              s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
-            else s"spec #${idx + 1}"
-          h.copy(
-            isOverride = h.isOverride || hasOverrideAtCallSite,
-            sourceDesc = sourceDesc,
-          )
-        case None =>
-          MacroUtils.SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", hasOverrideAtCallSite, s"spec #${idx + 1}")
-      end match
-    end getSpecInfo
-
     // Build allSpecInfos in SOURCE ORDER by iterating over argTerms
     // This preserves the order: include(base), then spec @@ overriding
     var globalIdx    = 0
     val allSpecInfos = argTerms.flatMap { term =>
       if isTransitionSpecType(term.tpe) then
-        val info       = getSpecInfo(term, globalIdx)
-        val sourceDesc =
-          if info.stateNames.nonEmpty && info.eventNames.nonEmpty then
-            s"${info.stateNames.mkString(",")} via ${info.eventNames.mkString(",")}"
-          else s"spec #${globalIdx + 1}"
-        val result = List((info.copy(sourceDesc = sourceDesc), globalIdx))
+        val info   = MacroUtils.getSpecInfo(term, globalIdx)
+        val result = List((info, globalIdx))
         globalIdx += 1
         result
       else if isIncludedType(term.tpe) then
         // Extract hash infos from this Included and add them in order
         val includedInfos = extractHashInfosFromIncluded(term)
         includedInfos.map { info =>
-          val sourceDesc =
-            if info.stateNames.nonEmpty && info.eventNames.nonEmpty then
-              s"${info.stateNames.mkString(",")} via ${info.eventNames.mkString(",")}"
-            else s"included spec #${globalIdx + 1}"
-          val result = (info.copy(sourceDesc = sourceDesc), globalIdx)
+          val sourceDesc = MacroUtils.sourceDescFromInfo(info, globalIdx)
+          val result     = (info.copy(sourceDesc = sourceDesc), globalIdx)
           globalIdx += 1
           result
         }
@@ -207,49 +159,12 @@ private[machine] object AssemblyMacros:
             Expr.ofList(orderedSpecLists)
 
           // Generate literal hash info for compile-time extraction by include()
-          val allHashInfoExprs: List[Expr[IncludedHashInfo]] = allSpecInfos.map { case (info, _) =>
-            val stateHashesExpr = Expr(info.stateHashes)
-            val eventHashesExpr = Expr(info.eventHashes)
-            val stateNamesExpr  = Expr(info.stateNames)
-            val eventNamesExpr  = Expr(info.eventNames)
-            val targetDescExpr  = Expr(info.targetDesc)
-            val isOverrideExpr  = Expr(info.isOverride)
-            '{
-              IncludedHashInfo(
-                $stateHashesExpr,
-                $eventHashesExpr,
-                $stateNamesExpr,
-                $eventNamesExpr,
-                $targetDescExpr,
-                $isOverrideExpr,
-              )
-            }
-          }
-          val hashInfosExpr = Expr.ofList(allHashInfoExprs)
+          val allHashInfoExprs = allSpecInfos.map { case (info, _) => MacroUtils.hashInfoToExpr(info) }
+          val hashInfosExpr    = Expr.ofList(allHashInfoExprs)
 
-          // Compute orphan overrides: specs with isOverride=true that have no duplicate
-          val allKeys = allSpecInfos.flatMap { case (info, _) =>
-            for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
-          }
-          val keyCounts = allKeys.groupBy(identity).view.mapValues(_.size).toMap
-
-          val orphanInfoExprs: List[Expr[OrphanInfo]] = allSpecInfos.flatMap { case (info, _) =>
-            if info.isOverride then
-              // Check if ALL keys for this spec have count == 1 (no duplicate)
-              val specKeys = for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
-              val isOrphan = specKeys.forall(key => keyCounts.getOrElse(key, 0) == 1)
-
-              if isOrphan then
-                val stateHashesExpr = Expr(info.stateHashes)
-                val eventHashesExpr = Expr(info.eventHashes)
-                val stateNamesExpr  = Expr(info.stateNames)
-                val eventNamesExpr  = Expr(info.eventNames)
-                Some('{ OrphanInfo($stateHashesExpr, $eventHashesExpr, $stateNamesExpr, $eventNamesExpr) })
-              else None
-            else None
-          }
-
-          val orphansExpr = '{ Set(${ Varargs(orphanInfoExprs) }*) }
+          // Compute orphan overrides using shared helper
+          val orphanInfoExprs = MacroUtils.computeOrphanExprs(allSpecInfos)
+          val orphansExpr     = '{ Set(${ Varargs(orphanInfoExprs) }*) }
 
           '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
       end match
@@ -322,25 +237,16 @@ private[machine] object AssemblyMacros:
   private def extractHashInfoFromTerm(using Quotes)(term: quotes.reflect.Term): Option[Expr[IncludedHashInfo]] =
     import quotes.reflect.*
 
-    // Helper to extract boolean from term (handles Inlined wrapper)
-    def extractBooleanFromTerm(t: Term): Boolean =
-      t match
-        case Literal(BooleanConstant(b)) => b
-        case Inlined(_, _, inner)        => extractBooleanFromTerm(inner)
-        case Typed(inner, _)             => extractBooleanFromTerm(inner)
-        case Block(_, expr)              => extractBooleanFromTerm(expr)
-        case _                           => false
-
     def extractFromArgs(args: List[Term]): Option[Expr[IncludedHashInfo]] =
       if args.length >= 6 then
         val stateHashes = MacroUtils.extractSetInts(args(0))
         val eventHashes = MacroUtils.extractSetInts(args(1))
         val stateNames  = MacroUtils.extractListStrings(args(2))
         val eventNames  = MacroUtils.extractListStrings(args(3))
-        val targetDesc  = args(4) match
+        val targetDesc  = MacroUtils.unwrap(args(4)) match
           case Literal(StringConstant(s)) => s
           case _                          => "?"
-        val isOverride = extractBooleanFromTerm(args(5))
+        val isOverride = MacroUtils.extractBoolean(args(5))
 
         if stateHashes.nonEmpty || eventHashes.nonEmpty then
           val stateHashesExpr = Expr(stateHashes)
@@ -394,28 +300,12 @@ private[machine] object AssemblyMacros:
   )(using Quotes): Expr[Assembly[S, E, ?]] =
     import quotes.reflect.*
 
-    val term                   = block.asTerm
-    val transitionSpecTypeName = "TransitionSpec"
-    val assemblyTypeName       = "mechanoid.machine.Assembly"
-    val includedTypeName       = "mechanoid.machine.Included"
+    val term = block.asTerm
 
-    def isTransitionSpec(term: Term): Boolean =
-      term.tpe.dealias.widen match
-        case AppliedType(base, _) =>
-          base.typeSymbol.fullName.contains(transitionSpecTypeName)
-        case _ => false
-
-    def isAssembly(term: Term): Boolean =
-      term.tpe.dealias.widen match
-        case AppliedType(base, _) =>
-          base.typeSymbol.fullName == assemblyTypeName
-        case _ => false
-
-    def isIncluded(term: Term): Boolean =
-      term.tpe.dealias.widen match
-        case AppliedType(base, _) =>
-          base.typeSymbol.fullName == includedTypeName
-        case _ => false
+    // Use shared type checkers from MacroUtils
+    def isTransitionSpec(term: Term): Boolean = MacroUtils.isTransitionSpecType(term.tpe)
+    def isAssembly(term: Term): Boolean       = MacroUtils.isAssemblyType(term.tpe)
+    def isIncluded(term: Term): Boolean       = MacroUtils.isIncludedType(term.tpe)
 
     def isIncludeCall(term: Term): Boolean =
       term match
@@ -544,26 +434,9 @@ private[machine] object AssemblyMacros:
 
     val allSpecTerms = specTerms ++ includedSpecTerms
 
-    // Hash-based duplicate detection
-    def getSpecInfo(term: Term, idx: Int): MacroUtils.SpecHashInfo =
-      val hasOverrideAtCallSite = term.show.contains("overriding")
-      MacroUtils.extractHashInfo(term) match
-        case Some(h) =>
-          val sourceDesc =
-            if h.stateNames.nonEmpty && h.eventNames.nonEmpty then
-              s"${h.stateNames.mkString(",")} via ${h.eventNames.mkString(",")}"
-            else s"spec #${idx + 1}"
-          h.copy(
-            isOverride = h.isOverride || hasOverrideAtCallSite,
-            sourceDesc = sourceDesc,
-          )
-        case None =>
-          MacroUtils.SpecHashInfo(Set.empty, Set.empty, Nil, Nil, "?", hasOverrideAtCallSite, s"spec #${idx + 1}")
-      end match
-    end getSpecInfo
-
+    // Hash-based duplicate detection using shared helper
     val specInfos = allSpecTerms.zipWithIndex.map { case (term, idx) =>
-      (getSpecInfo(term, idx), idx)
+      (MacroUtils.getSpecInfo(term, idx), idx)
     }
 
     MacroUtils.checkDuplicates(specInfos, "Duplicate transition in assemblyAll")
@@ -578,59 +451,19 @@ private[machine] object AssemblyMacros:
     inferredCmdType.asType match
       case '[cmd] =>
         val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, cmd]]]] = orderedTerms.map { term =>
-          if term.tpe.dealias.widen match
-              case AppliedType(base, _) => base.typeSymbol.fullName == includedTypeName
-              case _                    => false
-          then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E, cmd]]] }.specs }
+          if isIncluded(term) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E, cmd]]] }.specs }
           else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]] }) }
         }
         val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, cmd]]]] =
           Expr.ofList(orderedSpecLists)
 
         // Generate literal hash info for compile-time extraction by include()
-        val allHashInfoExprs: List[Expr[IncludedHashInfo]] = specInfos.map { case (info, _) =>
-          val stateHashesExpr = Expr(info.stateHashes)
-          val eventHashesExpr = Expr(info.eventHashes)
-          val stateNamesExpr  = Expr(info.stateNames)
-          val eventNamesExpr  = Expr(info.eventNames)
-          val targetDescExpr  = Expr(info.targetDesc)
-          val isOverrideExpr  = Expr(info.isOverride)
-          '{
-            IncludedHashInfo(
-              $stateHashesExpr,
-              $eventHashesExpr,
-              $stateNamesExpr,
-              $eventNamesExpr,
-              $targetDescExpr,
-              $isOverrideExpr,
-            )
-          }
-        }
-        val hashInfosExpr = Expr.ofList(allHashInfoExprs)
+        val allHashInfoExprs = specInfos.map { case (info, _) => MacroUtils.hashInfoToExpr(info) }
+        val hashInfosExpr    = Expr.ofList(allHashInfoExprs)
 
-        // Compute orphan overrides: specs with isOverride=true that have no duplicate
-        val allKeys = specInfos.flatMap { case (info, _) =>
-          for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
-        }
-        val keyCounts = allKeys.groupBy(identity).view.mapValues(_.size).toMap
-
-        val orphanInfoExprs: List[Expr[OrphanInfo]] = specInfos.flatMap { case (info, _) =>
-          if info.isOverride then
-            // Check if ALL keys for this spec have count == 1 (no duplicate)
-            val specKeys = for s <- info.stateHashes; e <- info.eventHashes yield (s, e)
-            val isOrphan = specKeys.forall(key => keyCounts.getOrElse(key, 0) == 1)
-
-            if isOrphan then
-              val stateHashesExpr = Expr(info.stateHashes)
-              val eventHashesExpr = Expr(info.eventHashes)
-              val stateNamesExpr  = Expr(info.stateNames)
-              val eventNamesExpr  = Expr(info.eventNames)
-              Some('{ OrphanInfo($stateHashesExpr, $eventHashesExpr, $stateNamesExpr, $eventNamesExpr) })
-            else None
-          else None
-        }
-
-        val orphansExpr = '{ Set(${ Varargs(orphanInfoExprs) }*) }
+        // Compute orphan overrides using shared helper
+        val orphanInfoExprs = MacroUtils.computeOrphanExprs(specInfos)
+        val orphansExpr     = '{ Set(${ Varargs(orphanInfoExprs) }*) }
 
         val assemblyExpr = '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
 
