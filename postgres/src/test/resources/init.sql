@@ -30,7 +30,8 @@ CREATE TABLE fsm_snapshots (
 
 CREATE TABLE scheduled_timeouts (
   instance_id   TEXT PRIMARY KEY,
-  state         TEXT NOT NULL,
+  state_hash    INT NOT NULL,
+  sequence_nr   BIGINT NOT NULL,
   deadline      TIMESTAMPTZ NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   claimed_by    TEXT,

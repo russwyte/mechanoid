@@ -738,13 +738,15 @@ Persist timeout deadlines to a database:
 
 ```scala
 trait TimeoutStore[Id]:
-  def schedule(instanceId: Id, state: String, deadline: Instant): ZIO[Any, Throwable, ScheduledTimeout[Id]]
-  def cancel(instanceId: Id): ZIO[Any, Throwable, Boolean]
-  def queryExpired(limit: Int, now: Instant): ZIO[Any, Throwable, List[ScheduledTimeout[Id]]]
-  def claim(instanceId: Id, nodeId: String, duration: Duration, now: Instant): ZIO[Any, Throwable, ClaimResult]
-  def complete(instanceId: Id): ZIO[Any, Throwable, Boolean]
-  def release(instanceId: Id): ZIO[Any, Throwable, Boolean]
+  def schedule(instanceId: Id, stateHash: Int, sequenceNr: Long, deadline: Instant): ZIO[Any, MechanoidError, ScheduledTimeout[Id]]
+  def cancel(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
+  def queryExpired(limit: Int, now: Instant): ZIO[Any, MechanoidError, List[ScheduledTimeout[Id]]]
+  def claim(instanceId: Id, nodeId: String, duration: Duration, now: Instant): ZIO[Any, MechanoidError, ClaimResult]
+  def complete(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
+  def release(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
 ```
+
+The `stateHash` and `sequenceNr` parameters enable **state validation** - ensuring timeouts don't fire if the FSM has transitioned away from the timed state.
 
 ### TimeoutStrategy
 
@@ -781,17 +783,16 @@ val program = ZIO.scoped {
 
 ### TimeoutSweeper
 
-A background service discovers and fires expired timeouts:
+A background service discovers and fires expired timeouts. It integrates directly with `FSMRuntime` for type-safe timeout handling:
 
 ```scala
 val sweeper = ZIO.scoped {
   for
     timeoutStore <- ZIO.service[TimeoutStore[OrderId]]
-    eventStore <- ZIO.service[EventStore[OrderId, OrderState, OrderEvent]]
+    runtime <- FSMRuntime(orderId, machine, Pending)
 
-    onTimeout = TimeoutFiring.makeCallback(eventStore)
-
-    sweeper <- TimeoutSweeper.make(config, timeoutStore, onTimeout)
+    // TimeoutSweeper integrates directly with FSMRuntime
+    sweeper <- TimeoutSweeper.make(config, timeoutStore, runtime)
     _ <- ZIO.never // Keep running
   yield ()
 }
@@ -800,8 +801,12 @@ val sweeper = ZIO.scoped {
 **Flow:**
 1. Query for expired, unclaimed timeouts
 2. Atomically claim each timeout (prevents duplicates)
-3. Fire the timeout (send the user-defined timeout event)
-4. Mark complete (removes from TimeoutStore)
+3. **Validate FSM state**: compare current `(stateHash, sequenceNr)` with stored values
+4. **If valid**: look up timeout event via `Machine.timeoutEvents(stateHash)`, fire via `runtime.send(event)`
+5. **If stale** (state/seqNr changed): skip firing, increment `timeoutsSkipped` metric
+6. Mark complete (removes from TimeoutStore)
+
+**State Validation** prevents race conditions where a timeout fires after the FSM has already transitioned. The stored `sequenceNr` acts as a "generation counter" - if the FSM transitions away and back to the same state, old timeouts are correctly identified as stale.
 
 ### Sweeper Configuration
 
@@ -833,7 +838,7 @@ val config = TimeoutSweeperConfig()
       .withRenewalInterval(Duration.fromSeconds(10))
   )
 
-val sweeper = TimeoutSweeper.make(config, timeoutStore, onTimeout, Some(leaseStore))
+val sweeper = TimeoutSweeper.make(config, timeoutStore, runtime, Some(leaseStore))
 ```
 
 Only the leader node performs sweeps. If the leader fails, another node acquires the lease after expiration.

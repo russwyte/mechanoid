@@ -33,14 +33,15 @@ final class FiberTimeoutStrategy[Id] private (
 
   override def schedule(
       instanceId: Id,
-      stateName: String,
+      stateHash: Int,
+      sequenceNr: Long,
       duration: Duration,
       onTimeout: UIO[Unit],
   ): UIO[Unit] =
     for
       // Cancel any existing timeout first
       _ <- cancel(instanceId)
-      // Fork a new timeout fiber
+      // Fork a new timeout fiber (stateHash/sequenceNr not used - we use onTimeout callback directly)
       fiber <- (ZIO.sleep(duration) *> onTimeout).forkDaemon
       // Track the fiber for potential cancellation
       _ <- fibers.update(_ + (instanceId -> fiber))

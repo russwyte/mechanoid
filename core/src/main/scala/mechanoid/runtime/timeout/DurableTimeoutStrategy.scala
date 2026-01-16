@@ -42,14 +42,15 @@ final class DurableTimeoutStrategy[Id] private (
 
   override def schedule(
       instanceId: Id,
-      stateName: String,
+      stateHash: Int,
+      sequenceNr: Long,
       duration: Duration,
       onTimeout: UIO[Unit],
   ): UIO[Unit] =
     // Note: onTimeout is ignored - the TimeoutSweeper handles firing
     Clock.instant.flatMap { now =>
       val deadline = now.plusMillis(duration.toMillis)
-      timeoutStore.schedule(instanceId, stateName, deadline).ignore
+      timeoutStore.schedule(instanceId, stateHash, sequenceNr, deadline).ignore
     }
 
   override def cancel(instanceId: Id): UIO[Unit] =

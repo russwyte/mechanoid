@@ -105,6 +105,8 @@ final class LockedFSMRuntime[Id, S, E, Cmd] private[lock] (
   override def timeoutConfigForState(state: S): Option[(Duration, E)] =
     underlying.timeoutConfigForState(state)
 
+  override def machine = underlying.machine
+
   override def saveSnapshot: ZIO[Any, MechanoidError, Unit] =
     // Snapshots don't need locking - they're read-only from the FSM's perspective
     underlying.saveSnapshot

@@ -26,7 +26,8 @@ final case class SnapshotRow(
 @tableName("scheduled_timeouts")
 final case class TimeoutRow(
     @key @label("instance_id") instanceId: String,
-    state: String,
+    @label("state_hash") stateHash: Int,
+    @label("sequence_nr") sequenceNr: Long,
     deadline: Instant,
     @label("created_at") createdAt: Instant,
     @label("claimed_by") claimedBy: Option[String],

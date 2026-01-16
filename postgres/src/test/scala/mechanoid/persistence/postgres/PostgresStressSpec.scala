@@ -775,7 +775,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         // Schedule a timeout in the past (already expired)
         deadline = now.minusSeconds(10)
-        _ <- store.schedule(instanceId, "WaitingForTimeout", deadline)
+        _ <- store.schedule(instanceId, 100, 0L, deadline) // stateHash, sequenceNr
 
         // 100 nodes try to claim simultaneously
         nodes = (1 to 100).map(i => s"sweeper-$i").toList
@@ -797,11 +797,11 @@ object PostgresStressSpec extends ZIOSpecDefault:
         instanceId = uniqueId("timeout-replace")
 
         // Schedule initial timeout
-        _ <- store.schedule(instanceId, "State1", now.plusSeconds(100))
+        _ <- store.schedule(instanceId, 100, 0L, now.plusSeconds(100)) // stateHash, sequenceNr
 
-        // Parallel updates with different states
+        // Parallel updates with different state hashes
         _ <- ZIO.foreachPar(1 to 50) { i =>
-          store.schedule(instanceId, s"State$i", now.plusSeconds(i.toLong))
+          store.schedule(instanceId, i, i.toLong, now.plusSeconds(i.toLong)) // stateHash = i
         }
 
         // Only one timeout should exist
@@ -819,7 +819,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         instanceId = uniqueId("cancel-vs-claim")
         deadline   = now.minusSeconds(1) // Already expired
 
-        _ <- store.schedule(instanceId, "WaitingForTimeout", deadline)
+        _ <- store.schedule(instanceId, 100, 0L, deadline) // stateHash, sequenceNr
 
         // Race between cancel and claim
         cancelFiber <- store.cancel(instanceId).fork
@@ -843,7 +843,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         // Schedule many expired timeouts
         ids = (1 to 50).map(_ => uniqueId("expired")).toList
-        _ <- ZIO.foreach(ids)(id => store.schedule(id, "WaitingForTimeout", past))
+        _ <- ZIO.foreach(ids)(id => store.schedule(id, 100, 0L, past)) // stateHash, sequenceNr
 
         // Query and complete concurrently
         queryFiber    <- store.queryExpired(100, now).fork
@@ -998,7 +998,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
                     // Maybe schedule a timeout
                     timeoutNow <- Clock.instant
-                    _          <- timeoutStore.schedule(instanceId, "Processing", timeoutNow.plusSeconds(10))
+                    _ <- timeoutStore.schedule(instanceId, 100, 0L, timeoutNow.plusSeconds(10)) // stateHash, sequenceNr
 
                     // Update processed count
                     _ <- processedRef.update(m => m.updated(instanceId, m.getOrElse(instanceId, 0) + 2))
@@ -1108,7 +1108,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
         expiredIds = (1 to 20).map(_ => uniqueId("expired")).toList
         futureIds  = (1 to 20).map(_ => uniqueId("future")).toList
 
-        _ <- ZIO.foreach(expiredIds)(id => store.schedule(id, "Expired", past))
+        _ <- ZIO.foreach(expiredIds)(id => store.schedule(id, 100, 0L, past)) // stateHash, sequenceNr
 
         // Parallel: claim expired + schedule new
         claimFiber <- ZIO
@@ -1119,7 +1119,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
           }
           .fork
 
-        scheduleFiber <- ZIO.foreach(futureIds)(id => store.schedule(id, "Future", future)).fork
+        scheduleFiber <- ZIO.foreach(futureIds)(id => store.schedule(id, 200, 0L, future)).fork // stateHash, sequenceNr
 
         _ <- claimFiber.join
         _ <- scheduleFiber.join
