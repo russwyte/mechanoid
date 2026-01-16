@@ -27,7 +27,8 @@ import mechanoid.core.MechanoidError
   * {{{
   * CREATE TABLE scheduled_timeouts (
   *   instance_id    TEXT PRIMARY KEY,
-  *   state          TEXT NOT NULL,
+  *   state_hash     INT NOT NULL,
+  *   sequence_nr    BIGINT NOT NULL,
   *   deadline       TIMESTAMPTZ NOT NULL,
   *   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   *   claimed_by     TEXT,
@@ -78,10 +79,16 @@ trait TimeoutStore[Id]:
     * This is called when the FSM enters a state that has a timeout configured. If a timeout already exists for this
     * instance, it MUST be replaced (upsert). Only one active timeout per instance is supported.
     *
+    * The `stateHash` and `sequenceNr` are used by the sweeper to validate that the FSM is still in the expected state
+    * before firing the timeout. This prevents stale timeouts from firing after the FSM has transitioned or re-entered
+    * the same state.
+    *
     * @param instanceId
     *   The FSM instance identifier
-    * @param state
-    *   The state name (for validation when firing)
+    * @param stateHash
+    *   Hash of the state the FSM should be in when this timeout fires
+    * @param sequenceNr
+    *   The sequence number when timeout was scheduled (generation counter)
     * @param deadline
     *   When the timeout should fire
     * @return
@@ -89,7 +96,8 @@ trait TimeoutStore[Id]:
     */
   def schedule(
       instanceId: Id,
-      state: String,
+      stateHash: Int,
+      sequenceNr: Long,
       deadline: Instant,
   ): ZIO[Any, MechanoidError, ScheduledTimeout[Id]]
 

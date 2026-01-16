@@ -15,7 +15,7 @@ import java.time.Instant
   * // Create directly
   * for
   *   store <- InMemoryTimeoutStore.make[String]
-  *   _     <- store.schedule("instance-1", "WaitingForPayment", deadline)
+  *   _     <- store.schedule("instance-1", stateHash, sequenceNr, deadline)
   * yield ()
   *
   * // Or as a ZLayer
@@ -29,14 +29,16 @@ final class InMemoryTimeoutStore[Id] private (
 
   override def schedule(
       instanceId: Id,
-      state: String,
+      stateHash: Int,
+      sequenceNr: Long,
       deadline: Instant,
   ): ZIO[Any, MechanoidError, ScheduledTimeout[Id]] =
     for
       now <- Clock.instant
       timeout = ScheduledTimeout(
         instanceId = instanceId,
-        state = state,
+        stateHash = stateHash,
+        sequenceNr = sequenceNr,
         deadline = deadline,
         createdAt = now,
       )

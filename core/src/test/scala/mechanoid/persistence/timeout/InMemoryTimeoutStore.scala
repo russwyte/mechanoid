@@ -24,14 +24,16 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
 
   def schedule(
       instanceId: Id,
-      state: String,
+      stateHash: Int,
+      sequenceNr: Long,
       deadline: Instant,
   ): ZIO[Any, MechanoidError, ScheduledTimeout[Id]] =
     ZIO.succeed {
       synchronized {
         val timeout = ScheduledTimeout(
           instanceId = instanceId,
-          state = state,
+          stateHash = stateHash,
+          sequenceNr = sequenceNr,
           deadline = deadline,
           createdAt = Instant.now(),
         )

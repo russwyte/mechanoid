@@ -95,6 +95,13 @@ trait FSMRuntime[Id, S, E, +Cmd]:
     *   Timeout duration and event if configured
     */
   def timeoutConfigForState(state: S): Option[(Duration, E)]
+
+  /** Access the underlying Machine definition.
+    *
+    * Provides access to state/event enums, timeout configurations, and transition metadata. Used by TimeoutSweeper to
+    * resolve event hashes back to typed events.
+    */
+  def machine: Machine[S, E, Cmd]
 end FSMRuntime
 
 object FSMRuntime:
@@ -339,7 +346,7 @@ end FSMRuntime
   */
 private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
     val instanceId: Id,
-    machine: Machine[S, E, Cmd],
+    val machine: Machine[S, E, Cmd],
     store: EventStore[Id, S, E],
     timeoutStrategy: TimeoutStrategy[Id],
     lockingStrategy: LockingStrategy[Id],
@@ -476,28 +483,36 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
     * Delegates to the [[TimeoutStrategy]] to schedule the timeout. The callback checks that the FSM is still in the
     * same state before firing the timeout event.
     *
+    * For durable timeouts, the `stateHash` and `sequenceNr` are persisted to enable validation before firing. This
+    * prevents stale timeouts from firing after the FSM has transitioned or re-entered the same state.
+    *
     * @param state
     *   The state to start a timeout for
     */
   private[mechanoid] def startTimeout(state: S): ZIO[Any, Nothing, Unit] =
-    val stateCaseHash = machine.stateEnum.caseHash(state)
+    val stateHash = machine.stateEnum.caseHash(state)
     // Get both duration and user-defined timeout event for this state
     val timeoutConfig = for
-      duration <- machine.timeouts.get(stateCaseHash)
-      event    <- machine.timeoutEvents.get(stateCaseHash)
+      duration <- machine.timeouts.get(stateHash)
+      event    <- machine.timeoutEvents.get(stateHash)
     yield (duration, event)
 
     ZIO.foreachDiscard(timeoutConfig) { case (duration, timeoutEvent) =>
-      // Create callback that fires timeout event if still in same state
-      val onTimeout: UIO[Unit] = stateRef.get.flatMap { currentFsmState =>
-        // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
-        ZIO
-          .when(machine.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(
-            send(timeoutEvent).ignore
-          )
-          .unit
-      }
-      timeoutStrategy.schedule(instanceId, state.toString, duration, onTimeout)
+      for
+        // Capture current sequence number as generation counter for this visit to the state
+        seqNr <- seqNrRef.get
+        // Create callback that fires timeout event if still in same state (for FiberTimeoutStrategy)
+        onTimeout: UIO[Unit] = stateRef.get.flatMap { currentFsmState =>
+          // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
+          ZIO
+            .when(machine.stateEnum.caseHash(currentFsmState.current) == stateHash)(
+              send(timeoutEvent).ignore
+            )
+            .unit
+        }
+        // Pass stateHash and sequenceNr for durable timeout validation
+        _ <- timeoutStrategy.schedule(instanceId, stateHash, seqNr, duration, onTimeout)
+      yield ()
     }
   end startTimeout
 

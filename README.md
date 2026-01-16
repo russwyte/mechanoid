@@ -154,13 +154,13 @@ val program = ZIO.scoped {
   LockingStrategy.optimistic[PaymentId]
 )
 
-// Run sweeper (typically separate process)
+// Run sweeper (integrates directly with FSMRuntime for type-safe timeout handling)
 val sweeper = TimeoutSweeper.make(
   TimeoutSweeperConfig()
     .withSweepInterval(Duration.fromSeconds(5))
     .withJitterFactor(0.2),
   timeoutStore,
-  TimeoutFiring.makeCallback(eventStore)
+  runtime  // FSMRuntime instance - sweeper validates state before firing
 )
 ```
 

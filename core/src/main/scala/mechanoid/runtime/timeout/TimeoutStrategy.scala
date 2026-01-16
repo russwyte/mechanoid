@@ -59,20 +59,27 @@ trait TimeoutStrategy[Id]:
     * When the timeout fires, it should invoke the provided callback. The implementation determines how the timeout is
     * tracked (in-memory vs persisted).
     *
+    * For durable timeouts, the `stateHash` and `sequenceNr` are persisted and used by the sweeper to validate that the
+    * FSM is still in the expected state before firing. This prevents stale timeouts from firing after the FSM has
+    * transitioned or re-entered the same state.
+    *
     * @param instanceId
     *   The FSM instance identifier
-    * @param stateName
-    *   String representation of the state (for debugging/logging)
+    * @param stateHash
+    *   Hash of the state the FSM should be in when this timeout fires
+    * @param sequenceNr
+    *   The sequence number when timeout was scheduled (generation counter)
     * @param duration
     *   How long until the timeout fires
     * @param onTimeout
-    *   Callback to invoke when the timeout expires
+    *   Callback to invoke when the timeout expires (used by fiber-based strategy)
     * @return
     *   An effect that completes when the timeout is scheduled
     */
   def schedule(
       instanceId: Id,
-      stateName: String,
+      stateHash: Int,
+      sequenceNr: Long,
       duration: Duration,
       onTimeout: UIO[Unit],
   ): UIO[Unit]
@@ -93,11 +100,12 @@ object TimeoutStrategy:
   /** Access the timeout strategy from the environment. */
   def schedule[Id: Tag](
       instanceId: Id,
-      stateName: String,
+      stateHash: Int,
+      sequenceNr: Long,
       duration: Duration,
       onTimeout: UIO[Unit],
   ): ZIO[TimeoutStrategy[Id], Nothing, Unit] =
-    ZIO.serviceWithZIO[TimeoutStrategy[Id]](_.schedule(instanceId, stateName, duration, onTimeout))
+    ZIO.serviceWithZIO[TimeoutStrategy[Id]](_.schedule(instanceId, stateHash, sequenceNr, duration, onTimeout))
 
   /** Cancel a pending timeout. */
   def cancel[Id: Tag](instanceId: Id): ZIO[TimeoutStrategy[Id], Nothing, Unit] =

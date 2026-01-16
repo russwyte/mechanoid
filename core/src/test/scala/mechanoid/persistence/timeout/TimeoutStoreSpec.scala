@@ -6,15 +6,22 @@ import java.time.Instant
 
 object TimeoutStoreSpec extends ZIOSpecDefault:
 
+  // Use constant hashes for testing - actual values don't matter for store tests
+  private val StateHash1 = 100
+  private val StateHash2 = 200
+  private val SeqNr1     = 1L
+  private val SeqNr2     = 2L
+
   def spec = suite("TimeoutStore")(
     suite("schedule")(
       test("creates a new timeout") {
         val store    = new InMemoryTimeoutStore[String]()
         val deadline = Instant.now().plusSeconds(60)
-        for timeout <- store.schedule("fsm-1", "WaitingForPayment", deadline)
+        for timeout <- store.schedule("fsm-1", StateHash1, SeqNr1, deadline)
         yield assertTrue(
           timeout.instanceId == "fsm-1",
-          timeout.state == "WaitingForPayment",
+          timeout.stateHash == StateHash1,
+          timeout.sequenceNr == SeqNr1,
           timeout.deadline == deadline,
           timeout.claimedBy.isEmpty,
           timeout.claimedUntil.isEmpty,
@@ -25,26 +32,28 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val deadline1 = Instant.now().plusSeconds(60)
         val deadline2 = Instant.now().plusSeconds(120)
         for
-          _      <- store.schedule("fsm-1", "State1", deadline1)
-          _      <- store.schedule("fsm-1", "State2", deadline2)
+          _      <- store.schedule("fsm-1", StateHash1, SeqNr1, deadline1)
+          _      <- store.schedule("fsm-1", StateHash2, SeqNr2, deadline2)
           stored <- store.get("fsm-1")
         yield assertTrue(
           stored.isDefined,
-          stored.get.state == "State2",
+          stored.get.stateHash == StateHash2,
+          stored.get.sequenceNr == SeqNr2,
           stored.get.deadline == deadline2,
         )
+        end for
       },
       test("handles multiple instances independently") {
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _  <- store.schedule("fsm-1", "StateA", now.plusSeconds(60))
-          _  <- store.schedule("fsm-2", "StateB", now.plusSeconds(120))
+          _  <- store.schedule("fsm-1", StateHash1, SeqNr1, now.plusSeconds(60))
+          _  <- store.schedule("fsm-2", StateHash2, SeqNr2, now.plusSeconds(120))
           t1 <- store.get("fsm-1")
           t2 <- store.get("fsm-2")
         yield assertTrue(
-          t1.get.state == "StateA",
-          t2.get.state == "StateB",
+          t1.get.stateHash == StateHash1,
+          t2.get.stateHash == StateHash2,
           store.size == 2,
         )
         end for
@@ -54,7 +63,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
       test("removes existing timeout") {
         val store = new InMemoryTimeoutStore[String]()
         for
-          _         <- store.schedule("fsm-1", "State", Instant.now().plusSeconds(60))
+          _         <- store.schedule("fsm-1", StateHash1, SeqNr1, Instant.now().plusSeconds(60))
           cancelled <- store.cancel("fsm-1")
           stored    <- store.get("fsm-1")
         yield assertTrue(cancelled, stored.isEmpty)
@@ -70,9 +79,9 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _       <- store.schedule("expired-1", "S", now.minusSeconds(10))
-          _       <- store.schedule("expired-2", "S", now.minusSeconds(5))
-          _       <- store.schedule("future", "S", now.plusSeconds(60))
+          _       <- store.schedule("expired-1", StateHash1, SeqNr1, now.minusSeconds(10))
+          _       <- store.schedule("expired-2", StateHash1, SeqNr1, now.minusSeconds(5))
+          _       <- store.schedule("future", StateHash1, SeqNr1, now.plusSeconds(60))
           expired <- store.queryExpired(10, now)
         yield assertTrue(
           expired.length == 2,
@@ -83,9 +92,9 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _       <- store.schedule("newer", "S", now.minusSeconds(5))
-          _       <- store.schedule("older", "S", now.minusSeconds(10))
-          _       <- store.schedule("newest", "S", now.minusSeconds(1))
+          _       <- store.schedule("newer", StateHash1, SeqNr1, now.minusSeconds(5))
+          _       <- store.schedule("older", StateHash1, SeqNr1, now.minusSeconds(10))
+          _       <- store.schedule("newest", StateHash1, SeqNr1, now.minusSeconds(1))
           expired <- store.queryExpired(10, now)
         yield assertTrue(
           expired.map(_.instanceId) == List("older", "newer", "newest")
@@ -95,7 +104,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _       <- ZIO.foreach(1 to 10)(i => store.schedule(s"fsm-$i", "S", now.minusSeconds(i.toLong)))
+          _ <- ZIO.foreach(1 to 10)(i => store.schedule(s"fsm-$i", StateHash1, i.toLong, now.minusSeconds(i.toLong)))
           expired <- store.queryExpired(3, now)
         yield assertTrue(expired.length == 3)
       },
@@ -103,8 +112,8 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _       <- store.schedule("unclaimed", "S", now.minusSeconds(10))
-          _       <- store.schedule("claimed", "S", now.minusSeconds(10))
+          _       <- store.schedule("unclaimed", StateHash1, SeqNr1, now.minusSeconds(10))
+          _       <- store.schedule("claimed", StateHash1, SeqNr2, now.minusSeconds(10))
           _       <- store.claim("claimed", "node-A", Duration.fromSeconds(30), now)
           expired <- store.queryExpired(10, now)
         yield assertTrue(
@@ -117,7 +126,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val past  = Instant.now().minusSeconds(60)
         val now   = Instant.now()
         for
-          _ <- store.schedule("fsm-1", "S", past)
+          _ <- store.schedule("fsm-1", StateHash1, SeqNr1, past)
           // Claim in the past (claim has expired)
           _       <- store.claim("fsm-1", "node-A", Duration.fromSeconds(30), past)
           expired <- store.queryExpired(10, now)
@@ -129,7 +138,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _      <- store.schedule("fsm-1", "S", now.minusSeconds(10))
+          _      <- store.schedule("fsm-1", StateHash1, SeqNr1, now.minusSeconds(10))
           result <- store.claim("fsm-1", "node-A", Duration.fromSeconds(30), now)
         yield result match
           case ClaimResult.Claimed(t) =>
@@ -144,7 +153,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _      <- store.schedule("fsm-1", "S", now.minusSeconds(10))
+          _      <- store.schedule("fsm-1", StateHash1, SeqNr1, now.minusSeconds(10))
           _      <- store.claim("fsm-1", "node-A", Duration.fromSeconds(30), now)
           result <- store.claim("fsm-1", "node-B", Duration.fromSeconds(30), now)
         yield result match
@@ -157,7 +166,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val past  = Instant.now().minusSeconds(60)
         val now   = Instant.now()
         for
-          _ <- store.schedule("fsm-1", "S", past.minusSeconds(10))
+          _ <- store.schedule("fsm-1", StateHash1, SeqNr1, past.minusSeconds(10))
           // Claim in the past (will be expired by now)
           _ <- store.claim("fsm-1", "node-A", Duration.fromSeconds(30), past)
           // Now try to claim - should succeed since previous claim expired
@@ -183,7 +192,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
       test("removes timeout after successful processing") {
         val store = new InMemoryTimeoutStore[String]()
         for
-          _         <- store.schedule("fsm-1", "S", Instant.now().minusSeconds(10))
+          _         <- store.schedule("fsm-1", StateHash1, SeqNr1, Instant.now().minusSeconds(10))
           completed <- store.complete("fsm-1")
           stored    <- store.get("fsm-1")
         yield assertTrue(completed, stored.isEmpty)
@@ -199,7 +208,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _        <- store.schedule("fsm-1", "S", now.minusSeconds(10))
+          _        <- store.schedule("fsm-1", StateHash1, SeqNr1, now.minusSeconds(10))
           _        <- store.claim("fsm-1", "node-A", Duration.fromSeconds(30), now)
           released <- store.release("fsm-1")
           stored   <- store.get("fsm-1")
@@ -215,7 +224,7 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         val now   = Instant.now()
         for
-          _      <- store.schedule("fsm-1", "S", now.minusSeconds(10))
+          _      <- store.schedule("fsm-1", StateHash1, SeqNr1, now.minusSeconds(10))
           _      <- store.claim("fsm-1", "node-A", Duration.fromSeconds(30), now)
           _      <- store.release("fsm-1")
           result <- store.claim("fsm-1", "node-B", Duration.fromSeconds(30), now)
@@ -230,7 +239,8 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val now     = Instant.now()
         val timeout = ScheduledTimeout(
           instanceId = "fsm-1",
-          state = "S",
+          stateHash = StateHash1,
+          sequenceNr = SeqNr1,
           deadline = now.minusSeconds(10),
           createdAt = now.minusSeconds(20),
           claimedBy = Some("node-A"),
@@ -242,7 +252,8 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val now     = Instant.now()
         val timeout = ScheduledTimeout(
           instanceId = "fsm-1",
-          state = "S",
+          stateHash = StateHash1,
+          sequenceNr = SeqNr1,
           deadline = now.minusSeconds(10),
           createdAt = now.minusSeconds(20),
           claimedBy = Some("node-A"),
@@ -254,7 +265,8 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val now     = Instant.now()
         val timeout = ScheduledTimeout(
           instanceId = "fsm-1",
-          state = "S",
+          stateHash = StateHash1,
+          sequenceNr = SeqNr1,
           deadline = now.minusSeconds(10),
           createdAt = now.minusSeconds(20),
         )

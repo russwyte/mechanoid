@@ -12,6 +12,18 @@ import java.time.Instant
   * Only one timeout per FSM instance is active at a time. Scheduling a new timeout replaces any existing one. This
   * matches the FSM semantics where entering a new state cancels the previous state's timeout.
   *
+  * ==State Validation==
+  *
+  * The `stateHash` and `sequenceNr` fields enable the sweeper to validate that the FSM is still in the expected state
+  * before firing the timeout:
+  *
+  *   - '''stateHash''': Hash of the state the FSM should be in (via Finite typeclass)
+  *   - '''sequenceNr''': The sequence number when the timeout was scheduled (acts as a generation counter)
+  *
+  * Both must match for the timeout to fire. This prevents stale timeouts from firing after the FSM has:
+  *   - Transitioned to a different state (stateHash mismatch)
+  *   - Re-entered the same state (sequenceNr mismatch - a new timeout was scheduled)
+  *
   * ==Claim Mechanism==
   *
   * In distributed deployments, multiple sweeper nodes may discover the same expired timeout. The [[claimedBy]] and
@@ -28,8 +40,10 @@ import java.time.Instant
   *   The FSM instance identifier type
   * @param instanceId
   *   The FSM instance this timeout belongs to
-  * @param state
-  *   The state name that configured this timeout (for validation on fire)
+  * @param stateHash
+  *   Hash of the state the FSM should be in when this timeout fires
+  * @param sequenceNr
+  *   The sequence number when timeout was scheduled (generation counter for this visit to the state)
   * @param deadline
   *   When the timeout should fire
   * @param createdAt
@@ -41,7 +55,8 @@ import java.time.Instant
   */
 final case class ScheduledTimeout[Id](
     instanceId: Id,
-    state: String,
+    stateHash: Int,
+    sequenceNr: Long,
     deadline: Instant,
     createdAt: Instant,
     claimedBy: Option[String] = None,

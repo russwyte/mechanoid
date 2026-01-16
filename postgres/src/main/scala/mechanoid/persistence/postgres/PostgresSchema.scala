@@ -79,7 +79,8 @@ object PostgresSchema:
     "scheduled_timeouts" -> TableDefinition(
       columns = List(
         ColumnDef("instance_id", "text", nullable = false),
-        ColumnDef("state", "text", nullable = false),
+        ColumnDef("state_hash", "integer", nullable = false),
+        ColumnDef("sequence_nr", "bigint", nullable = false),
         ColumnDef("deadline", "timestamp with time zone", nullable = false),
         ColumnDef("created_at", "timestamp with time zone", nullable = false),
         ColumnDef("claimed_by", "text", nullable = true),
@@ -214,7 +215,8 @@ object PostgresSchema:
 
       _ <- xa.run(sql"""CREATE TABLE scheduled_timeouts (
              instance_id TEXT PRIMARY KEY,
-             state TEXT NOT NULL,
+             state_hash INT NOT NULL,
+             sequence_nr BIGINT NOT NULL,
              deadline TIMESTAMPTZ NOT NULL,
              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
              claimed_by TEXT,

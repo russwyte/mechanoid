@@ -18,23 +18,25 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
 
   override def schedule(
       instanceId: String,
-      state: String,
+      stateHash: Int,
+      sequenceNr: Long,
       deadline: Instant,
   ): ZIO[Any, MechanoidError, ScheduledTimeout[String]] =
     (for
       now <- Clock.instant
       _   <- transactor.run {
         sql"""
-          INSERT INTO scheduled_timeouts (instance_id, state, deadline, created_at)
-          VALUES ($instanceId, $state, $deadline, $now)
+          INSERT INTO scheduled_timeouts (instance_id, state_hash, sequence_nr, deadline, created_at)
+          VALUES ($instanceId, $stateHash, $sequenceNr, $deadline, $now)
           ON CONFLICT (instance_id) DO UPDATE SET
-            state = EXCLUDED.state,
+            state_hash = EXCLUDED.state_hash,
+            sequence_nr = EXCLUDED.sequence_nr,
             deadline = EXCLUDED.deadline,
             claimed_by = NULL,
             claimed_until = NULL
         """.dml
       }
-    yield ScheduledTimeout(instanceId, state, deadline, now, None, None)).mapError(PersistenceError(_))
+    yield ScheduledTimeout(instanceId, stateHash, sequenceNr, deadline, now, None, None)).mapError(PersistenceError(_))
 
   override def cancel(instanceId: String): ZIO[Any, MechanoidError, Boolean] =
     transactor
@@ -51,7 +53,7 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
     transactor
       .run {
         sql"""
-        SELECT instance_id, state, deadline, created_at, claimed_by, claimed_until
+        SELECT instance_id, state_hash, sequence_nr, deadline, created_at, claimed_by, claimed_until
         FROM scheduled_timeouts
         WHERE deadline <= $now
           AND (claimed_by IS NULL OR claimed_until < $now)
@@ -76,7 +78,7 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
         SET claimed_by = $nodeId, claimed_until = $claimedUntil
         WHERE instance_id = $instanceId
           AND (claimed_by IS NULL OR claimed_until < $now)
-        RETURNING instance_id, state, deadline, created_at, claimed_by, claimed_until
+        RETURNING instance_id, state_hash, sequence_nr, deadline, created_at, claimed_by, claimed_until
       """.queryOne[TimeoutRow]
       }
       .flatMap {
@@ -127,7 +129,7 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
     transactor
       .run {
         sql"""
-        SELECT instance_id, state, deadline, created_at, claimed_by, claimed_until
+        SELECT instance_id, state_hash, sequence_nr, deadline, created_at, claimed_by, claimed_until
         FROM scheduled_timeouts
         WHERE instance_id = $instanceId
       """.queryOne[TimeoutRow]
@@ -138,7 +140,8 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
   private def rowToTimeout(row: TimeoutRow): ScheduledTimeout[String] =
     ScheduledTimeout(
       instanceId = row.instanceId,
-      state = row.state,
+      stateHash = row.stateHash,
+      sequenceNr = row.sequenceNr,
       deadline = row.deadline,
       createdAt = row.createdAt,
       claimedBy = row.claimedBy,
