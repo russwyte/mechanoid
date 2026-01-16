@@ -2,7 +2,6 @@ package mechanoid.persistence
 
 import zio.*
 import zio.test.*
-import zio.test.Assertion.*
 
 object ScheduleExperimentSpec extends ZIOSpecDefault:
 

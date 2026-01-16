@@ -4,13 +4,13 @@ val scala3Version = "3.7.4"
 val zioVersion    = "2.1.24"
 
 ThisBuild / dependencyOverrides += "org.scalameta" % "semanticdb-scalac_2.12.21" % "4.14.4"
-ThisBuild / scalaVersion         := scala3Version
-ThisBuild / organization         := "io.github.russwyte"
-ThisBuild / organizationName     := "russwyte"
-ThisBuild / organizationHomepage := Some(url("https://github.com/russwyte"))
-ThisBuild / licenses             := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt"))
-ThisBuild / homepage             := Some(url("https://github.com/russwyte/mechanoid"))
-ThisBuild / scmInfo              := Some(
+ThisBuild / scalaVersion                          := scala3Version
+ThisBuild / organization                          := "io.github.russwyte"
+ThisBuild / organizationName                      := "russwyte"
+ThisBuild / organizationHomepage                  := Some(url("https://github.com/russwyte"))
+ThisBuild / licenses := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt"))
+ThisBuild / homepage := Some(url("https://github.com/russwyte/mechanoid"))
+ThisBuild / scmInfo  := Some(
   ScmInfo(
     url("https://github.com/russwyte/mechanoid"),
     "scm:git@github.com:russwyte/mechanoid.git",
@@ -48,7 +48,7 @@ lazy val root = project
   .in(file("."))
   .aggregate(core, postgres, examples)
   .settings(
-    name           := "mechanoid",
+    name           := "mechanoid-root",
     publish / skip := true,
   )
 
@@ -57,7 +57,7 @@ lazy val core = project
   .settings(commonSettings)
   .settings(publishSettings)
   .settings(
-    name        := "mechanoid-core",
+    name        := "mechanoid",
     description := "A type-safe, effect-oriented finite state machine library for Scala built on ZIO",
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"               % zioVersion,
@@ -82,7 +82,7 @@ lazy val postgres = project
     libraryDependencies ++= Seq(
       "io.github.russwyte" %% "saferis"      % "0.1.1",
       "org.postgresql"      % "postgresql"   % "42.7.8",
-      "org.testcontainers"  % "postgresql"   % "1.21.4" % Test,
+      "org.testcontainers"  % "postgresql"   % "1.21.4"   % Test,
       "dev.zio"            %% "zio-test"     % zioVersion % Test,
       "dev.zio"            %% "zio-test-sbt" % zioVersion % Test,
     ),
