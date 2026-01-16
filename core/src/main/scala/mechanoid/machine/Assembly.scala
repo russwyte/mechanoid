@@ -174,19 +174,6 @@ object Assembly:
   ): Assembly[S, E, Cmd] =
     new Assembly(specs, hashInfos, orphanOverrides)
 
-  /** Create an empty assembly with no transitions.
-    *
-    * Useful as a starting point for conditional assembly building or as a no-op placeholder.
-    *
-    * @tparam S
-    *   The state type
-    * @tparam E
-    *   The event type
-    * @return
-    *   An empty Assembly with no specs
-    */
-  def empty[S, E]: Assembly[S, E, Nothing] = new Assembly(Nil, Nil)
-
 end Assembly
 
 /** Hash info for a single transition spec, used for compile-time duplicate detection.
