@@ -1,10 +1,14 @@
 # Mechanoid
 
 [![Scala CI](https://github.com/russwyte/mechanoid/actions/workflows/scala.yml/badge.svg)](https://github.com/russwyte/mechanoid/actions/workflows/scala.yml)
-[![Maven Central - Core](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid_3?logo=apachemaven&label=mechanoid)](https://central.sonatype.com/artifact/io.github.russwyte/mechanoid_3)
-[![Maven Central - Postgres](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid-postgres_3?logo=apachemaven&label=mechanoid-postgres)](https://central.sonatype.com/artifact/io.github.russwyte/mechanoid-postgres_3)
-[![Maven Repository - Core](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid_3?logo=apachemaven)](https://mvnrepository.com/artifact/io.github.russwyte/mechanoid)
-[![Maven Repository - Postgres](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid-postgres_3?logo=apachemaven)](https://mvnrepository.com/artifact/io.github.russwyte/mechanoid-postgres)
+
+On Maven Central
+[![Maven Central - Core](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid_3?logo=apachemaven&label=mechanoid-central)](https://central.sonatype.com/artifact/io.github.russwyte/mechanoid_3)
+[![Maven Central - Postgres](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid-postgres_3?logo=apachemaven&label=mechanoid-postgres-central)](https://central.sonatype.com/artifact/io.github.russwyte/mechanoid-postgres_3)
+
+On Maven Repo
+[![Maven Repository - Core](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid_3?logo=apachemaven&label=mechanoid-repo)](https://mvnrepository.com/artifact/io.github.russwyte/mechanoid)
+[![Maven Repository - Postgres](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid-postgres_3?logo=apachemaven&label=mechanoid-postgres-repo)](https://mvnrepository.com/artifact/io.github.russwyte/mechanoid-postgres)
 
 
 A type-safe, effect-oriented finite state machine library for Scala 3 built on ZIO.
