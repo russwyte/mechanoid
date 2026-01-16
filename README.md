@@ -93,6 +93,8 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 | `Machine[S, E, Cmd]` | The FSM definition that can be started and run |
 | `Assembly[S, E, Cmd]` | Composable transition fragments (cannot run directly) |
 | `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
+| `TimeoutStrategy[Id]` | Strategy for state timeouts (`fiber` or `durable`) |
+| `LockingStrategy[Id]` | Strategy for concurrent access (`optimistic` or `distributed`) |
 | `TimeoutSweeper` | Background service for durable timeouts |
 | `FSMInstanceLock` | Distributed locking for exactly-once transitions |
 | `LeaderElection` | Lease-based coordination for single-active mode |
@@ -101,7 +103,7 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 ## Example with Persistence
 
 ```scala
-import mechanoid.runtime.FSMRuntime
+import mechanoid.*
 
 val program = ZIO.scoped {
   for
@@ -109,15 +111,17 @@ val program = ZIO.scoped {
     _   <- fsm.send(Pay)      // Persisted to EventStore
     _   <- fsm.saveSnapshot   // Optional: snapshot for faster recovery
   yield ()
-}.provide(eventStoreLayer)
+}.provide(
+  eventStoreLayer,
+  TimeoutStrategy.fiber[OrderId],      // In-memory timeouts
+  LockingStrategy.optimistic[OrderId]  // Optimistic concurrency control
+)
 ```
 
 ## Example with Durable Timeouts
 
 ```scala
 import mechanoid.*
-import mechanoid.runtime.FSMRuntime
-import mechanoid.persistence.timeout.*
 import zio.Duration
 
 enum PaymentState derives Finite:
@@ -139,11 +143,16 @@ val paymentMachine = Machine(assembly[PaymentState, PaymentEvent](
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withDurableTimeouts(id, paymentMachine, Pending)
+    fsm <- FSMRuntime(id, paymentMachine, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout persisted - another node's sweeper will fire it if this node dies
   yield ()
-}.provide(eventStoreLayer, timeoutStoreLayer)
+}.provide(
+  eventStoreLayer,
+  timeoutStoreLayer,
+  TimeoutStrategy.durable[PaymentId],     // Persisted timeouts that survive node failures
+  LockingStrategy.optimistic[PaymentId]
+)
 
 // Run sweeper (typically separate process)
 val sweeper = TimeoutSweeper.make(
@@ -158,26 +167,34 @@ val sweeper = TimeoutSweeper.make(
 ## Example with Distributed Locking
 
 ```scala
-import mechanoid.runtime.FSMRuntime
-import mechanoid.persistence.lock.*
+import mechanoid.*
 
 // Exactly-once transitions across multiple nodes
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withLocking(orderId, orderMachine, Pending)
-    _   <- fsm.send(Pay)  // Lock acquired automatically
+    fsm <- FSMRuntime(orderId, orderMachine, Pending)
+    _   <- fsm.send(Pay)  // Lock acquired automatically before processing
   yield ()
-}.provide(eventStoreLayer, lockLayer)
+}.provide(
+  eventStoreLayer,
+  lockServiceLayer,                       // FSMInstanceLock implementation
+  TimeoutStrategy.fiber[OrderId],
+  LockingStrategy.distributed[OrderId]    // Acquires lock before each transition
+)
 
-// Combine with durable timeouts for maximum robustness
+// Production setup: durable timeouts + distributed locking
 val robustProgram = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withLockingAndTimeouts(
-      orderId, paymentMachine, Pending, LockConfig.default
-    )
+    fsm <- FSMRuntime(orderId, paymentMachine, Pending)
     _   <- fsm.send(StartPayment)
   yield ()
-}.provide(eventStoreLayer, timeoutStoreLayer, lockLayer)
+}.provide(
+  eventStoreLayer,
+  timeoutStoreLayer,
+  lockServiceLayer,
+  TimeoutStrategy.durable[OrderId],       // Timeouts survive node failures
+  LockingStrategy.distributed[OrderId]    // Prevents concurrent modifications
+)
 ```
 
 ## Requirements

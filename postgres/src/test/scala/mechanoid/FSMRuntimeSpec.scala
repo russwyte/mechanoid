@@ -8,6 +8,8 @@ import mechanoid.machine.*
 import mechanoid.persistence.*
 import mechanoid.persistence.postgres.PostgresEventStore
 import mechanoid.runtime.FSMRuntime
+import mechanoid.runtime.timeout.TimeoutStrategy
+import mechanoid.runtime.locking.LockingStrategy
 import mechanoid.stores.InMemoryEventStore
 
 /** Unified FSMRuntime tests that work with any EventStore implementation.
@@ -56,6 +58,12 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
       InMemoryEventStore.make[String, OrderState, OrderEvent]
     }
 
+  /** Timeout strategy layer for tests. */
+  val timeoutLayer: ULayer[TimeoutStrategy[String]] = TimeoutStrategy.fiber[String]
+
+  /** Locking strategy layer for tests. */
+  val lockingLayer: ULayer[LockingStrategy[String]] = LockingStrategy.optimistic[String]
+
   /** PostgreSQL store for integration tests (with schema initialization). */
   val xaLayer: ZLayer[Any, Throwable, Transactor] =
     PostgresTestContainer.DataSourceProvider.transactor
@@ -68,8 +76,8 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   // ============================================
 
   def spec = suite("all")(
-    makeSuite("In-Memory Event Store").provideShared(inMemoryStoreLayer),
-    makeSuite("PostgreSQL Event Store").provideShared(postgresStoreLayer),
+    makeSuite("In-Memory Event Store").provideShared(inMemoryStoreLayer ++ timeoutLayer ++ lockingLayer),
+    makeSuite("PostgreSQL Event Store").provideShared(postgresStoreLayer ++ timeoutLayer ++ lockingLayer),
   ) @@ TestAspect.sequential @@ TestAspect.timeout(30.seconds) @@ TestAspect.withLiveClock
 
   def makeSuite(name: String) = suite(name)(

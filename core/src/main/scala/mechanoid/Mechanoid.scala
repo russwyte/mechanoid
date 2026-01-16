@@ -76,6 +76,18 @@ export machine.AnyOfEventMatcher
 
 // Re-export runtime
 export runtime.FSMRuntime
+export runtime.FSMRuntimeAspect
+export runtime.`@@` // Extension method for aspect composition
+
+// Re-export locking strategies
+export runtime.locking.LockingStrategy
+export runtime.locking.OptimisticLockingStrategy
+export runtime.locking.DistributedLockingStrategy
+
+// Re-export timeout strategies
+export runtime.timeout.TimeoutStrategy
+export runtime.timeout.FiberTimeoutStrategy
+export runtime.timeout.DurableTimeoutStrategy
 
 // Re-export persistence
 export persistence.StoredEvent

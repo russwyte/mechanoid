@@ -5,6 +5,8 @@ import zio.test.*
 import mechanoid.core.{ActionFailedError, Finite, MechanoidError}
 import mechanoid.machine.{Machine, assembly, via}
 import mechanoid.runtime.FSMRuntime
+import mechanoid.runtime.timeout.TimeoutStrategy
+import mechanoid.runtime.locking.LockingStrategy
 import mechanoid.stores.{InMemoryEventStore, InMemoryFSMInstanceLock}
 import mechanoid.persistence.EventStore
 
@@ -34,7 +36,9 @@ object LockedFSMRuntimeSpec extends ZIOSpecDefault:
     for
       eventStore <- InMemoryEventStore.make[String, TestState, TestEvent]
       storeLayer = ZLayer.succeed[EventStore[String, TestState, TestEvent]](eventStore)
-      runtime <- FSMRuntime(id, testMachine, A).provideSome[Scope](storeLayer)
+      runtime <- FSMRuntime(id, testMachine, A).provideSome[Scope](
+        storeLayer ++ TimeoutStrategy.fiber[String] ++ LockingStrategy.optimistic[String]
+      )
     yield runtime
 
   def spec = suite("LockedFSMRuntime")(

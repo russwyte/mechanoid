@@ -5,6 +5,8 @@ import zio.Console.{printLine, readLine}
 import mechanoid.machine.*
 import mechanoid.persistence.*
 import mechanoid.runtime.FSMRuntime
+import mechanoid.runtime.timeout.{TimeoutStrategy, FiberTimeoutStrategy}
+import mechanoid.runtime.locking.LockingStrategy
 import mechanoid.persistence.command.*
 import mechanoid.stores.{InMemoryEventStore, InMemoryCommandStore}
 import mechanoid.examples.petstore.*
@@ -143,12 +145,14 @@ object PetStoreCommandApp extends ZIOAppDefault:
         _ <- info("  4. Results flow back to FSM as new events")
 
         // Create stores
-        eventStore   <- InMemoryEventStore.make[Int, OrderState, OrderEvent]
-        commandStore <- InMemoryCommandStore.make[Int, PetStoreCommand]
+        eventStore      <- InMemoryEventStore.make[Int, OrderState, OrderEvent]
+        commandStore    <- InMemoryCommandStore.make[Int, PetStoreCommand]
+        timeoutStrategy <- FiberTimeoutStrategy.make[Int]
 
         // Create FSM with entry actions that enqueue commands
-        orderId    = 1
-        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
+        orderId      = 1
+        storeLayer   = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
+        timeoutLayer = ZLayer.succeed[TimeoutStrategy[Int]](timeoutStrategy)
 
         // Build machine with entry actions that enqueue commands
         machine <- ZIO.succeed {
@@ -190,7 +194,7 @@ object PetStoreCommandApp extends ZIOAppDefault:
         }
 
         fsmRuntime <- FSMRuntime(orderId, machine, OrderState.Created)
-          .provideSomeLayer[Scope](storeLayer)
+          .provideSome[Scope](storeLayer ++ timeoutLayer ++ LockingStrategy.optimistic[Int])
 
         // ═══════════════════════════════════════════════════════════
         // Phase 1: Initial State

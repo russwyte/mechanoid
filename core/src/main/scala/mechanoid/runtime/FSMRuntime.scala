@@ -4,9 +4,9 @@ import zio.*
 import mechanoid.core.*
 import mechanoid.machine.Machine
 import mechanoid.persistence.{EventStore, FSMSnapshot, StoredEvent}
-import mechanoid.persistence.timeout.TimeoutStore
-import mechanoid.persistence.lock.{FSMInstanceLock, LockConfig, LockedFSMRuntime}
 import mechanoid.stores.InMemoryEventStore
+import mechanoid.runtime.timeout.{TimeoutStrategy, FiberTimeoutStrategy}
+import mechanoid.runtime.locking.{LockingStrategy, OptimisticLockingStrategy}
 import java.time.Instant
 
 /** The runtime interface for an active FSM.
@@ -83,6 +83,18 @@ trait FSMRuntime[Id, S, E, +Cmd]:
 
   /** Check if the FSM is currently running. */
   def isRunning: UIO[Boolean]
+
+  /** Get the timeout configuration for a given state.
+    *
+    * Returns `Some((duration, event))` if the state has a timeout configured, `None` otherwise. Used by
+    * [[mechanoid.runtime.aspects.DurableTimeoutRuntime]] to manage durable timeouts.
+    *
+    * @param state
+    *   The state to check
+    * @return
+    *   Timeout duration and event if configured
+    */
+  def timeoutConfigForState(state: S): Option[(Duration, E)]
 end FSMRuntime
 
 object FSMRuntime:
@@ -122,9 +134,11 @@ object FSMRuntime:
       initial: S,
   ): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E, Cmd]] =
     for
-      eventStore <- InMemoryEventStore.make[Unit, S, E]
-      runtime    <- ZIO.acquireRelease(
-        createRuntime((), machine, initial, eventStore, None)
+      eventStore      <- InMemoryEventStore.make[Unit, S, E]
+      timeoutStrategy <- FiberTimeoutStrategy.make[Unit]
+      lockingStrategy = OptimisticLockingStrategy.make[Unit]
+      runtime <- ZIO.acquireRelease(
+        createRuntime((), machine, initial, eventStore, timeoutStrategy, lockingStrategy)
       )(_.stop)
     yield runtime
 
@@ -132,9 +146,9 @@ object FSMRuntime:
   // Persistent FSM with EventStore from environment
   // ============================================
 
-  /** Create a persistent FSM runtime, pulling EventStore from the environment.
+  /** Create a persistent FSM runtime, pulling dependencies from the environment.
     *
-    * Provide the EventStore via ZLayer:
+    * Provide the EventStore, TimeoutStrategy, and LockingStrategy via ZLayer:
     *
     * {{{
     * // Define your store layer (created once, reused)
@@ -146,13 +160,18 @@ object FSMRuntime:
     *     yield store
     *   }
     *
-    * // Use the FSM with the store from the environment
+    * // Use the FSM with dependencies from the environment
     * val program = ZIO.scoped {
     *   for
     *     fsm <- FSMRuntime(orderId, orderMachine, Pending)
     *     _   <- fsm.send(Pay)
     *   yield ()
-    * }.provide(storeLayer, dataSourceLayer)
+    * }.provide(
+    *   storeLayer,
+    *   dataSourceLayer,
+    *   TimeoutStrategy.fiber[OrderId],    // or TimeoutStrategy.durable
+    *   LockingStrategy.optimistic[OrderId] // or LockingStrategy.distributed
+    * )
     * }}}
     *
     * This will:
@@ -160,62 +179,17 @@ object FSMRuntime:
     *   2. Replay events since the snapshot to rebuild state
     *   3. Continue processing new events, persisting each one
     *
-    * @param id
-    *   The FSM instance identifier
-    * @param machine
-    *   The Machine definition
-    * @param initialState
-    *   The initial state for new instances
-    */
-  def apply[Id, S, E, Cmd](
-      id: Id,
-      machine: Machine[S, E, Cmd],
-      initialState: S,
-  )(using
-      Tag[EventStore[Id, S, E]]
-  ): ZIO[Scope & EventStore[Id, S, E], MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
-    ZIO.serviceWithZIO[EventStore[Id, S, E]] { store =>
-      ZIO.acquireRelease(
-        createRuntime(id, machine, initialState, store, None)
-      )(_.stop)
-    }
-
-  // ============================================
-  // Persistent FSM with durable timeouts
-  // ============================================
-
-  /** Create a persistent FSM runtime with durable timeouts.
+    * ==Timeout Strategy==
     *
-    * Unlike the standard [[apply]] method, this version persists timeout deadlines to a [[TimeoutStore]]. Combined with
-    * a [[mechanoid.persistence.timeout.TimeoutSweeper]], this ensures timeouts fire even if the node processing the FSM
-    * crashes.
+    * You must provide a [[TimeoutStrategy]] to handle state timeouts:
+    *   - [[timeout.FiberTimeoutStrategy]]: In-memory, fast, doesn't survive node failures
+    *   - [[timeout.DurableTimeoutStrategy]]: Persists to TimeoutStore, survives failures
     *
-    * ==How It Works==
+    * ==Locking Strategy==
     *
-    *   1. When entering a state with a timeout, the deadline is persisted to TimeoutStore
-    *   2. When exiting a state, the timeout is cancelled in TimeoutStore
-    *   3. The TimeoutSweeper periodically queries for expired timeouts and fires them
-    *   4. In-memory fiber-based timeouts are NOT used (sweeper handles everything)
-    *
-    * ==Usage==
-    *
-    * {{{
-    * // Layers
-    * val eventStoreLayer: ZLayer[..., EventStore[...]] = ???
-    * val timeoutStoreLayer: ZLayer[..., TimeoutStore[...]] = ???
-    *
-    * // Create FSM with durable timeouts
-    * val program = ZIO.scoped {
-    *   for
-    *     fsm <- FSMRuntime.withDurableTimeouts(orderId, orderMachine, Pending)
-    *     _   <- fsm.send(StartPayment)
-    *     // Timeout is now persisted - survives node restart
-    *   yield ()
-    * }.provide(eventStoreLayer, timeoutStoreLayer)
-    *
-    * // Don't forget to run the sweeper somewhere!
-    * val sweeper = TimeoutSweeper.make(config, timeoutStore, onTimeout)
-    * }}}
+    * You must provide a [[LockingStrategy]] to handle concurrent access:
+    *   - [[locking.OptimisticLockingStrategy]]: No explicit locks, relies on EventStore conflict detection
+    *   - [[locking.DistributedLockingStrategy]]: Acquires exclusive locks, prevents conflicts
     *
     * @param id
     *   The FSM instance identifier
@@ -224,145 +198,27 @@ object FSMRuntime:
     * @param initialState
     *   The initial state for new instances
     */
-  def withDurableTimeouts[Id, S, E, Cmd](
+  def apply[Id: Tag, S, E, Cmd](
       id: Id,
       machine: Machine[S, E, Cmd],
       initialState: S,
   )(using
       Tag[EventStore[Id, S, E]],
-      Tag[TimeoutStore[Id]],
-  ): ZIO[Scope & EventStore[Id, S, E] & TimeoutStore[Id], MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
+      Tag[TimeoutStrategy[Id]],
+      Tag[LockingStrategy[Id]],
+  ): ZIO[
+    Scope & EventStore[Id, S, E] & TimeoutStrategy[Id] & LockingStrategy[Id],
+    MechanoidError,
+    FSMRuntime[Id, S, E, Cmd],
+  ] =
     for
-      eventStore   <- ZIO.service[EventStore[Id, S, E]]
-      timeoutStore <- ZIO.service[TimeoutStore[Id]]
-      runtime      <- ZIO.acquireRelease(
-        createRuntime(id, machine, initialState, eventStore, Some(timeoutStore))
+      store           <- ZIO.service[EventStore[Id, S, E]]
+      timeoutStrategy <- ZIO.service[TimeoutStrategy[Id]]
+      lockingStrategy <- ZIO.service[LockingStrategy[Id]]
+      runtime         <- ZIO.acquireRelease(
+        createRuntime(id, machine, initialState, store, timeoutStrategy, lockingStrategy)
       )(_.stop)
     yield runtime
-
-  // ============================================
-  // Persistent FSM with distributed locking
-  // ============================================
-
-  /** Create a persistent FSM runtime with distributed locking.
-    *
-    * This variant wraps event processing with distributed locks to ensure '''exactly-once''' transition semantics. Only
-    * one node can process events for a given FSM instance at a time.
-    *
-    * ==Why Use Locking?==
-    *
-    * Without locking:
-    *   - Multiple nodes can process events concurrently
-    *   - Conflicts detected ''after'' via optimistic locking (wasted work)
-    *
-    * With locking:
-    *   - Only one node processes at a time
-    *   - No wasted work from rejected writes
-    *   - Guaranteed exactly-once delivery per event
-    *
-    * ==Node Failure Resilience==
-    *
-    * Locks are lease-based and automatically expire:
-    *   1. Node A acquires lock, starts processing
-    *   2. Node A crashes
-    *   3. Lock expires after `lockDuration` (default: 30 seconds)
-    *   4. Node B acquires lock, continues processing
-    *
-    * ==Usage==
-    *
-    * {{{
-    * val program = ZIO.scoped {
-    *   for
-    *     fsm <- FSMRuntime.withLocking(orderId, orderMachine, Pending)
-    *     _   <- fsm.send(Pay)  // Lock acquired automatically
-    *   yield ()
-    * }.provide(eventStoreLayer, lockLayer)
-    * }}}
-    *
-    * @param id
-    *   The FSM instance identifier
-    * @param machine
-    *   The Machine definition
-    * @param initialState
-    *   The initial state for new instances
-    * @param lockConfig
-    *   Lock configuration (duration, timeout, etc.)
-    */
-  def withLocking[Id, S, E, Cmd](
-      id: Id,
-      machine: Machine[S, E, Cmd],
-      initialState: S,
-      lockConfig: LockConfig = LockConfig.default,
-  )(using
-      Tag[EventStore[Id, S, E]],
-      Tag[FSMInstanceLock[Id]],
-  ): ZIO[
-    Scope & EventStore[Id, S, E] & FSMInstanceLock[Id],
-    MechanoidError,
-    FSMRuntime[Id, S, E, Cmd],
-  ] =
-    for
-      eventStore <- ZIO.service[EventStore[Id, S, E]]
-      lock       <- ZIO.service[FSMInstanceLock[Id]]
-      runtime    <- ZIO.acquireRelease(
-        createRuntime(id, machine, initialState, eventStore, None)
-      )(_.stop)
-    yield LockedFSMRuntime(runtime, lock, lockConfig)
-
-  // ============================================
-  // Persistent FSM with locking AND durable timeouts
-  // ============================================
-
-  /** Create a persistent FSM runtime with locking and durable timeouts.
-    *
-    * This is the most robust configuration, combining:
-    *   - '''Distributed locking''' for exactly-once transitions
-    *   - '''Durable timeouts''' that survive node failures
-    *
-    * ==Usage==
-    *
-    * {{{
-    * val program = ZIO.scoped {
-    *   for
-    *     fsm <- FSMRuntime.withLockingAndTimeouts(orderId, orderMachine, Pending)
-    *     _   <- fsm.send(StartPayment)
-    *     // - Lock protects against concurrent processing
-    *     // - Timeout persisted and survives node restart
-    *   yield ()
-    * }.provide(eventStoreLayer, timeoutStoreLayer, lockLayer)
-    * }}}
-    *
-    * @param id
-    *   The FSM instance identifier
-    * @param machine
-    *   The Machine definition
-    * @param initialState
-    *   The initial state for new instances
-    * @param lockConfig
-    *   Lock configuration (duration, timeout, etc.)
-    */
-  def withLockingAndTimeouts[Id, S, E, Cmd](
-      id: Id,
-      machine: Machine[S, E, Cmd],
-      initialState: S,
-      lockConfig: LockConfig = LockConfig.default,
-  )(using
-      Tag[EventStore[Id, S, E]],
-      Tag[TimeoutStore[Id]],
-      Tag[FSMInstanceLock[Id]],
-  ): ZIO[
-    Scope & EventStore[Id, S, E] & TimeoutStore[Id] & FSMInstanceLock[Id],
-    MechanoidError,
-    FSMRuntime[Id, S, E, Cmd],
-  ] =
-    for
-      eventStore   <- ZIO.service[EventStore[Id, S, E]]
-      timeoutStore <- ZIO.service[TimeoutStore[Id]]
-      lock         <- ZIO.service[FSMInstanceLock[Id]]
-      runtime      <- ZIO.acquireRelease(
-        createRuntime(id, machine, initialState, eventStore, Some(timeoutStore))
-      )(_.stop)
-    yield LockedFSMRuntime(runtime, lock, lockConfig)
 
   // ============================================
   // Implementation
@@ -371,13 +227,27 @@ object FSMRuntime:
   /** Create and initialize an FSM runtime.
     *
     * This is the core factory method used by all the public factory methods above.
+    *
+    * @param id
+    *   FSM instance identifier
+    * @param machine
+    *   Machine definition
+    * @param initialState
+    *   Initial state for new instances
+    * @param store
+    *   Event store for persistence
+    * @param timeoutStrategy
+    *   Strategy for handling state timeouts
+    * @param lockingStrategy
+    *   Strategy for handling concurrent access
     */
   private def createRuntime[Id, S, E, Cmd](
       id: Id,
       machine: Machine[S, E, Cmd],
       initialState: S,
       store: EventStore[Id, S, E],
-      timeoutStore: Option[TimeoutStore[Id]],
+      timeoutStrategy: TimeoutStrategy[Id],
+      lockingStrategy: LockingStrategy[Id],
   ): ZIO[Any, MechanoidError, FSMRuntimeImpl[Id, S, E, Cmd]] =
     for
       // Load snapshot and events to rebuild state
@@ -410,7 +280,8 @@ object FSMRuntime:
         id,
         machine,
         store,
-        timeoutStore,
+        timeoutStrategy,
+        lockingStrategy,
         stateRef,
         seqNrRef,
         runningRef,
@@ -463,18 +334,19 @@ end FSMRuntime
 
 /** Internal implementation of FSMRuntime.
   *
-  * All FSM runtimes (in-memory and persistent) use this same implementation, differing only in the EventStore and
-  * optional stores provided.
+  * All FSM runtimes (in-memory and persistent) use this same implementation, differing only in the EventStore,
+  * TimeoutStrategy, and LockingStrategy provided.
   */
 private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
     val instanceId: Id,
     machine: Machine[S, E, Cmd],
     store: EventStore[Id, S, E],
-    timeoutStore: Option[TimeoutStore[Id]],
+    timeoutStrategy: TimeoutStrategy[Id],
+    lockingStrategy: LockingStrategy[Id],
     stateRef: Ref[FSMState[S]],
     seqNrRef: Ref[Long],
     runningRef: Ref[Boolean],
-    sendSelf: E => ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]], // Just E, no Timed wrapper
+    sendSelf: E => ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]],
 ) extends FSMRuntime[Id, S, E, Cmd]:
 
   override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
@@ -483,12 +355,15 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
   private[mechanoid] def sendInternal(
       event: E
   ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
-    for
-      running <- runningRef.get
-      result  <-
-        if !running then ZIO.succeed(TransitionOutcome(TransitionResult.Stop(Some("FSM stopped")), Nil, Nil))
-        else processEvent(event)
-    yield result
+    lockingStrategy.withLock(
+      instanceId,
+      for
+        running <- runningRef.get
+        result  <-
+          if !running then ZIO.succeed(TransitionOutcome(TransitionResult.Stop(Some("FSM stopped")), Nil, Nil))
+          else processEvent(event)
+      yield result,
+    )
 
   private def processEvent(
       event: E
@@ -591,22 +466,18 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
 
   /** Cancel any pending timeout for this FSM instance.
     *
-    * When using durable timeouts (TimeoutStore), this removes the timeout from the store. For in-memory timeouts, no
-    * explicit cancellation is needed since the fiber checks state before firing.
+    * Delegates to the [[TimeoutStrategy]] to handle cancellation.
     */
   private def cancelTimeout: ZIO[Any, Nothing, Unit] =
-    timeoutStore.fold(ZIO.unit)(_.cancel(instanceId).ignore)
+    timeoutStrategy.cancel(instanceId)
 
   /** Start a timeout for the given state.
     *
-    * When using durable timeouts (TimeoutStore is present):
-    *   - Persists the timeout deadline to the store
-    *   - The TimeoutSweeper will fire it when it expires
-    *   - Survives node failures
+    * Delegates to the [[TimeoutStrategy]] to schedule the timeout. The callback checks that the FSM is still in the
+    * same state before firing the timeout event.
     *
-    * When using in-memory timeouts (TimeoutStore is None):
-    *   - Forks a fiber that sleeps, then fires if still in same state shape
-    *   - Does NOT survive node failures
+    * @param state
+    *   The state to start a timeout for
     */
   private[mechanoid] def startTimeout(state: S): ZIO[Any, Nothing, Unit] =
     val stateCaseHash = machine.stateEnum.caseHash(state)
@@ -617,24 +488,16 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
     yield (duration, event)
 
     ZIO.foreachDiscard(timeoutConfig) { case (duration, timeoutEvent) =>
-      timeoutStore match
-        case Some(store) =>
-          // Durable timeout: persist to TimeoutStore
-          Clock.instant.flatMap { now =>
-            val deadline = now.plusMillis(duration.toMillis)
-            store.schedule(instanceId, state.toString, deadline)
-          }.ignore
-
-        case None =>
-          // In-memory timeout: use fiber-based approach
-          // Fire user-defined event when timeout expires
-          (ZIO.sleep(duration) *>
-            stateRef.get.flatMap { currentFsmState =>
-              // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
-              ZIO.when(machine.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(
-                send(timeoutEvent).ignore // Fire user-defined event instead of Timed.TimeoutEvent
-              )
-            }).forkDaemon.unit
+      // Create callback that fires timeout event if still in same state
+      val onTimeout: UIO[Unit] = stateRef.get.flatMap { currentFsmState =>
+        // Compare by caseHash (shape) not exact value - timeout fires if still in same state shape
+        ZIO
+          .when(machine.stateEnum.caseHash(currentFsmState.current) == stateCaseHash)(
+            send(timeoutEvent).ignore
+          )
+          .unit
+      }
+      timeoutStrategy.schedule(instanceId, state.toString, duration, onTimeout)
     }
   end startTimeout
 
@@ -651,6 +514,13 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
   override def stop(reason: String): UIO[Unit] = runningRef.set(false)
 
   override def isRunning: UIO[Boolean] = runningRef.get
+
+  override def timeoutConfigForState(state: S): Option[(Duration, E)] =
+    val stateCaseHash = machine.stateEnum.caseHash(state)
+    for
+      duration <- machine.timeouts.get(stateCaseHash)
+      event    <- machine.timeoutEvents.get(stateCaseHash)
+    yield (duration, event)
 
   override def saveSnapshot: ZIO[Any, MechanoidError, Unit] =
     for
