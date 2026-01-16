@@ -24,7 +24,8 @@ ThisBuild / developers := List(
     url = url("https://github.com/russwyte"),
   )
 )
-ThisBuild / versionScheme := Some("early-semver")
+ThisBuild / versionScheme        := Some("early-semver")
+ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
 
 usePgpKeyHex("2F64727A87F1BCF42FD307DD8582C4F16659A7D6")
 
