@@ -1,6 +1,6 @@
 package mechanoid.persistence.lock
 
-import zio.Duration
+import zio.{Duration, ULayer, ZLayer}
 
 /** Configuration for FSM instance locking.
   *
@@ -111,4 +111,26 @@ object LockConfig:
     lockDuration = Duration.fromSeconds(300),
     acquireTimeout = Duration.fromSeconds(30),
   )
+
+  // ============================================
+  // ZLayer helpers for environment-based config
+  // ============================================
+
+  /** Layer providing the default lock configuration. */
+  val defaultLayer: ULayer[LockConfig] = ZLayer.succeed(default)
+
+  /** Layer providing the fast lock configuration. */
+  val fastLayer: ULayer[LockConfig] = ZLayer.succeed(fast)
+
+  /** Layer providing the long-running lock configuration. */
+  val longRunningLayer: ULayer[LockConfig] = ZLayer.succeed(longRunning)
+
+  /** Create a layer from a custom configuration.
+    *
+    * @param config
+    *   The lock configuration to provide
+    * @return
+    *   A layer that provides the configuration
+    */
+  def layer(config: LockConfig): ULayer[LockConfig] = ZLayer.succeed(config)
 end LockConfig

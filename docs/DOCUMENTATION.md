@@ -600,17 +600,24 @@ This creates an in-memory FSM with `Unit` as the instance ID. The FSM is automat
 For persistent, identified FSMs, use `FSMRuntime.apply`:
 
 ```scala
-import mechanoid.runtime.FSMRuntime
+import mechanoid.*
 
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, initialState)  // Returns FSMRuntime[String, S, E, Cmd]
     // Use the FSM...
   yield result
-}.provide(eventStoreLayer)
+}.provide(
+  eventStoreLayer,
+  TimeoutStrategy.fiber[OrderId],      // or TimeoutStrategy.durable for persistence
+  LockingStrategy.optimistic[OrderId]  // or LockingStrategy.distributed for locking
+)
 ```
 
-The persistent runtime requires an `EventStore` in the environment and uses the provided ID to identify the FSM instance.
+The persistent runtime requires three dependencies in the environment:
+- **`EventStore[Id, S, E]`** - Persists events and snapshots
+- **`TimeoutStrategy[Id]`** - Handles state timeouts (fiber-based or durable)
+- **`LockingStrategy[Id]`** - Handles concurrent access (optimistic or distributed)
 
 ### Sending Events
 
@@ -643,7 +650,7 @@ Mechanoid supports event sourcing for durable FSMs:
 3. Snapshots reduce recovery time
 
 ```scala
-import mechanoid.runtime.FSMRuntime
+import mechanoid.*
 
 val program = ZIO.scoped {
   for
@@ -651,7 +658,11 @@ val program = ZIO.scoped {
     _   <- fsm.send(Pay)    // Event persisted
     _   <- fsm.send(Ship)   // Event persisted
   yield ()
-}.provide(eventStoreLayer)
+}.provide(
+  eventStoreLayer,
+  TimeoutStrategy.fiber[OrderId],
+  LockingStrategy.optimistic[OrderId]
+)
 ```
 
 
@@ -735,18 +746,37 @@ trait TimeoutStore[Id]:
   def release(instanceId: Id): ZIO[Any, Throwable, Boolean]
 ```
 
-Use `FSMRuntime.withDurableTimeouts` to enable:
+### TimeoutStrategy
+
+Mechanoid uses a strategy pattern for timeout management. Choose the appropriate strategy for your deployment:
+
+**Fiber-based (in-memory):**
+```scala
+TimeoutStrategy.fiber[OrderId]  // Fast, but doesn't survive node failures
+```
+
+**Durable (persisted):**
+```scala
+TimeoutStrategy.durable[OrderId]  // Requires TimeoutStore, survives node failures
+```
+
+Use `TimeoutStrategy.durable` for production deployments:
 
 ```scala
-import mechanoid.runtime.FSMRuntime
+import mechanoid.*
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withDurableTimeouts(orderId, machine, Pending)
+    fsm <- FSMRuntime(orderId, machine, Pending)
     _   <- fsm.send(StartPayment)
     // Timeout is now persisted - survives node restart
   yield ()
-}.provide(eventStoreLayer, timeoutStoreLayer)
+}.provide(
+  eventStoreLayer,
+  timeoutStoreLayer,
+  TimeoutStrategy.durable[OrderId],
+  LockingStrategy.optimistic[OrderId]
+)
 ```
 
 ### TimeoutSweeper
@@ -869,7 +899,7 @@ When two nodes try to modify the same FSM concurrently:
 SequenceConflictError(expected = 5, actual = 6, instanceId = orderId)
 
 // With distributed locking: conflict prevented upfront
-FSMRuntime.withLocking(orderId, machine, initialState)
+LockingStrategy.distributed[OrderId]  // Acquires lock before each transition
 ```
 
 ---
@@ -911,17 +941,36 @@ trait FSMInstanceLock[Id]:
   def get(instanceId: Id, now: Instant): ZIO[Any, Throwable, Option[LockToken[Id]]]
 ```
 
-Use `FSMRuntime.withLocking` to enable automatic lock acquisition around event processing:
+### LockingStrategy
+
+Mechanoid uses a strategy pattern for concurrency control. Choose the appropriate strategy for your deployment:
+
+**Optimistic (default):**
+```scala
+LockingStrategy.optimistic[OrderId]  // Relies on EventStore sequence conflict detection
+```
+
+**Distributed:**
+```scala
+LockingStrategy.distributed[OrderId]  // Acquires exclusive lock before each transition
+```
+
+Use `LockingStrategy.distributed` for high-contention production deployments:
 
 ```scala
-import mechanoid.runtime.FSMRuntime
+import mechanoid.*
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withLocking(orderId, machine, Pending)
+    fsm <- FSMRuntime(orderId, machine, Pending)
     _   <- fsm.send(Pay)  // Lock acquired automatically before processing
   yield ()
-}.provide(eventStoreLayer, lockLayer)
+}.provide(
+  eventStoreLayer,
+  lockServiceLayer,                     // FSMInstanceLock implementation
+  TimeoutStrategy.fiber[OrderId],
+  LockingStrategy.distributed[OrderId]  // Prevents concurrent modifications
+)
 ```
 
 ### Lock Configuration
@@ -984,30 +1033,31 @@ RETURNING *;
 
 ### Combining Features
 
-For maximum robustness, combine locking with durable timeouts:
+For maximum robustness, combine distributed locking with durable timeouts:
 
 ```scala
-import mechanoid.runtime.FSMRuntime
+import mechanoid.*
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime.withLockingAndTimeouts(
-      orderId,
-      machine,
-      Pending,
-      LockConfig.default
-    )
+    fsm <- FSMRuntime(orderId, machine, Pending)
     _   <- fsm.send(StartPayment)
     // - Lock ensures exactly-once processing
     // - Timeout persisted and survives node restart
   yield ()
-}.provide(eventStoreLayer, timeoutStoreLayer, lockLayer)
+}.provide(
+  eventStoreLayer,
+  timeoutStoreLayer,
+  lockServiceLayer,
+  TimeoutStrategy.durable[OrderId],       // Timeouts survive node failures
+  LockingStrategy.distributed[OrderId]    // Prevents concurrent modifications
+)
 ```
 
 This provides:
 - **Exactly-once transitions** via distributed locking
 - **Durable timeouts** that survive node failures
-- **Optimistic locking** as a final safety net
+- **Optimistic locking** as a final safety net (always active via EventStore)
 
 ---
 
@@ -1566,7 +1616,6 @@ See the [visualizations directory](visualizations/) for complete examples:
 
 ```scala
 import mechanoid.*
-import mechanoid.runtime.FSMRuntime
 import mechanoid.persistence.timeout.*
 import zio.*
 import java.time.Instant
@@ -1618,12 +1667,8 @@ val machineWithActions = orderMachine
 // Running with persistence and durable timeouts
 val program = ZIO.scoped {
   for
-    // Create FSM with durable timeouts
-    fsm <- FSMRuntime.withDurableTimeouts(
-      "order-123",
-      machineWithActions,
-      OrderState.Pending
-    )
+    // Create FSM - strategies are provided via ZIO environment
+    fsm <- FSMRuntime("order-123", machineWithActions, OrderState.Pending)
 
     // Process order
     _ <- fsm.send(OrderEvent.RequestPayment)
@@ -1636,7 +1681,12 @@ val program = ZIO.scoped {
     _ <- ZIO.logInfo(s"Current state: $state")
 
   yield ()
-}.provide(eventStoreLayer, timeoutStoreLayer)
+}.provide(
+  eventStoreLayer,
+  timeoutStoreLayer,
+  TimeoutStrategy.durable[String],      // Durable timeouts survive node failures
+  LockingStrategy.optimistic[String]    // Or use LockingStrategy.distributed for high contention
+)
 
 // Run the sweeper (typically in a separate long-running process)
 val sweeperProgram = ZIO.scoped {

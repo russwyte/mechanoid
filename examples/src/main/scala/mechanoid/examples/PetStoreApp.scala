@@ -7,6 +7,8 @@ import mechanoid.core.Redactor.redacted
 import mechanoid.machine.*
 import mechanoid.persistence.*
 import mechanoid.runtime.FSMRuntime
+import mechanoid.runtime.timeout.{TimeoutStrategy, FiberTimeoutStrategy}
+import mechanoid.runtime.locking.LockingStrategy
 import mechanoid.persistence.command.*
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -483,8 +485,12 @@ object PetStoreApp extends ZIOAppDefault:
         _ <- logger.system(s"${Bold}Creating new order: ${highlight(s"Order-$orderId")}$Reset")
         _ <- logger.system(s"  Customer: ${info(customer.name)}")
         _ <- logger.system(s"  Pet: ${highlight(pet.name)} (${pet.species}) - ${Colors.success(s"$$${pet.price}")}")
-        storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
-        fsm <- FSMRuntime(orderId, machine, Created).provideSomeLayer[Scope](storeLayer)
+        timeoutStrategy <- FiberTimeoutStrategy.make[Int]
+        storeLayer   = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
+        timeoutLayer = ZLayer.succeed[TimeoutStrategy[Int]](timeoutStrategy)
+        fsm <- FSMRuntime(orderId, machine, Created).provideSome[Scope](
+          storeLayer ++ timeoutLayer ++ LockingStrategy.optimistic[Int]
+        )
 
         // Build rich event with all context needed for command generation
         initiateEvent = InitiatePayment(
@@ -512,11 +518,15 @@ object PetStoreApp extends ZIOAppDefault:
 
     def sendEvent(orderId: Int, event: OrderEvent): ZIO[Scope, Throwable | MechanoidError, Unit] =
       for
-        _          <- logger.event(orderId, event)
-        storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore))
-        fsm        <- FSMRuntime(orderId, machine, Created).provideSomeLayer[Scope](storeLayer)
-        outcome    <- fsm.send(event)
-        seqNr      <- fsm.lastSequenceNr
+        _               <- logger.event(orderId, event)
+        timeoutStrategy <- FiberTimeoutStrategy.make[Int]
+        storeLayer   = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
+        timeoutLayer = ZLayer.succeed[TimeoutStrategy[Int]](timeoutStrategy)
+        fsm <- FSMRuntime(orderId, machine, Created).provideSome[Scope](
+          storeLayer ++ timeoutLayer ++ LockingStrategy.optimistic[Int]
+        )
+        outcome <- fsm.send(event)
+        seqNr   <- fsm.lastSequenceNr
 
         // Log FSM transition based on event type
         _ <- logTransition(orderId, event)
@@ -543,9 +553,13 @@ object PetStoreApp extends ZIOAppDefault:
 
     def getState(orderId: Int): ZIO[Scope, MechanoidError, OrderState] =
       for
-        storeLayer <- ZIO.succeed(ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore))
-        fsm        <- FSMRuntime(orderId, machine, Created).provideSomeLayer[Scope](storeLayer)
-        state      <- fsm.currentState
+        timeoutStrategy <- FiberTimeoutStrategy.make[Int]
+        storeLayer   = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
+        timeoutLayer = ZLayer.succeed[TimeoutStrategy[Int]](timeoutStrategy)
+        fsm <- FSMRuntime(orderId, machine, Created).provideSome[Scope](
+          storeLayer ++ timeoutLayer ++ LockingStrategy.optimistic[Int]
+        )
+        state <- fsm.currentState
       yield state
 
     def getOrderData(orderId: Int): UIO[Option[OrderData]] =
