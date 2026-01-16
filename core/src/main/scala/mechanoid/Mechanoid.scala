@@ -111,3 +111,15 @@ export stores.InMemoryEventStore
 export stores.InMemoryCommandStore
 export stores.InMemoryTimeoutStore
 export stores.InMemoryFSMInstanceLock
+
+// Re-export locking types
+export persistence.lock.FSMInstanceLock
+export persistence.lock.LockedFSMRuntime
+export persistence.lock.LockConfig
+export persistence.lock.LockToken
+export persistence.lock.LockResult
+export persistence.lock.LockError
+export persistence.lock.LockHeartbeatConfig
+export persistence.lock.LockLostBehavior
+export persistence.lock.AtomicTransactionContext
+export core.LockingError

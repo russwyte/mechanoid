@@ -164,7 +164,8 @@ object TimeoutSweeper:
       leaderElection: Option[LeaderElection],
   ): ZIO[Any, Nothing, Unit] =
 
-    val sweep: ZIO[Any, Nothing, Int] =
+    // Sweep effect returns shouldContinue status
+    val sweep: ZIO[Any, Nothing, Boolean] =
       for
         // Check if we should sweep (always in multi-mode, only if leader in single-mode)
         shouldSweep <- leaderElection.fold(ZIO.succeed(true))(_.isLeader)
@@ -176,33 +177,22 @@ object TimeoutSweeper:
                   ZIO.logError(s"Sweep error: $error").as(0)
               }
           else ZIO.succeed(0)
-      yield count
+        _ <- metricsRef.update(m => m.copy(sweepCount = m.sweepCount + 1))
+        // Add extra backoff delay when no timeouts found (embedded in effect)
+        _ <- config.backoffOnEmpty match
+          case Some(backoff) if count == 0 => ZIO.sleep(backoff)
+          case _                           => ZIO.unit
+        shouldContinue <- runningRef.get
+      yield shouldContinue
 
-    def loop: ZIO[Any, Nothing, Unit] =
-      for
-        running <- runningRef.get
-        _       <- ZIO.when(running) {
-          for
-            count <- sweep
-            _     <- metricsRef.update(m => m.copy(sweepCount = m.sweepCount + 1))
+    // Schedule with timing, jitter, and stop condition
+    val baseSchedule     = Schedule.spaced(config.sweepInterval)
+    val jitteredSchedule =
+      if config.jitterFactor > 0 then baseSchedule.jittered(0.0, config.jitterFactor)
+      else baseSchedule
+    val schedule = jitteredSchedule && Schedule.recurWhile[Boolean](identity)
 
-            // Calculate wait with jitter
-            jitter <- Random.nextDouble.map(r => (r * config.jitterFactor * config.sweepInterval.toMillis).toLong)
-            baseWait = config.sweepInterval.toMillis
-
-            // Apply backoff if no timeouts found
-            extraWait =
-              if count == 0 then config.backoffOnEmpty.map(_.toMillis).getOrElse(0L)
-              else 0L
-
-            totalWait = Duration.fromMillis(baseWait + jitter + extraWait)
-            _ <- ZIO.sleep(totalWait)
-            _ <- loop
-          yield ()
-        }
-      yield ()
-
-    loop
+    sweep.repeat(schedule).unit
   end runSweepLoop
 
   private def performSweep[Id](

@@ -2,7 +2,6 @@ package mechanoid.persistence.command
 
 import zio.*
 import java.time.Instant
-import scala.annotation.unused
 import mechanoid.core.MechanoidError
 
 /** Background service that processes commands from a [[CommandStore]].
@@ -152,23 +151,24 @@ private final class CommandWorkerImpl[Id, Cmd](
 
   /** Main processing loop. */
   private[command] def runLoop: ZIO[Any, Nothing, Unit] =
-    def loop: ZIO[Any, Nothing, Unit] =
+    // Process effect returns shouldContinue status
+    val process: ZIO[Any, Nothing, Boolean] =
       for
-        running <- runningRef.get
-        _       <-
-          if !running then ZIO.unit
-          else
-            for
-              processed <- processBatch.catchAll { error =>
-                ZIO.logError(s"Error processing batch: $error").as(0)
-              }
-              _ <- metricsRef.update(m => m.copy(pollCount = m.pollCount + 1))
-              _ <- waitWithJitter(processed == 0)
-              _ <- loop
-            yield ()
-      yield ()
+        _ <- processBatch.catchAll { error =>
+          ZIO.logError(s"Error processing batch: $error").as(0)
+        }
+        _              <- metricsRef.update(m => m.copy(pollCount = m.pollCount + 1))
+        shouldContinue <- runningRef.get
+      yield shouldContinue
 
-    loop
+    // Schedule with timing, jitter, and stop condition
+    val baseSchedule     = Schedule.spaced(config.pollInterval)
+    val jitteredSchedule =
+      if config.jitterFactor > 0 then baseSchedule.jittered(0.0, config.jitterFactor)
+      else baseSchedule
+    val schedule = jitteredSchedule && Schedule.recurWhile[Boolean](identity)
+
+    process.repeat(schedule).unit
   end runLoop
 
   /** Process a batch of commands. */
@@ -240,37 +240,24 @@ private final class CommandWorkerImpl[Id, Cmd](
     end for
   end handleFailure
 
-  /** Wait with jitter before next poll. */
-  private def waitWithJitter(@unused wasEmpty: Boolean): ZIO[Any, Nothing, Unit] =
-    val baseWait = config.pollInterval
-    val jitter   = if config.jitterFactor > 0 then
-      val jitterMs = (baseWait.toMillis * config.jitterFactor * scala.util.Random.nextDouble()).toLong
-      Duration.fromMillis(jitterMs)
-    else Duration.Zero
-
-    ZIO.sleep(baseWait + jitter)
-
   /** Periodically release expired claims from dead workers. */
   private[command] def runClaimCleanup: ZIO[Any, Nothing, Unit] =
-    def loop: ZIO[Any, Nothing, Unit] =
-      for
-        running <- runningRef.get
-        _       <-
-          if !running then ZIO.unit
-          else
-            for
-              now      <- Clock.instant
-              released <- store.releaseExpiredClaims(now).catchAll { error =>
-                ZIO.logError(s"Error releasing claims: $error").as(0)
-              }
-              _ <-
-                if released > 0 then metricsRef.update(m => m.copy(claimsReleased = m.claimsReleased + released))
-                else ZIO.unit
-              _ <- ZIO.sleep(config.claimCleanupInterval)
-              _ <- loop
-            yield ()
-      yield ()
+    // Cleanup effect returns shouldContinue status
+    val cleanup: ZIO[Any, Nothing, Boolean] = for
+      now      <- Clock.instant
+      released <- store.releaseExpiredClaims(now).catchAll { error =>
+        ZIO.logError(s"Error releasing claims: $error").as(0)
+      }
+      _ <- ZIO.when(released > 0)(
+        metricsRef.update(m => m.copy(claimsReleased = m.claimsReleased + released))
+      )
+      shouldContinue <- runningRef.get
+    yield shouldContinue
 
-    loop
+    // Schedule with timing and stop condition
+    val schedule =
+      Schedule.spaced(config.claimCleanupInterval) && Schedule.recurWhile[Boolean](identity)
+
+    cleanup.repeat(schedule).unit
   end runClaimCleanup
 end CommandWorkerImpl
