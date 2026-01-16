@@ -106,7 +106,7 @@ object LeaderElection:
       isLeaderRef: Ref[Boolean],
       hub: Hub[Boolean],
   ): ZIO[Any, Nothing, Nothing] =
-    def attemptLeadership: ZIO[Any, Nothing, Duration] =
+    val attemptLeadership: ZIO[Any, Nothing, Duration] =
       for
         now       <- Clock.instant
         wasLeader <- isLeaderRef.get
@@ -133,16 +133,11 @@ object LeaderElection:
             )
         )
       yield
-        // Calculate wait time
-        if result then config.renewalInterval // Leader: renew frequently
-        else config.leaseDuration             // Non-leader: wait for potential expiry
+        // Calculate wait time: leader renews frequently, non-leader waits for potential expiry
+        if result then config.renewalInterval else config.leaseDuration
 
-    def loop: ZIO[Any, Nothing, Nothing] =
-      attemptLeadership.flatMap { (waitTime: Duration) =>
-        ZIO.sleep(waitTime) *> loop
-      }
-
-    loop
+    // Schedule that uses the output (Duration) to determine next delay
+    (attemptLeadership.flatMap(ZIO.sleep(_))).forever
   end runLeadershipLoop
 
   /** Create a "always leader" implementation for single-node deployments.

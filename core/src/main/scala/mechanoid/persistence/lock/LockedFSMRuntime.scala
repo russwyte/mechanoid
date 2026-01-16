@@ -105,6 +105,70 @@ final class LockedFSMRuntime[Id, S, E, Cmd] private[lock] (
   override def saveSnapshot: ZIO[Any, MechanoidError, Unit] =
     // Snapshots don't need locking - they're read-only from the FSM's perspective
     underlying.saveSnapshot
+
+  /** Execute multiple FSM transitions atomically while holding a single lock with heartbeat renewal.
+    *
+    * Use this for orchestration logic that requires multiple transitions without interleaving from other nodes. The
+    * heartbeat keeps the lock alive during the orchestration.
+    *
+    * ==When to Use==
+    *
+    *   - Conditional transitions based on intermediate state
+    *   - Saga-like patterns where multiple events form one logical operation
+    *   - Reading state between transitions for branching logic
+    *
+    * ==When NOT to Use (Anti-Patterns)==
+    *
+    * '''Do NOT use this for long-running work.''' That defeats the purpose of the lock (which should be held briefly)
+    * and the Command pattern (which handles retries and recovery).
+    *
+    * '''Bad - Don't do this:'''
+    * {{{
+    * fsm.withAtomicTransitions() { ctx =>
+    *   for
+    *     _ <- ctx.send(StartProcessing)
+    *     _ <- callExternalPaymentAPI()  // ❌ WRONG - should be a Command!
+    *     _ <- ctx.send(CompleteProcessing)
+    *   yield ()
+    * }
+    * }}}
+    *
+    * '''Good - Fast orchestration that generates Commands:'''
+    * {{{
+    * fsm.withAtomicTransitions() { ctx =>
+    *   for
+    *     outcome1 <- ctx.send(ValidateOrder)      // Generates ValidateCmd
+    *     state    <- ctx.currentState
+    *     _        <- if state.needsApproval
+    *                 then ctx.send(RequestApproval) // Generates NotifyCmd
+    *                 else ctx.send(AutoApprove)     // Generates ProcessCmd
+    *   yield ()
+    * }
+    * // Commands are processed later by CommandWorker
+    * }}}
+    *
+    * ==Lock Loss Behavior==
+    *
+    * By default, if the lock is lost (renewal fails), the effect is interrupted immediately (FailFast). This is safe
+    * because another node may have acquired the lock. Use `Continue` only for idempotent operations.
+    *
+    * @param heartbeat
+    *   Configuration for lock renewal (defaults to sensible values)
+    * @param f
+    *   The orchestration function receiving the transaction context
+    * @return
+    *   The result of the orchestration, or error if lock couldn't be acquired/maintained
+    */
+  def withAtomicTransitions[R, A](
+      heartbeat: LockHeartbeatConfig = LockHeartbeatConfig()
+  )(f: AtomicTransactionContext[Id, S, E, Cmd] => ZIO[R, MechanoidError, A]): ZIO[R, MechanoidError | LockError, A] =
+    lock.withLockAndHeartbeat(instanceId, config.nodeId, config.lockDuration, heartbeat = heartbeat) {
+      val ctx = new AtomicTransactionContext[Id, S, E, Cmd]:
+        def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+          underlying.send(event)
+        def currentState: UIO[FSMState[S]] = underlying.state
+      f(ctx)
+    }
 end LockedFSMRuntime
 
 object LockedFSMRuntime:
@@ -127,3 +191,50 @@ object LockedFSMRuntime:
   ): LockedFSMRuntime[Id, S, E, Cmd] =
     new LockedFSMRuntime(underlying, lock, config)
 end LockedFSMRuntime
+
+/** A transaction context for executing multiple FSM operations atomically.
+  *
+  * This context is provided to the function passed to [[LockedFSMRuntime.withAtomicTransitions]]. It allows sending
+  * events and reading state while holding a distributed lock with automatic renewal.
+  *
+  * ==Intended Use==
+  *
+  * Fast orchestration logic that requires multiple transitions to be atomic (no other node can interleave). The actual
+  * work should still be delegated to Commands via the transactional outbox pattern.
+  *
+  * ==Anti-Pattern Warning==
+  *
+  * Do NOT use this to hold a lock while doing long-running work (API calls, I/O, etc.). That work should be a Command
+  * processed by [[mechanoid.persistence.command.CommandWorker]].
+  *
+  * @tparam Id
+  *   FSM instance identifier type
+  * @tparam S
+  *   State type
+  * @tparam E
+  *   Event type
+  * @tparam Cmd
+  *   Command type
+  */
+trait AtomicTransactionContext[Id, S, E, Cmd]:
+
+  /** Send an event to the FSM.
+    *
+    * The event is processed immediately while holding the lock.
+    *
+    * @param event
+    *   The event to send
+    * @return
+    *   The transition outcome including any generated commands
+    */
+  def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]]
+
+  /** Get the current FSM state.
+    *
+    * Use this for conditional logic based on intermediate state.
+    *
+    * @return
+    *   The current FSM state wrapper
+    */
+  def currentState: UIO[FSMState[S]]
+end AtomicTransactionContext
