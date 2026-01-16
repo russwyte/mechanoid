@@ -1,5 +1,8 @@
 # Mechanoid
 
+[![Scala CI](https://github.com/russwyte/mechanoid/actions/workflows/scala.yml/badge.svg)](https://github.com/russwyte/mechanoid/actions/workflows/scala.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.russwyte/mechanoid_3?logo=apachemaven)](https://central.sonatype.com/artifact/io.github.russwyte/mechanoid_3)
+
 A type-safe, effect-oriented finite state machine library for Scala 3 built on ZIO.
 
 ## Features
