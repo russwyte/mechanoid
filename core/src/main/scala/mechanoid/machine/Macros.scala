@@ -381,8 +381,10 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   *   The state type (must derive Finite)
   * @tparam E
   *   The event type (must derive Finite)
-  * @param args
-  *   Transition specs or included assemblies
+  * @param first
+  *   The first transition spec or included assembly (required)
+  * @param rest
+  *   Additional transition specs or included assemblies
   * @return
   *   A composable Assembly
   *
@@ -394,9 +396,10 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   *   [[include]] for including other assemblies
   */
 transparent inline def assembly[S, E](
-    inline args: (TransitionSpec[S, E, ?] | Included[S, E, ?])*
+    inline first: TransitionSpec[S, E, ?] | Included[S, E, ?],
+    inline rest: (TransitionSpec[S, E, ?] | Included[S, E, ?])*
 ): Assembly[S, E, ?] =
-  ${ AssemblyMacros.assemblyImpl[S, E]('args) }
+  ${ AssemblyMacros.assemblyImpl[S, E]('first, 'rest) }
 
 /** Create an assembly using block syntax (no commas between specs).
   *
