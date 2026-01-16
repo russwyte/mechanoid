@@ -24,6 +24,20 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
 - **Durable timeouts** - Timeouts that survive node failures via database persistence
 - **Distributed coordination** - Claim-based locking and optional leader election
 
+## Installation
+
+Add to your `build.sbt`:
+
+```scala
+// Core library
+libraryDependencies += "io.github.russwyte" %% "mechanoid" % "<version>"
+
+// PostgreSQL persistence (optional)
+libraryDependencies += "io.github.russwyte" %% "mechanoid-postgres" % "<version>"
+```
+
+Replace `<version>` with the latest version shown in the badges above.
+
 ## Quick Start
 
 ```scala
