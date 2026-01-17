@@ -88,10 +88,15 @@ class InMemoryTimeoutStore[Id] extends TimeoutStore[Id]:
       }
     }
 
-  def complete(instanceId: Id): ZIO[Any, MechanoidError, Boolean] =
+  def complete(instanceId: Id, sequenceNr: Long): ZIO[Any, MechanoidError, Boolean] =
     ZIO.succeed {
       synchronized {
-        timeouts.remove(instanceId).isDefined
+        timeouts.get(instanceId) match
+          case Some(t) if t.sequenceNr == sequenceNr =>
+            timeouts.remove(instanceId)
+            true
+          case _ =>
+            false
       }
     }
 

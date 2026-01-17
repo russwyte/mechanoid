@@ -35,32 +35,30 @@ object Transition:
   *
   * All lifecycle actions return `MechanoidError` as the error type. User errors are wrapped in `ActionFailedError`.
   *
+  * These are per-state lifecycle actions that run for ALL transitions entering/exiting the state. For per-transition
+  * effects, use `.onEntry` and `.producing` in the DSL.
+  *
   * @tparam S
   *   The state type
-  * @tparam Cmd
-  *   The command type for this FSM
   * @param onEntry
   *   Action to execute when entering this state
   * @param onExit
   *   Action to execute when exiting this state
-  * @param commandFactory
-  *   Factory to produce commands when entering this state (for transactional outbox pattern)
   * @param onEntryDescription
   *   Human-readable description of entry action (for visualization)
   * @param onExitDescription
   *   Human-readable description of exit action (for visualization)
   */
-final case class StateLifecycle[-S, +Cmd](
+final case class StateLifecycle[-S](
     onEntry: Option[ZIO[Any, MechanoidError, Unit]] = None,
     onExit: Option[ZIO[Any, MechanoidError, Unit]] = None,
-    commandFactory: Option[S => List[Cmd]] = None,
     onEntryDescription: Option[String] = None,
     onExitDescription: Option[String] = None,
 )
 
 object StateLifecycle:
-  def empty[S, Cmd]: StateLifecycle[S, Cmd] =
-    StateLifecycle(None, None, None, None, None)
+  def empty[S]: StateLifecycle[S] =
+    StateLifecycle(None, None, None, None)
 
 /** Timeout configuration for a state.
   *
@@ -77,31 +75,22 @@ final case class StateTimeout[-S, +S2](
     action: ZIO[Any, MechanoidError, TransitionResult[S2]],
 )
 
-/** Result of a transition including any generated commands.
+/** Result of a transition.
   *
-  * This is returned by `FSMRuntime.send` and includes:
-  *   - The transition result (Stay, Goto, Stop)
-  *   - Pre-transition commands (generated before state change)
-  *   - Post-transition commands (generated after state change)
+  * This is returned by `FSMRuntime.send` and includes the transition result (Stay, Goto, Stop).
+  *
+  * Note: Per-transition effects (`.onEntry` and `.producing`) are executed automatically by the runtime and do not
+  * appear in this outcome. Entry effects run synchronously before `send` returns. Producing effects run asynchronously
+  * and send their produced events back to the FSM.
   *
   * @tparam S
   *   The state type
-  * @tparam Cmd
-  *   The command type
   */
-final case class TransitionOutcome[+S, +Cmd](
-    result: TransitionResult[S],
-    preCommands: List[Cmd],
-    postCommands: List[Cmd],
-):
-  /** All commands in execution order (pre first, then post). */
-  def allCommands: List[Cmd] = preCommands ++ postCommands
-
-  /** Whether any commands were generated. */
-  def hasCommands: Boolean = preCommands.nonEmpty || postCommands.nonEmpty
-end TransitionOutcome
+final case class TransitionOutcome[+S](
+    result: TransitionResult[S]
+)
 
 object TransitionOutcome:
-  /** Create an outcome with no commands (for FSMs without command support). */
-  def noCommands[S](result: TransitionResult[S]): TransitionOutcome[S, Nothing] =
-    TransitionOutcome(result, Nil, Nil)
+  /** Create an outcome from a result. */
+  def apply[S](result: TransitionResult[S]): TransitionOutcome[S] =
+    new TransitionOutcome(result)

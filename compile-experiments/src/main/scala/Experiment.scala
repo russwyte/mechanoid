@@ -53,7 +53,7 @@ object Experiment:
 
   // Test case 4a: Regular val would cause compile error (commented out to allow compilation)
   // val orphanAssembly = assembly[TestState, TestEvent](
-  //   (A via E1 to B) @@ Aspect.overriding,
+  //   (A via E1 to B) @@ Aspect.overriding
   // )
   // val machineWithOrphan = Machine(orphanAssembly) // ERROR: must use inline
 

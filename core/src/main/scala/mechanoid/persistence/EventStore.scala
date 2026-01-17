@@ -14,6 +14,11 @@ import scala.annotation.unused
   *   - '''Horizontal scaling''': Multiple nodes can access the same FSM instance
   *   - '''Conflict detection''': Optimistic locking prevents lost updates
   *
+  * ==Design==
+  *
+  * The trait is parameterized by `Id` (instance identifier), `S` (state), and `E` (event). Implementations may require
+  * additional type class constraints (e.g., JsonCodec for JSON serialization).
+  *
   * ==Implementation Requirements==
   *
   * '''CRITICAL''': The [[append]] method MUST implement optimistic concurrency control. Without this, concurrent
@@ -34,10 +39,6 @@ import scala.annotation.unused
   *   seqNr <- fsm.lastSequenceNr
   *   _     <- ZIO.when(seqNr % 100 == 0)(fsm.saveSnapshot)
   * yield ()
-  *
-  * // Example: Snapshot on specific state transitions (use entry actions)
-  * // In your FSM definition:
-  * // .onState(CompletedState).onEntry(fsm.saveSnapshot).done
   *
   * // Example: Periodic snapshots with ZIO Schedule
   * fsm.saveSnapshot
@@ -64,85 +65,23 @@ import scala.annotation.unused
   *   - Changing transition targets: Replay may produce different state than original
   *
   * '''Current behavior:''' During replay, events that don't match the current FSM definition cause an
-  * [[EventReplayError]]. You must handle this explicitly:
-  *
-  * {{{
-  * FSMRuntime(id, definition, initialState)
-  *   .catchSome { case e: EventReplayError =>
-  *     // Option 1: Log and skip (dangerous but sometimes needed)
-  *     ZIO.logWarning(s"Skipping unrecognized event: ${e.event}") *>
-  *       fallbackRecovery(id)
-  *
-  *     // Option 2: Fail fast (safest)
-  *     ZIO.fail(e)
-  *   }
-  *   .provide(storeLayer)
-  * }}}
-  *
-  * '''Recommended migration strategy:'''
-  * {{{
-  * // 1. Take a snapshot with the OLD FSM definition
-  * fsm.saveSnapshot
-  *
-  * // 2. Deploy the NEW FSM definition
-  * // 3. New instances will load from snapshot + replay only recent events
-  * // 4. Optionally delete old events after confirming stability
-  * store.deleteEventsTo(id, snapshotSeqNr)
-  * }}}
-  *
-  * For complex migrations, consider implementing event upcasting in your [[EventStore]] implementation by transforming
-  * events during [[loadEvents]].
+  * [[EventReplayError]]. You must handle this explicitly.
   *
   * ==ZLayer Integration==
   *
   * For efficient resource management, create your EventStore as a ZLayer:
   *
   * {{{
-  * // Your implementation with managed resources
-  * class PostgresEventStore[Id, S, E](
-  *     pool: HikariTransactor[Task]
-  * ) extends EventStore[Id, S, E]:
-  *   // ... implementation
+  * // Use the layer helper with your types
+  * val storeLayer = PostgresEventStore.layer[MyState, MyEvent]
   *
-  * object PostgresEventStore:
-  *   def layer[Id: Tag, S: Tag, E: Tag]
-  *       : ZLayer[HikariTransactor[Task], Nothing, EventStore[Id, S, E]] =
-  *     ZLayer.fromFunction(new PostgresEventStore[Id, S, E](_))
-  *
-  * // Usage - store is created once and shared
+  * // Usage
   * val program = ZIO.scoped {
   *   for
   *     fsm <- FSMRuntime(orderId, definition, Pending)
   *     _   <- fsm.send(Pay)
   *   yield ()
-  * }.provide(
-  *   PostgresEventStore.layer[OrderId, OrderState, OrderEvent],
-  *   HikariTransactor.live,
-  *   // ... other layers
-  * )
-  * }}}
-  *
-  * ==Example PostgreSQL Implementation==
-  * {{{
-  * class PostgresEventStore[Id, S, E](
-  *     xa: Transactor[Task]
-  * ) extends EventStore[Id, S, E]:
-  *
-  *   def append(id: Id, event: E, expectedSeqNr: Long) =
-  *     sql"""
-  *       INSERT INTO events (instance_id, seq_nr, event_data, timestamp)
-  *       SELECT $$id, COALESCE(MAX(seq_nr), 0) + 1, $$event, NOW()
-  *       FROM events
-  *       WHERE instance_id = $$id
-  *       HAVING COALESCE(MAX(seq_nr), 0) = $$expectedSeqNr
-  *       RETURNING seq_nr
-  *     """.query[Long].option.transact(xa).flatMap {
-  *       case Some(seqNr) => ZIO.succeed(seqNr)
-  *       case None =>
-  *         highestSequenceNr(id).flatMap { actual =>
-  *           ZIO.fail(SequenceConflictError(id.toString, expectedSeqNr, actual))
-  *         }
-  *     }
+  * }.provide(storeLayer, transactorLayer)
   * }}}
   *
   * ==Handling Conflicts==
@@ -159,9 +98,9 @@ import scala.annotation.unused
   * @tparam Id
   *   The FSM instance identifier type (e.g., UUID, String, Long)
   * @tparam S
-  *   The state type (sealed enum or sealed trait)
+  *   The state type
   * @tparam E
-  *   The event type (sealed enum or sealed trait)
+  *   The event type
   */
 trait EventStore[Id, S, E]:
 
@@ -185,16 +124,6 @@ trait EventStore[Id, S, E]:
     *   - On conflict: Fail with `SequenceConflictError(instanceId, expectedSeqNr, actualSeqNr)`
     *   - On DB error: Fail with the underlying exception
     *   - On success: Return the new sequence number
-    *
-    * '''Example SQL Pattern''' (PostgreSQL):
-    * {{{
-    * INSERT INTO events (instance_id, seq_nr, event, timestamp)
-    * SELECT $id, seq_nr + 1, $event, NOW()
-    * FROM (SELECT COALESCE(MAX(seq_nr), 0) AS seq_nr FROM events WHERE instance_id = $id) s
-    * WHERE s.seq_nr = $expectedSeqNr
-    * RETURNING seq_nr
-    * -- If 0 rows inserted, a conflict occurred
-    * }}}
     *
     * @param instanceId
     *   The FSM instance identifier

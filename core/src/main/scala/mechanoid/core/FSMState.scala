@@ -22,7 +22,7 @@ import java.time.Instant
 final case class FSMState[S](
     current: S,
     history: List[S] = Nil,
-    stateData: Map[String, Any] = Map.empty,
+    stateData: Map[String, S] = Map.empty,
     startedAt: Instant,
     lastTransitionAt: Instant,
 ):
@@ -41,12 +41,12 @@ final case class FSMState[S](
     )
 
   /** Store a value in the state data. */
-  def withData(key: String, value: Any): FSMState[S] =
+  def withData(key: String, value: S): FSMState[S] =
     copy(stateData = stateData + (key -> value))
 
   /** Retrieve a value from state data. */
-  def getData[A](key: String): Option[A] =
-    stateData.get(key).map(_.asInstanceOf[A])
+  def getData(key: String): Option[S] =
+    stateData.get(key)
 end FSMState
 
 object FSMState:

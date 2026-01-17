@@ -43,17 +43,15 @@ A type-safe, effect-oriented finite state machine library for Scala 3 built on Z
   - [Lock Configuration](#lock-configuration)
   - [Node Failure Resilience](#node-failure-resilience)
   - [Combining Features](#combining-features)
-- [Command Pattern](#command-pattern)
-  - [Declarative Commands with emitting](#declarative-commands-with-emitting)
-  - [Transactional Outbox Pattern](#transactional-outbox-pattern)
-  - [CommandStore Interface](#commandstore-interface)
-  - [CommandWorker](#commandworker)
-  - [Retry Policies](#retry-policies)
+- [Side Effects](#side-effects)
+  - [Synchronous Entry Effects](#synchronous-entry-effects)
+  - [Producing Effects](#producing-effects)
+  - [Fault-Tolerant Patterns](#fault-tolerant-patterns)
+  - [Per-State Lifecycle Actions](#per-state-lifecycle-actions)
 - [Visualization](#visualization)
   - [Overview](#visualization-overview)
   - [MermaidVisualizer](#mermaidvisualizer)
   - [GraphVizVisualizer](#graphvizvisualizer)
-  - [CommandVisualizer](#commandvisualizer)
   - [Generating Visualizations](#generating-visualizations)
 - [Error Handling](#error-handling)
 - [Complete Example](#complete-example)
@@ -313,20 +311,20 @@ For more complex definitions with local helper values, use `assemblyAll`:
 ```scala
 val machine = Machine(assemblyAll[OrderState, OrderEvent]:
   // Local helper vals at the top
-  val buildPaymentCommand: (OrderEvent, OrderState) => List[Command] = { (event, _) =>
+  val logPaymentStart: (OrderEvent, OrderState) => ZIO[Any, Nothing, Unit] = { (event, _) =>
     event match
-      case e: InitiatePayment => List(ProcessPayment(e.orderId, e.amount))
-      case _ => Nil
+      case e: InitiatePayment => ZIO.logInfo(s"Processing payment for ${e.orderId}: ${e.amount}")
+      case _ => ZIO.unit
   }
 
   // Transitions use the helpers
-  Created via event[InitiatePayment] to PaymentProcessing emitting buildPaymentCommand
+  (Created via event[InitiatePayment] to PaymentProcessing).onEntry(logPaymentStart)
   PaymentProcessing via event[PaymentSucceeded] to Paid
   PaymentProcessing via event[PaymentFailed] to Cancelled
 )
 ```
 
-The `assemblyAll` block allows mixing val definitions with transition expressions. The vals are available for use in emitting functions and other parts of the definition. No commas are needed between transition specs.
+The `assemblyAll` block allows mixing val definitions with transition expressions. The vals are available for use in `.onEntry` effects and other parts of the definition. No commas are needed between transition specs.
 
 **Important:** When including val references to `Assembly` in an `assemblyAll` block, use the `include()` wrapper:
 
@@ -473,7 +471,7 @@ val machine = Machine(assembly[AuctionState, AuctionEvent](
 This design provides several advantages over a built-in `Timeout` singleton:
 
 1. **Type safety** - Different timeouts are distinct types, preventing mix-ups
-2. **Rich handling** - Each timeout can trigger different transitions and commands
+2. **Rich handling** - Each timeout can trigger different transitions and side effects
 3. **Data carrying** - Timeout events can include context (timestamps, reason codes)
 4. **Clear intent** - Reading `PaymentTimeout` is clearer than `Timeout`
 5. **Event sourcing** - All timeout events are persisted like regular events
@@ -573,12 +571,11 @@ This helps catch refactoring issues where an override becomes orphaned after the
 
 ## Running FSMs
 
-Mechanoid provides a unified `FSMRuntime[Id, S, E, Cmd]` interface for all FSM execution scenarios. The runtime has four type parameters:
+Mechanoid provides a unified `FSMRuntime[Id, S, E]` interface for all FSM execution scenarios. The runtime has three type parameters:
 
 - `Id` - The instance identifier type (`Unit` for simple FSMs, or a custom type like `String` or `UUID` for persistent FSMs)
 - `S` - The state type (sealed enum or sealed trait)
 - `E` - The event type (sealed enum or sealed trait)
-- `Cmd` - The command type (`Nothing` for FSMs without commands)
 
 ### Simple Runtime
 
@@ -587,7 +584,7 @@ For simple, single-instance FSMs without persistence, use `machine.start(initial
 ```scala
 val program = ZIO.scoped {
   for
-    fsm <- machine.start(initialState)  // Returns FSMRuntime[Unit, S, E, Cmd]
+    fsm <- machine.start(initialState)  // Returns FSMRuntime[Unit, S, E]
     // Use the FSM...
   yield result
 }
@@ -604,7 +601,7 @@ import mechanoid.*
 
 val program = ZIO.scoped {
   for
-    fsm <- FSMRuntime(orderId, machine, initialState)  // Returns FSMRuntime[String, S, E, Cmd]
+    fsm <- FSMRuntime(orderId, machine, initialState)  // Returns FSMRuntime[String, S, E]
     // Use the FSM...
   yield result
 }.provide(
@@ -629,10 +626,6 @@ yield outcome.result match
   case TransitionResult.Stay           => "Stayed in current state"
   case TransitionResult.Stop(reason)   => s"Stopped: $reason"
 ```
-
-The `TransitionOutcome` also includes any commands generated:
-- `outcome.preCommands` - Commands generated before state change
-- `outcome.postCommands` - Commands generated after state change
 
 Possible errors:
 - `InvalidTransitionError` - No transition defined for state/event
@@ -1118,7 +1111,7 @@ Runs the provided effect, then continues execution. Only use for idempotent oper
 Use `withAtomicTransitions` on `LockedFSMRuntime` to execute multiple FSM transitions while holding a single lock with automatic renewal:
 
 ```scala
-val fsm: LockedFSMRuntime[String, OrderState, OrderEvent, OrderCommand] = ...
+val fsm: LockedFSMRuntime[String, OrderState, OrderEvent] = ...
 
 fsm.withAtomicTransitions() { ctx =>
   for
@@ -1129,7 +1122,7 @@ fsm.withAtomicTransitions() { ctx =>
                 else ctx.send(AutoApprove)     // Alternative transition
   yield ()
 }
-// Commands generated by transitions are processed later by CommandWorker
+// Side effects from .producing are handled asynchronously as fire-and-forget
 ```
 
 **When to Use:**
@@ -1144,237 +1137,183 @@ fsm.withAtomicTransitions() { ctx =>
 fsm.withAtomicTransitions() { ctx =>
   for
     _ <- ctx.send(StartProcessing)
-    _ <- callExternalPaymentAPI()  // ❌ Should be a Command!
+    _ <- callExternalPaymentAPI()  // ❌ Should use .producing instead!
     _ <- ctx.send(CompleteProcessing)
   yield ()
 }
 ```
 
-**✅ RIGHT - Fast orchestration that generates Commands:**
+**✅ RIGHT - Fast orchestration with side effects via .producing:**
 ```scala
+// Define transition with producing effect
+(Processing via CheckStatus to AwaitingResult)
+  .producing { (_, _) =>
+    // This runs asynchronously after the transition
+    callExternalPaymentAPI().map {
+      case success => PaymentSucceeded(success.txnId)
+      case failure => PaymentFailed(failure.reason)
+    }
+  }
+
+// In atomic transaction, just send the event - side effect runs asynchronously
 fsm.withAtomicTransitions() { ctx =>
   for
-    _ <- ctx.send(InitiatePayment)  // Generates ProcessPaymentCmd
-    // Lock released, CommandWorker processes the payment asynchronously
+    _ <- ctx.send(CheckStatus)
+    // Lock released quickly, external API call runs in background
   yield ()
 }
 ```
 
-### Relationship to Command Pattern
+### Best Practices for Side Effects
 
-Lock heartbeat and atomic transitions are for **fast orchestration** - quickly deciding what needs to happen and generating commands. The actual work should be delegated to **Commands** processed by `CommandWorker`:
+Lock heartbeat and atomic transitions are for **fast orchestration** - quickly deciding what needs to happen and sending events. Long-running work should be handled via `.producing` effects:
 
 | Concern | Handled By |
 |---------|------------|
 | Multiple FSM transitions atomically | `withAtomicTransitions` |
-| Long-running external calls | Commands + `CommandWorker` |
-| Retry/recovery for side effects | Commands + `RetryPolicy` |
+| Long-running external calls | `.producing` effects (fire-and-forget) |
+| Synchronous logging/metrics | `.onEntry` effects |
 | Lock renewal during orchestration | `LockHeartbeatConfig` |
 
 This separation provides:
 - **Fast lock release** - Locks are held only for state changes, not I/O
-- **Reliable side effects** - Commands are persisted and retried
-- **Exactly-once semantics** - Via idempotency keys on commands
+- **Non-blocking side effects** - `.producing` effects run as daemon fibers
+- **Self-driving FSMs** - Produced events automatically sent back to FSM
 
 ---
 
-## Command Pattern
+## Side Effects
 
-### Declarative Commands with emitting
+Mechanoid provides two mechanisms for executing side effects when transitions occur.
 
-The recommended way to generate side-effect commands is using the `emitting` DSL on transitions:
+### Synchronous Entry Effects
+
+Use `.onEntry` for side effects that should run synchronously when a transition fires:
 
 ```scala
-enum OrderCommand:
-  case ProcessPayment(orderId: String, amount: BigDecimal)
-  case SendNotification(message: String)
-  case NotifyWarehouse(orderId: String)
+val machine = Machine(assembly[OrderState, OrderEvent](
+  (Created via StartPayment to Processing)
+    .onEntry { (event, targetState) =>
+      ZIO.logInfo(s"Starting payment processing for $event")
+    },
+))
+```
 
-val machine = Machine(assemblyAll[OrderState, OrderEvent]:
-  // Helper function for payment commands
-  val buildPaymentCommand: (OrderEvent, OrderState) => List[OrderCommand] = { (event, _) =>
-    event match
-      case e: InitiatePayment => List(OrderCommand.ProcessPayment(e.orderId, e.amount))
-      case _ => Nil
-  }
+Entry effects:
+- Receive `(event: E, targetState: S)`
+- Run synchronously during `send()`
+- Failures cause `ActionFailedError` and the transition is NOT persisted
+- Use for: logging, metrics, validation, quick synchronous operations
 
-  // Emit commands when transitioning
-  Created via event[InitiatePayment] to PaymentProcessing emitting buildPaymentCommand
+### Producing Effects
 
-  // Or inline
-  Paid via Ship to Shipped emitting { (event, state) =>
-    List(
-      OrderCommand.SendNotification(s"Order shipped!"),
-      OrderCommand.NotifyWarehouse(state.orderId)
-    )
-  }
+Use `.producing` for async operations that produce events to send back to the FSM:
+
+```scala
+val machine = Machine(assembly[OrderState, OrderEvent](
+  (Processing via CheckPayment to AwaitingResult)
+    .producing { (event, targetState) =>
+      paymentService.checkStatus(event.orderId).map {
+        case Success(txnId) => PaymentSucceeded(txnId)
+        case Failure(err)   => PaymentFailed(err.message)
+      }
+    },
+))
+```
+
+Producing effects:
+- Receive `(event: E, targetState: S)`
+- Return `ZIO[Any, Any, E2]` where `E2` is an event type
+- Fork as daemon fiber (fire-and-forget)
+- Produced event is automatically sent to the FSM
+- Errors are logged but don't fail the original transition
+- Use for: external API calls, async processing, health checks
+
+### Fault-Tolerant Patterns
+
+Combine `.producing` with timeouts for self-healing FSMs:
+
+```scala
+enum ServiceState derives Finite:
+  case Stopped, Started, Degraded, Critical
+
+enum ServiceEvent derives Finite:
+  case Start, Stop, Heartbeat, DegradedCheck, ManualReset
+  case Healthy, Unstable, Failed
+
+import ServiceState.*, ServiceEvent.*
+
+val machine = Machine(assemblyAll[ServiceState, ServiceEvent]:
+  // Normal operation: heartbeat fires every 10s, triggers health check
+  (Started via Heartbeat to Started)
+    .onEntry { (_, _) => ZIO.logInfo("Running health check...") }
+    .producing { (_, _) => HealthChecker.normalCheck }  // Returns Healthy/Unstable/Failed
+    @@ Aspect.timeout(10.seconds, Heartbeat)
+
+  // Healthy → stay started, reset timeout
+  (Started via Healthy to Started)
+    .onEntry { (_, _) => ZIO.logInfo("Health check: HEALTHY") }
+    @@ Aspect.timeout(10.seconds, Heartbeat)
+
+  // Unstable → enter degraded mode with faster checks (3s)
+  (Started via Unstable to Degraded)
+    .onEntry { (_, _) => ZIO.logWarning("Entering degraded mode") }
+    @@ Aspect.timeout(3.seconds, DegradedCheck)
+
+  // Failed → critical state, wait for human intervention
+  (Started via Failed to Critical)
+    .onEntry { (_, _) => ZIO.logError("Awaiting intervention") }
+    @@ Aspect.timeout(15.seconds, ManualReset)
 )
 ```
 
-**`emitting` vs `emittingBefore`:**
+**Why this works:**
+- Timeouts are durable (survive node restarts with `TimeoutStrategy.durable`)
+- Health checks are fire-and-forget (don't block transition)
+- Produced events drive state machine forward
+- Different states = different monitoring intensity
+- No external command system needed - all orchestration via events
 
-- `emitting` - Commands generated AFTER state change. Receives `(event, targetState)`.
-- `emittingBefore` - Commands generated BEFORE state change. Receives `(event, sourceState)`.
-
+**Production setup:**
 ```scala
-// Log before transition, notify after
-Pending via Pay to Paid
-  emittingBefore { (event, state) => List(LogTransition(state)) }
-  emitting { (event, state) => List(SendNotification(state)) }
-```
-
-### Transactional Outbox Pattern
-
-The command pattern implements the **transactional outbox pattern**:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     FSM Transition                          │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐              │
-│  │ Pending  │───▶│  Event   │───▶│   Paid   │              │
-│  └──────────┘    │ Persisted│    └──────────┘              │
-│                  └────┬─────┘                               │
-│                       │                                     │
-│                       ▼                                     │
-│                  ┌──────────┐                               │
-│                  │ Command  │  ◀── Same transaction         │
-│                  │ Persisted│                               │
-│                  └────┬─────┘                               │
-└───────────────────────┼─────────────────────────────────────┘
-                        │
-                        ▼ (async, separate process)
-                   ┌──────────┐
-                   │ Worker   │───▶ Execute side effect
-                   │ Process  │───▶ Mark command complete
-                   └──────────┘
-```
-
-**Key benefits:**
-
-- **Exactly-once event persistence** - guaranteed by EventStore
-- **At-least-once command execution** - worker retries on failure
-- **Effectively exactly-once side effects** - via idempotency keys
-- **Audit trail** - all commands are logged with status
-
-### CommandStore Interface
-
-Implement `CommandStore[Id, Cmd]` for your storage backend:
-
-```scala
-trait CommandStore[Id, Cmd]:
-  def enqueue(instanceId: Id, command: Cmd, idempotencyKey: String): ZIO[Any, Throwable, PendingCommand[Id, Cmd]]
-  def claim(nodeId: String, limit: Int, claimDuration: Duration, now: Instant): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]]
-  def complete(commandId: Long): ZIO[Any, Throwable, Boolean]
-  def fail(commandId: Long, error: String, retryAt: Option[Instant]): ZIO[Any, Throwable, Boolean]
-  def skip(commandId: Long, reason: String): ZIO[Any, Throwable, Boolean]
-  def getByIdempotencyKey(idempotencyKey: String): ZIO[Any, Throwable, Option[PendingCommand[Id, Cmd]]]
-  def getByInstanceId(instanceId: Id): ZIO[Any, Throwable, List[PendingCommand[Id, Cmd]]]
-  def countByStatus: ZIO[Any, Throwable, Map[CommandStatus, Long]]
-  def releaseExpiredClaims(now: Instant): ZIO[Any, Throwable, Int]
-```
-
-**PostgreSQL Schema:**
-
-```sql
-CREATE TABLE commands (
-  id              BIGSERIAL PRIMARY KEY,
-  instance_id     TEXT NOT NULL,
-  command         JSONB NOT NULL,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  enqueued_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  status          TEXT NOT NULL DEFAULT 'pending',
-  attempts        INT NOT NULL DEFAULT 0,
-  last_attempt_at TIMESTAMPTZ,
-  last_error      TEXT,
-  next_retry_at   TIMESTAMPTZ,
-  claimed_by      TEXT,
-  claimed_until   TIMESTAMPTZ
-);
-
-CREATE INDEX idx_commands_pending ON commands (next_retry_at)
-  WHERE status = 'pending';
-CREATE INDEX idx_commands_instance ON commands (instance_id);
-```
-
-### CommandWorker
-
-The worker polls for pending commands and executes them:
-
-```scala
-// Define executor
-val executor: OrderCommand => ZIO[Any, Throwable, CommandResult] = {
-  case ProcessPayment(orderId, amount) =>
-    paymentService.charge(orderId, amount)
-      .as(CommandResult.Success)
-      .catchAll(e => ZIO.succeed(CommandResult.Failure(e.getMessage, retryable = true)))
-
-  case SendNotification(message) =>
-    notificationService.send(message)
-      .as(CommandResult.Success)
-
-  case NotifyWarehouse(orderId) =>
-    // Check if already notified (external idempotency)
-    warehouseApi.checkNotified(orderId).flatMap {
-      case true  => ZIO.succeed(CommandResult.AlreadyExecuted)
-      case false => warehouseApi.notify(orderId).as(CommandResult.Success)
-    }
-}
-
-// Start worker
-val workerProgram = ZIO.scoped {
+val program = ZIO.scoped {
   for
-    commandStore <- ZIO.service[CommandStore[String, OrderCommand]]
-    config = CommandWorkerConfig()
-      .withPollInterval(Duration.fromSeconds(5))
-      .withBatchSize(100)
-      .withRetryPolicy(RetryPolicy.exponentialBackoff())
-    worker <- CommandWorker.make(config, commandStore, executor)
-    _ <- ZIO.never // Keep running
+    fsm <- FSMRuntime(instanceId, machine, Stopped)
+    sweeper <- TimeoutSweeper.make(config, timeoutStore, fsm)
+    _ <- fsm.send(Start)
+    _ <- ZIO.never  // Keep running
   yield ()
-}
+}.provide(
+  eventStoreLayer,
+  timeoutStoreLayer,
+  TimeoutStrategy.durable[String],
+  LockingStrategy.optimistic[String]
+)
 ```
 
-**CommandResult options:**
+See the `examples/heartbeat` project for a complete working example.
 
-| Result | Behavior |
-|--------|----------|
-| `Success` | Command marked complete |
-| `Failure(msg, retryable = true)` | Retry according to policy |
-| `Failure(msg, retryable = false)` | Mark as permanently failed |
-| `AlreadyExecuted` | Mark as skipped (idempotency) |
+### Per-State Lifecycle Actions
 
-### Retry Policies
-
-Configure how failed commands are retried:
+For effects that should run for ALL transitions entering or exiting a state (not per-transition), use `withEntry` and `withExit` on Machine:
 
 ```scala
-// No retries
-RetryPolicy.NoRetry
-
-// Fixed delay between retries
-RetryPolicy.fixedDelay(
-  delay = Duration.fromSeconds(10),
-  maxAttempts = 3
-)
-
-// Exponential backoff
-RetryPolicy.exponentialBackoff(
-  initialDelay = Duration.fromSeconds(1),
-  maxDelay = Duration.fromSeconds(300),  // 5 minutes cap
-  multiplier = 2.0,
-  maxAttempts = 5
-)
+val machine = Machine(assembly[MyState, MyEvent](
+  // transitions...
+)).withEntry(Running)(ZIO.logInfo("Entered Running"))
+  .withExit(Running)(ZIO.logInfo("Exiting Running"))
 ```
 
-**Example retry schedule with exponential backoff:**
+You can also use `withLifecycle` to set both:
 
-| Attempt | Delay |
-|---------|-------|
-| 1 | 1s |
-| 2 | 2s |
-| 3 | 4s |
-| 4 | 8s |
-| 5 | 16s (or maxDelay) |
+```scala
+val machine = Machine(assembly[...](
+  // transitions...
+)).withLifecycle(Running)(
+  entry = ZIO.logInfo("Entering Running"),
+  exit = ZIO.logInfo("Exiting Running")
+)
+```
 
 ---
 
@@ -1388,15 +1327,14 @@ Mechanoid provides built-in visualization tools to generate diagrams of your FSM
 
 ### Visualization Overview
 
-Three visualizers are available:
+Two visualizers are available:
 
 | Visualizer | Output Format | Best For |
 |------------|---------------|----------|
 | `MermaidVisualizer` | Mermaid markdown | GitHub/GitLab READMEs, documentation sites |
 | `GraphVizVisualizer` | DOT format | High-quality rendered images, complex diagrams |
-| `CommandVisualizer` | Mermaid + Markdown | Command queue monitoring and reports |
 
-All visualizers work with any FSM definition, whether or not it uses commands.
+Both visualizers work with any FSM definition.
 
 ### MermaidVisualizer
 
@@ -1514,39 +1452,6 @@ dot -Tpng fsm.dot -o fsm.png
 dot -Tsvg fsm.dot -o fsm.svg
 ```
 
-### CommandVisualizer
-
-Generate reports and diagrams for command queue processing.
-
-#### Summary Table
-
-```scala
-import mechanoid.visualization.CommandVisualizer
-
-val counts = commandStore.countByStatus
-
-val summaryTable = CommandVisualizer.summaryTable(counts)
-// | Status | Count |
-// |--------|-------|
-// | ⏳ Pending | 0 |
-// | ✅ Completed | 28 |
-// | ❌ Failed | 1 |
-```
-
-#### Complete Report
-
-Combines summary, flowchart, and detailed list:
-
-```scala
-val report = CommandVisualizer.report(
-  commands = allCommands,
-  counts = statusCounts,
-  commandName = cmd => cmd.toString,
-  commandType = cmd => cmd.getClass.getSimpleName,
-  title = "Order Processing Commands"
-)
-```
-
 ### Generating Visualizations
 
 Here's a complete example that generates all visualization types:
@@ -1556,7 +1461,7 @@ import mechanoid.visualization.*
 import java.nio.file.{Files, Paths}
 
 def generateVisualizations[S, E](
-    machine: Machine[S, E, ?],
+    machine: Machine[S, E],
     initialState: S,
     outputDir: String
 )(using Finite[S], Finite[E]): ZIO[Any, Throwable, Unit] =
@@ -1598,7 +1503,6 @@ See the [visualizations directory](visualizations/) for complete examples:
 - [Order FSM Structure](visualizations/order-fsm-structure.md) - FSM definition with state diagram, flowchart, and GraphViz
 - [Order 1 Trace](visualizations/order-1-trace.md) - Successful order execution trace
 - [Order 5 Trace](visualizations/order-5-trace.md) - Failed order (payment declined) trace
-- [Command Queue Report](visualizations/command-queue.md) - Command processing summary and details
 
 ---
 
@@ -1634,28 +1538,41 @@ enum OrderEvent derives Finite:
 
 import OrderState.*, OrderEvent.*
 
-// Commands for side effects
-enum OrderCommand:
-  case ChargeCard(amount: BigDecimal)
-  case SendEmail(to: String, template: String)
-  case NotifyWarehouse(orderId: String)
+// Simulated services
+object PaymentService:
+  def charge(amount: BigDecimal): ZIO[Any, Nothing, Unit] =
+    ZIO.logInfo(s"Charging $$${amount}")
+
+object WarehouseService:
+  def notify(orderId: String): ZIO[Any, Nothing, Unit] =
+    ZIO.logInfo(s"Notifying warehouse for order $orderId")
+
+object EmailService:
+  def send(to: String, template: String): ZIO[Any, Nothing, Unit] =
+    ZIO.logInfo(s"Sending $template email to $to")
 
 // Timed state - will timeout after 30 minutes
 val awaitingWithTimeout = AwaitingPayment @@ Aspect.timeout(Duration.fromMinutes(30), PaymentTimeout)
 
-// FSM Definition
+// FSM Definition with side effects
 val orderMachine = Machine(assemblyAll[OrderState, OrderEvent]:
-  // Happy path
+  // Happy path with side effects
   Pending via RequestPayment to awaitingWithTimeout
-  AwaitingPayment via ConfirmPayment to Paid emitting { (_, _) =>
-    List(OrderCommand.ChargeCard(BigDecimal(100)))
-  }
-  Paid via Ship to Shipped emitting { (_, _) =>
-    List(OrderCommand.NotifyWarehouse("order-123"))
-  }
-  Shipped via Deliver to Delivered emitting { (_, _) =>
-    List(OrderCommand.SendEmail("customer@example.com", "delivered"))
-  }
+
+  (AwaitingPayment via ConfirmPayment to Paid)
+    .onEntry { (_, _) =>
+      PaymentService.charge(BigDecimal(100))
+    }
+
+  (Paid via Ship to Shipped)
+    .onEntry { (_, _) =>
+      WarehouseService.notify("order-123")
+    }
+
+  (Shipped via Deliver to Delivered)
+    .onEntry { (_, _) =>
+      EmailService.send("customer@example.com", "delivered")
+    }
 
   // Timeout handling
   AwaitingPayment via PaymentTimeout to Cancelled
@@ -1664,7 +1581,7 @@ val orderMachine = Machine(assemblyAll[OrderState, OrderEvent]:
   anyOf(Pending, AwaitingPayment) via Cancel to Cancelled
 )
 
-// Add lifecycle actions
+// Add lifecycle actions for all transitions to/from a state
 val machineWithActions = orderMachine
   .withEntry(AwaitingPayment)(ZIO.logInfo("Waiting for payment..."))
   .withEntry(Cancelled)(ZIO.logInfo("Order cancelled"))

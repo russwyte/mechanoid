@@ -1,6 +1,8 @@
 # Order FSM Structure
 
-## State Diagram with Commands (Mermaid)
+This diagram shows the Pet Store order lifecycle FSM.
+
+## State Diagram (Mermaid)
 
 ```mermaid
 stateDiagram-v2
@@ -8,52 +10,40 @@ stateDiagram-v2
     Shipped --> Delivered: DeliveryConfirmed
     PaymentProcessing --> Paid: PaymentSucceeded
     PaymentProcessing --> Cancelled: PaymentFailed
+    PaymentProcessing --> Cancelled: PaymentTimeout
     ShippingRequested --> Shipped: ShipmentDispatched
+    ShippingRequested --> ShippingRequested: ShippingTimeout
     Paid --> ShippingRequested: RequestShipping
     Created --> PaymentProcessing: InitiatePayment
+    note right of PaymentProcessing: timeout: 5m
+    note right of ShippingRequested: timeout: 24h
+
 ```
 
-## FSM + Commands Flowchart
+## Flowchart (Mermaid)
 
 ```mermaid
-flowchart TB
-    subgraph FSM["🔄 FSM States"]
-        direction LR
-        Shipped(("📦 Shipped"))
-        PaymentProcessing(("⏳ PaymentProcessing"))
-        ShippingRequested(("⏳ ShippingRequested"))
-        Delivered(("✅ Delivered"))
-        Cancelled(("❌ Cancelled"))
-        Paid(("💰 Paid"))
-        Created(("🆕 Created"))
-        Created -->|InitiatePayment| PaymentProcessing
-        PaymentProcessing -->|PaymentSucceeded| Paid
-        PaymentProcessing -->|PaymentFailed| Cancelled
-        Paid -->|RequestShipping| ShippingRequested
-        ShippingRequested -->|ShipmentDispatched| Shipped
-        Shipped -->|DeliveryConfirmed| Delivered
-    end
+flowchart LR
+    Shipped((Shipped))
+    PaymentProcessing((PaymentProcessing))
+    ShippingRequested((ShippingRequested))
+    Delivered((Delivered))
+    Cancelled((Cancelled))
+    Paid((Paid))
+    Created((Created))
 
-    subgraph Commands["⚡ Commands Triggered"]
-        direction LR
-        ProcessPayment["💳 ProcessPayment"]
-        RequestShipping["🚚 RequestShipping"]
-        SendNotification["📧 SendNotification"]
-    end
+    Created -->|InitiatePayment| PaymentProcessing
+    PaymentProcessing -->|PaymentSucceeded| Paid
+    PaymentProcessing -->|PaymentFailed| Cancelled
+    PaymentProcessing -->|PaymentTimeout| Cancelled
+    Paid -->|RequestShipping| ShippingRequested
+    ShippingRequested -->|ShipmentDispatched| Shipped
+    ShippingRequested -->|ShippingTimeout| ShippingRequested
+    Shipped -->|DeliveryConfirmed| Delivered
 
-    PaymentProcessing -.->|on entry| ProcessPayment
-    Paid -.->|on entry| RequestShipping
-    Paid -.->|on entry| SendNotification
-    Shipped -.->|on entry| SendNotification
-
-    style Delivered fill:#98FB98,stroke:#228B22,stroke-width:2px
-    style Cancelled fill:#FFB6C1,stroke:#DC143C,stroke-width:2px
-    style ProcessPayment fill:#FFD700,stroke:#DAA520,stroke-width:2px
-    style RequestShipping fill:#87CEEB,stroke:#4682B4,stroke-width:2px
-    style SendNotification fill:#DDA0DD,stroke:#9932CC,stroke-width:2px
 ```
 
-## GraphViz
+## GraphViz DOT
 
 ```dot
 digraph FSM {
@@ -63,8 +53,8 @@ digraph FSM {
     edge [fontsize=10];
 
     Shipped [label="Shipped"];
-    PaymentProcessing [label="PaymentProcessing"];
-    ShippingRequested [label="ShippingRequested"];
+    PaymentProcessing [label="PaymentProcessing\n[timeout: 5m]", style=filled, fillcolor="#FFB6C1"];
+    ShippingRequested [label="ShippingRequested\n[timeout: 24h]", style=filled, fillcolor="#FFB6C1"];
     Delivered [label="Delivered"];
     Cancelled [label="Cancelled"];
     Paid [label="Paid"];
@@ -75,8 +65,11 @@ digraph FSM {
     Created -> PaymentProcessing [label="InitiatePayment"];
     PaymentProcessing -> Paid [label="PaymentSucceeded"];
     PaymentProcessing -> Cancelled [label="PaymentFailed"];
+    PaymentProcessing -> Cancelled [label="PaymentTimeout"];
     Paid -> ShippingRequested [label="RequestShipping"];
     ShippingRequested -> Shipped [label="ShipmentDispatched"];
+    ShippingRequested -> ShippingRequested [label="ShippingTimeout"];
     Shipped -> Delivered [label="DeliveryConfirmed"];
 }
+
 ```

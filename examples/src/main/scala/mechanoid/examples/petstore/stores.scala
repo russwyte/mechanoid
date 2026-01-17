@@ -11,7 +11,10 @@ import scala.collection.mutable
 // In-Memory Event Store (for testing/demos)
 // ============================================
 
-/** In-memory EventStore for testing. Thread-safe via synchronized blocks. */
+/** In-memory EventStore for testing. Thread-safe via synchronized blocks.
+  *
+  * This is a simple example store. For production, use PostgresEventStore or similar.
+  */
 class SimpleEventStore[Id, S, E] extends EventStore[Id, S, E]:
   private val events    = mutable.Map[Id, mutable.ArrayBuffer[StoredEvent[Id, E]]]()
   private val snapshots = mutable.Map[Id, FSMSnapshot[Id, S]]()
@@ -31,19 +34,15 @@ class SimpleEventStore[Id, S, E] extends EventStore[Id, S, E]:
       }
     }
 
-  override def loadEvents(
-      instanceId: Id
-  ): ZStream[Any, MechanoidError, StoredEvent[Id, E]] =
-    ZStream.fromIterable(events.getOrElse(instanceId, Seq.empty))
+  override def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, E]] =
+    ZStream.fromIterable(
+      events.getOrElse(instanceId, Seq.empty)
+    )
 
-  override def loadSnapshot(
-      instanceId: Id
-  ): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]] =
+  override def loadSnapshot(instanceId: Id): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]] =
     ZIO.succeed(snapshots.get(instanceId))
 
-  override def saveSnapshot(
-      snapshot: FSMSnapshot[Id, S]
-  ): ZIO[Any, MechanoidError, Unit] =
+  override def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, MechanoidError, Unit] =
     ZIO.succeed {
       synchronized {
         snapshots(snapshot.instanceId) = snapshot

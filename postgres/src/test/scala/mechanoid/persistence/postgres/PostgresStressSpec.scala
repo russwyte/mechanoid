@@ -1,12 +1,11 @@
 package mechanoid.persistence.postgres
 
 import zio.*
-import zio.json.*
 import zio.test.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
+import mechanoid.finiteJsonCodec
 import mechanoid.persistence.*
-import mechanoid.persistence.command.*
 import mechanoid.persistence.lock.*
 import mechanoid.persistence.timeout.*
 import java.util.UUID
@@ -22,37 +21,29 @@ import java.util.UUID
   */
 object PostgresStressSpec extends ZIOSpecDefault:
 
-  // Test types with zio-json codecs
-  enum StressState derives JsonCodec:
+  // Test types - Finite auto-derives JsonCodec
+  enum StressState derives Finite:
     case Idle
     case Processing
     case WaitingForTimeout
     case Completed
     case Failed
 
-  enum StressEvent derives JsonCodec:
+  enum StressEvent derives Finite:
     case Started(data: String)
     case Progressed(step: Int)
     case Finished
     case Error(msg: String)
     case Timeout // User-defined timeout event
 
-  enum StressCommand derives JsonCodec:
-    case DoWork(payload: String)
-    case Retry(attempt: Int)
-    case Complete
-
-  val commandCodec = CommandCodec.fromJson[StressCommand]
-
   // Shared layers
   val xaLayer           = PostgresTestContainer.DataSourceProvider.transactor
-  val eventStoreLayer   = xaLayer >>> PostgresEventStore.layer[StressState, StressEvent]
-  val commandStoreLayer = xaLayer >>> PostgresCommandStore.layer[StressCommand](commandCodec)
+  val eventStoreLayer   = xaLayer >>> PostgresEventStore.makeLayer[StressState, StressEvent]
   val timeoutStoreLayer = xaLayer >>> PostgresTimeoutStore.layer
   val lockLayer         = xaLayer >>> PostgresInstanceLock.layer
   val leaseStoreLayer   = xaLayer >>> PostgresLeaseStore.layer
 
-  val allLayers = eventStoreLayer ++ commandStoreLayer ++ timeoutStoreLayer ++ lockLayer ++ leaseStoreLayer
+  val allLayers = eventStoreLayer ++ timeoutStoreLayer ++ lockLayer ++ leaseStoreLayer
 
   private def uniqueId(prefix: String) = s"$prefix-${UUID.randomUUID()}"
 
@@ -303,466 +294,6 @@ object PostgresStressSpec extends ZIOSpecDefault:
   )
 
   // ============================================
-  // Command Store Stress Tests
-  // ============================================
-
-  val commandStoreStressTests = suite("Command Store Stress Tests")(
-    test("100 concurrent claims from different nodes - each command claimed once") {
-      for
-        store <- ZIO.service[CommandStore[String, StressCommand]]
-        now   <- Clock.instant
-
-        // Enqueue 20 commands
-        keys = (1 to 20).map(i => uniqueId(s"claim-race-$i")).toList
-        _ <- ZIO.foreach(keys)(key => store.enqueue(uniqueId("instance"), StressCommand.DoWork(key), key))
-
-        // 10 nodes each try to claim all available
-        nodes = (1 to 10).map(i => s"worker-$i").toList
-        results <- ZIO.foreachPar(nodes) { nodeId =>
-          store.claim(nodeId, 100, Duration.fromSeconds(30), now)
-        }
-
-        // Count total claimed
-        totalClaimed = results.flatten
-        uniqueIds    = totalClaimed.map(_.idempotencyKey).toSet
-      yield assertTrue(
-        totalClaimed.length == 20, // All 20 commands claimed
-        uniqueIds.size == 20,      // Each claimed exactly once
-        totalClaimed.forall(_.status == CommandStatus.Processing),
-      )
-    },
-    test("complete and fail commands while claiming - no double processing") {
-      for
-        store <- ZIO.service[CommandStore[String, StressCommand]]
-        now   <- Clock.instant
-        instanceId = uniqueId("process-stress")
-
-        // Enqueue commands
-        _ <- ZIO.foreach(1 to 50)(i => store.enqueue(instanceId, StressCommand.Retry(i), uniqueId(s"process-$i")))
-
-        // Multiple workers claim and process concurrently
-        processedRef <- Ref.make(Set.empty[Long])
-
-        workers = (1 to 5).map { workerId =>
-          (for
-            claimed <- store.claim(s"worker-$workerId", 20, Duration.fromSeconds(30), now)
-            _       <- ZIO.foreach(claimed) { cmd =>
-              // Use command ID to determine complete vs fail (pseudo-random)
-              if cmd.id % 2 == 0 then store.complete(cmd.id) *> processedRef.update(_ + cmd.id)
-              else store.fail(cmd.id, "simulated failure", Some(now.plusSeconds(60)))
-            }
-          yield claimed.length).repeatN(2) // Each worker does 3 rounds
-        }
-
-        _ <- ZIO.foreachPar(workers)(identity)
-
-        processed <- processedRef.get
-      yield assertTrue(
-        // Some commands were completed (not all because some failed and are pending again)
-        processed.nonEmpty,
-        // No duplicates in processed set
-        processed.size == processed.toList.length,
-      )
-    },
-    test("idempotency - same key always returns same command") {
-      for
-        store <- ZIO.service[CommandStore[String, StressCommand]]
-        key = uniqueId("idempotent")
-
-        // 100 concurrent enqueues with same key but different data
-        results <- ZIO.foreachPar(1 to 100) { i =>
-          store.enqueue(uniqueId("instance"), StressCommand.DoWork(s"data-$i"), key)
-        }
-
-        // All should return the same command ID
-        ids      = results.map(_.id).toSet
-        commands = results.map(_.command).toSet
-      yield assertTrue(
-        ids.size == 1,     // All return same ID
-        commands.size == 1, // All return same command (the first one)
-      )
-    },
-    test("release expired claims and reclaim") {
-      for
-        store <- ZIO.service[CommandStore[String, StressCommand]]
-        past  <- Clock.instant.map(_.minusSeconds(100))
-        now   <- Clock.instant
-
-        // Enqueue commands
-        key = uniqueId("expire-reclaim")
-        _ <- store.enqueue(uniqueId("instance"), StressCommand.Complete, key)
-
-        // Claim with expired time
-        claimed1 <- store.claim("worker-1", 10, Duration.fromMillis(1), past)
-        _        <- assertTrue(claimed1.nonEmpty)
-
-        // Release expired
-        released <- store.releaseExpiredClaims(now)
-        _        <- assertTrue(released >= 1)
-
-        // Another worker can now claim
-        claimed2 <- store.claim("worker-2", 10, Duration.fromSeconds(30), now)
-        ourCmd = claimed2.find(_.idempotencyKey == key)
-      yield assertTrue(
-        ourCmd.isDefined,
-        ourCmd.get.attempts == 2, // Second attempt
-      )
-    },
-  )
-
-  // ============================================
-  // Command Queue Production Simulation Tests
-  // ============================================
-
-  val commandQueueProductionTests = suite("Command Queue Production Simulation")(
-    test("producer-consumer with forked workers - all commands eventually processed") {
-      for
-        store        <- ZIO.service[CommandStore[String, StressCommand]]
-        completedRef <- Ref.make(Set.empty[String])
-        producerDone <- Promise.make[Nothing, Unit]
-
-        // Track all enqueued keys
-        enqueuedKeysRef <- Ref.make(Set.empty[String])
-
-        // Producer: continuously enqueue commands
-        producer <- (for
-          _ <- ZIO.foreach(1 to 100) { batch =>
-            ZIO.foreach(1 to 10) { i =>
-              val key = uniqueId(s"prod-$batch-$i")
-              store.enqueue(uniqueId("instance"), StressCommand.DoWork(s"work-$batch-$i"), key) *>
-                enqueuedKeysRef.update(_ + key)
-            }
-          }
-          _ <- producerDone.succeed(())
-        yield ()).fork
-
-        // 5 Consumer workers: continuously claim and process
-        consumers <- ZIO.foreach(1 to 5) { workerId =>
-          (for _ <- (for
-              now     <- Clock.instant
-              claimed <- store.claim(s"consumer-$workerId", 20, Duration.fromSeconds(10), now)
-              _       <- ZIO.foreach(claimed) { cmd =>
-                // Simulate processing time
-                ZIO.sleep(Duration.fromMillis(1)) *>
-                  store.complete(cmd.id) *>
-                  completedRef.update(_ + cmd.idempotencyKey)
-              }
-              // Small pause between claim rounds
-              _ <- ZIO.sleep(Duration.fromMillis(5))
-            yield claimed.length)
-              .repeatWhile(_ => true)
-              .race(
-                // Stop when producer is done and queue is empty
-                producerDone.await *> ZIO.sleep(Duration.fromMillis(500))
-              )
-          yield ()).fork
-        }
-
-        // Wait for producer to finish
-        _ <- producer.join
-
-        // Give consumers time to drain the queue
-        _ <- ZIO.sleep(Duration.fromMillis(1000))
-
-        // Interrupt consumers
-        _ <- ZIO.foreach(consumers)(_.interrupt)
-
-        // Check that most commands were processed
-        completed <- completedRef.get
-        enqueued  <- enqueuedKeysRef.get
-
-        // Allow a few in-flight, but most should be done
-        completionRate = completed.size.toDouble / enqueued.size.toDouble
-      yield assertTrue(
-        enqueued.size == 1000, // All 100 batches * 10 commands
-        completionRate >= 0.95, // At least 95% completed
-      )
-    },
-    test("worker crash and recovery - commands not lost") {
-      for
-        store        <- ZIO.service[CommandStore[String, StressCommand]]
-        processedRef <- Ref.make(Set.empty[String])
-
-        // Enqueue commands
-        keys = (1 to 50).map(i => uniqueId(s"crash-$i")).toList
-        _ <- ZIO.foreach(keys)(key => store.enqueue(uniqueId("instance"), StressCommand.DoWork(key), key))
-
-        // Worker 1: claims commands then "crashes" (gets interrupted)
-        crashingWorker <- (for
-          now <- Clock.instant
-          _   <- store.claim("crashing-worker", 30, Duration.fromMillis(100), now)
-          // Simulate crash - don't complete, just hang
-          _ <- ZIO.never
-        yield ()).fork
-
-        // Let worker claim some
-        _ <- ZIO.sleep(Duration.fromMillis(50))
-
-        // Kill the worker (simulates crash)
-        _ <- crashingWorker.interrupt
-
-        // Wait for claims to expire
-        _ <- ZIO.sleep(Duration.fromMillis(200))
-
-        // Release expired claims
-        now <- Clock.instant
-        _   <- store.releaseExpiredClaims(now)
-
-        // Recovery worker picks up all pending commands
-        recoveryRounds <- Ref.make(0)
-        _              <- (for
-          claimNow <- Clock.instant
-          claimed  <- store.claim("recovery-worker", 100, Duration.fromSeconds(30), claimNow)
-          _        <- ZIO.foreach(claimed) { cmd =>
-            store.complete(cmd.id) *> processedRef.update(_ + cmd.idempotencyKey)
-          }
-          _ <- recoveryRounds.update(_ + 1)
-        yield claimed.length).repeatWhile(_ > 0)
-
-        processed <- processedRef.get
-      yield assertTrue(
-        processed.size == 50,           // All commands eventually processed
-        keys.forall(processed.contains), // No commands lost
-      )
-    },
-    test("retry with exponential backoff simulation") {
-      for
-        store            <- ZIO.service[CommandStore[String, StressCommand]]
-        attemptCountRef  <- Ref.make(Map.empty[String, Int])
-        completedKeysRef <- Ref.make(Set.empty[String])
-
-        // Enqueue commands that will fail initially
-        keys    = (1 to 20).map(i => uniqueId(s"retry-$i")).toList
-        keysSet = keys.toSet
-        _ <- ZIO.foreach(keys)(key => store.enqueue(uniqueId("instance"), StressCommand.Retry(1), key))
-
-        // Worker that fails commands on first 2 attempts, succeeds on 3rd
-        // Keep processing until all our commands are completed
-        _ <- (for
-          completed <- completedKeysRef.get
-          _         <- ZIO.when(completed.size < 20) {
-            for
-              now     <- Clock.instant
-              claimed <- store.claim("retry-worker", 50, Duration.fromSeconds(30), now)
-              // Only process our keys
-              ourCmds = claimed.filter(c => keysSet.contains(c.idempotencyKey))
-              _ <- ZIO.foreach(ourCmds) { cmd =>
-                for
-                  counts <- attemptCountRef.get
-                  currentAttempts = counts.getOrElse(cmd.idempotencyKey, 0)
-                  _ <- attemptCountRef.update(_.updated(cmd.idempotencyKey, currentAttempts + 1))
-                  _ <-
-                    if currentAttempts < 2 then
-                      // Fail with retry - very short delay for test speed
-                      store.fail(cmd.id, s"Attempt ${currentAttempts + 1} failed", Some(now.plusMillis(10)))
-                    else
-                      // Success on 3rd attempt
-                      store.complete(cmd.id) *> completedKeysRef.update(_ + cmd.idempotencyKey)
-                yield ()
-              }
-              // Wait a bit for retry times to pass
-              _ <- ZIO.sleep(Duration.fromMillis(15))
-            yield ()
-          }
-          done <- completedKeysRef.get.map(_.size >= 20)
-        yield done).repeatUntil(identity).timeout(Duration.fromSeconds(10))
-
-        // Check all commands were retried appropriately
-        completedKeys <- completedKeysRef.get
-        attempts      <- attemptCountRef.get
-      yield assertTrue(
-        completedKeys.size == 20,       // All our commands completed
-        attempts.values.forall(_ >= 3), // Each was attempted at least 3 times
-        attempts.size == 20,            // All commands tracked
-      )
-    },
-    test("high throughput - 1000 commands with 10 parallel workers") {
-      for
-        store            <- ZIO.service[CommandStore[String, StressCommand]]
-        completedKeysRef <- Ref.make(Set.empty[String])
-        startTime        <- Clock.instant
-
-        // Generate unique keys for this test
-        keysRef <- Ref.make(Set.empty[String])
-
-        // Enqueue 1000 commands, tracking keys
-        _ <- ZIO.foreachPar(1 to 100) { batch =>
-          ZIO.foreach(1 to 10) { i =>
-            val key = uniqueId(s"bulk-$batch-$i")
-            keysRef.update(_ + key) *>
-              store.enqueue(uniqueId("instance"), StressCommand.DoWork(s"bulk-$batch-$i"), key)
-          }
-        }
-
-        keys <- keysRef.get
-
-        // 10 workers process in parallel - only process our keys
-        workers <- ZIO.foreach(1 to 10) { workerId =>
-          (for _ <- (for
-              now     <- Clock.instant
-              claimed <- store.claim(s"bulk-worker-$workerId", 50, Duration.fromSeconds(30), now)
-              ourCmds = claimed.filter(c => keys.contains(c.idempotencyKey))
-              _ <- ZIO.foreach(ourCmds) { cmd =>
-                store.complete(cmd.id) *> completedKeysRef.update(_ + cmd.idempotencyKey)
-              }
-            yield ourCmds.length).repeatWhile(_ > 0)
-          yield ()).fork
-        }
-
-        // Wait for all workers to finish
-        _ <- ZIO.foreach(workers)(_.join)
-
-        endTime       <- Clock.instant
-        completedKeys <- completedKeysRef.get
-        durationMs = java.time.Duration.between(startTime, endTime).toMillis
-      yield assertTrue(
-        completedKeys.size == 1000, // All 1000 processed
-        completedKeys == keys,      // Exactly our keys
-        durationMs < 10000,         // Should complete in under 10 seconds
-      )
-    },
-    test("skip poisonous commands - processing continues") {
-      for
-        store        <- ZIO.service[CommandStore[String, StressCommand]]
-        processedRef <- Ref.make(Set.empty[String])
-        skippedRef   <- Ref.make(Set.empty[String])
-
-        // Enqueue mix of good and "poison" commands
-        goodKeys   = (1 to 30).map(i => s"good-${uniqueId(s"$i")}").toList
-        poisonKeys = (1 to 10).map(i => s"poison-${uniqueId(s"$i")}").toList
-        allKeys    = goodKeys ++ poisonKeys
-
-        _ <- ZIO.foreach(allKeys) { key =>
-          val cmd =
-            if key.startsWith("poison") then StressCommand.DoWork("POISON")
-            else StressCommand.DoWork("normal")
-          store.enqueue(uniqueId("instance"), cmd, key)
-        }
-
-        // Worker that skips poison commands - only process our keys
-        _ <- (for
-          now     <- Clock.instant
-          claimed <- store.claim("careful-worker", 50, Duration.fromSeconds(30), now)
-          ourCmds = claimed.filter(c => allKeys.contains(c.idempotencyKey))
-          _ <- ZIO.foreach(ourCmds) { cmd =>
-            cmd.command match
-              case StressCommand.DoWork("POISON") =>
-                store.skip(cmd.id, "Poison pill detected") *>
-                  skippedRef.update(_ + cmd.idempotencyKey)
-              case _ =>
-                store.complete(cmd.id) *>
-                  processedRef.update(_ + cmd.idempotencyKey)
-          }
-        yield ourCmds.length).repeatWhile(_ > 0)
-
-        processed <- processedRef.get
-        skipped   <- skippedRef.get
-      yield assertTrue(
-        processed.size == 30, // All good commands processed
-        skipped.size == 10,   // All poison commands skipped
-        goodKeys.forall(processed.contains),
-        poisonKeys.forall(skipped.contains),
-      )
-    },
-    test("competing workers on same instance - fair distribution") {
-      for
-        store <- ZIO.service[CommandStore[String, StressCommand]]
-        instanceId = uniqueId("fair-instance")
-        workerCountsRef  <- Ref.make(Map.empty[String, Int])
-        processedKeysRef <- Ref.make(Set.empty[String])
-
-        // Enqueue 100 commands for same instance - track keys
-        keys = (1 to 100).map(i => uniqueId(s"fair-$i")).toList
-        _ <- ZIO.foreach(keys) { key =>
-          store.enqueue(instanceId, StressCommand.DoWork(key), key)
-        }
-
-        // 5 workers compete - only process our keys
-        workers <- ZIO.foreach(1 to 5) { workerId =>
-          val workerName = s"fair-worker-$workerId"
-          (for _ <- (for
-              now     <- Clock.instant
-              claimed <- store.claim(workerName, 10, Duration.fromSeconds(30), now)
-              ourCmds = claimed.filter(c => keys.contains(c.idempotencyKey))
-              _ <- ZIO.foreach(ourCmds) { cmd =>
-                store.complete(cmd.id) *>
-                  processedKeysRef.update(_ + cmd.idempotencyKey) *>
-                  workerCountsRef.update { m =>
-                    m.updated(workerName, m.getOrElse(workerName, 0) + 1)
-                  }
-              }
-              // Tiny pause to allow interleaving
-              _ <- ZIO.sleep(Duration.fromMillis(1))
-            yield ourCmds.length).repeatWhile(_ > 0)
-          yield ()).fork
-        }
-
-        _ <- ZIO.foreach(workers)(_.join)
-
-        workerCounts  <- workerCountsRef.get
-        processedKeys <- processedKeysRef.get
-        totalProcessed = workerCounts.values.sum
-      yield assertTrue(
-        totalProcessed == 100,            // All 100 processed
-        processedKeys.size == 100,        // All keys processed
-        workerCounts.size >= 1,           // At least one worker participated
-        workerCounts.values.forall(_ > 0), // Each active worker did some work
-      )
-    },
-    test("concurrent enqueue and claim - no race conditions") {
-      for
-        store        <- ZIO.service[CommandStore[String, StressCommand]]
-        enqueuedRef  <- Ref.make(Set.empty[String])
-        processedRef <- Ref.make(Set.empty[String])
-        done         <- Promise.make[Nothing, Unit]
-
-        // Producer continuously enqueues
-        producer <- (for
-          _ <- ZIO.foreach(1 to 50) { batch =>
-            ZIO.foreach(1 to 20) { i =>
-              val key = uniqueId(s"race-$batch-$i")
-              store.enqueue(uniqueId("instance"), StressCommand.DoWork(key), key) *>
-                enqueuedRef.update(_ + key)
-            } *> ZIO.sleep(Duration.fromMillis(10))
-          }
-          _ <- done.succeed(())
-        yield ()).fork
-
-        // Consumer runs in parallel
-        consumer <- (for _ <- (for
-            now     <- Clock.instant
-            claimed <- store.claim("race-worker", 100, Duration.fromSeconds(30), now)
-            _ <- ZIO.foreach(claimed)(cmd => store.complete(cmd.id) *> processedRef.update(_ + cmd.idempotencyKey))
-            _ <- ZIO.sleep(Duration.fromMillis(5))
-          yield ())
-            .repeatWhile(_ => true)
-            .race(
-              done.await *> ZIO.sleep(Duration.fromMillis(500))
-            )
-        yield ()).fork
-
-        _ <- producer.join
-        _ <- ZIO.sleep(Duration.fromMillis(1000))
-        _ <- consumer.interrupt
-
-        // Drain any remaining
-        _ <- (for
-          now     <- Clock.instant
-          claimed <- store.claim("cleanup-worker", 1000, Duration.fromSeconds(30), now)
-          _       <- ZIO.foreach(claimed)(cmd => store.complete(cmd.id) *> processedRef.update(_ + cmd.idempotencyKey))
-        yield claimed.length).repeatWhile(_ > 0)
-
-        enqueued  <- enqueuedRef.get
-        processed <- processedRef.get
-      yield assertTrue(
-        enqueued.size == 1000, // All enqueued
-        processed == enqueued, // All processed, no extras, no missing
-        processed.size == 1000,
-      )
-    },
-  )
-
-  // ============================================
   // Timeout Store Stress Tests
   // ============================================
 
@@ -847,7 +378,7 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         // Query and complete concurrently
         queryFiber    <- store.queryExpired(100, now).fork
-        completeFiber <- ZIO.foreach(ids.take(25))(store.complete).fork
+        completeFiber <- ZIO.foreach(ids.take(25))(id => store.complete(id, 0L)).fork
 
         expired <- queryFiber.join
         _       <- completeFiber.join
@@ -1026,25 +557,12 @@ object PostgresStressSpec extends ZIOSpecDefault:
     },
     test("interrupt heavy workload mid-execution - database stays consistent") {
       for
-        eventStore   <- ZIO.service[EventStore[String, StressState, StressEvent]]
-        commandStore <- ZIO.service[CommandStore[String, StressCommand]]
-        now          <- Clock.instant
+        eventStore <- ZIO.service[EventStore[String, StressState, StressEvent]]
         instanceId = uniqueId("interrupt-chaos")
 
-        // Start heavy workload
+        // Start heavy workload - append many events
         heavyWorkload =
           for
-            // Enqueue 100 commands
-            _ <- ZIO.foreach(1 to 100) { i =>
-              commandStore.enqueue(instanceId, StressCommand.DoWork(s"work-$i"), uniqueId(s"cmd-$i"))
-            }
-            // Claim and process
-            _ <- ZIO.foreach(1 to 10) { _ =>
-              for
-                claimed <- commandStore.claim("worker", 20, Duration.fromSeconds(30), now)
-                _       <- ZIO.foreach(claimed)(cmd => commandStore.complete(cmd.id))
-              yield ()
-            }
             // Append many events
             _ <- ZIO.foreach(1 to 100) { i =>
               eventStore.append(instanceId, StressEvent.Progressed(i), i.toLong).either
@@ -1058,14 +576,12 @@ object PostgresStressSpec extends ZIOSpecDefault:
 
         // Database should still be consistent
         events <- eventStore.loadEvents(instanceId).runCollect
-        counts <- commandStore.countByStatus
 
         // Events should be in order with no gaps
         eventSeqs    = events.map(_.sequenceNr).toList
         expectedSeqs = if eventSeqs.nonEmpty then (1L to eventSeqs.max).toList else List.empty
       yield assertTrue(
-        eventSeqs == expectedSeqs,   // No gaps in sequence
-        counts.values.forall(_ >= 0), // No negative counts
+        eventSeqs == expectedSeqs // No gaps in sequence
       )
     },
     test("parallel snapshot saves don't corrupt data") {
@@ -1135,8 +651,6 @@ object PostgresStressSpec extends ZIOSpecDefault:
   def spec = suite("PostgreSQL Stress Tests")(
     lockStressTests,
     eventStoreStressTests,
-    commandStoreStressTests,
-    commandQueueProductionTests,
     timeoutStoreStressTests,
     leaderElectionStressTests,
     chaosTests,

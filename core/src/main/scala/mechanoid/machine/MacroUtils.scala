@@ -5,7 +5,7 @@ import scala.quoted.*
 /** Shared utilities for mechanoid macro implementations.
   *
   * This object provides common helpers for AST extraction, type checking, and validation that are used across
-  * `assemblyImpl`, `buildWithInferredCmdImpl`, and `buildAllImpl` macros.
+  * `assemblyImpl`, `assemblyAllImpl`, `includeImpl`, and `applyImpl` macros.
   *
   * ==Organization==
   *
@@ -14,7 +14,6 @@ import scala.quoted.*
   *   - AST Unwrapping & Extraction: `unwrap`, `extractBoolean`, `qualifiedName`, etc.
   *   - Hash Info Extraction: `SpecHashInfo`, `extractHashInfo`, etc.
   *   - Expression Generation: `hashInfoToExpr`, `orphanInfoToExpr`, etc.
-  *   - Command Type Inference: `extractCmdType`, `inferCommandType`
   *   - Duplicate Detection: `checkDuplicates` (wraps pure logic)
   */
 private[machine] object MacroUtils:
@@ -836,45 +835,62 @@ private[machine] object MacroUtils:
     }
   end computeOrphanExprs
 
-  // ====== Command Type Inference ======
-
-  /** Extract command type from a TransitionSpec[S, E, Cmd] or Assembly[S, E, Cmd] type.
-    *
-    * Returns None if the command type is Nothing (default when no commands).
-    */
-  def extractCmdType(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[quotes.reflect.TypeRepr] =
-    import quotes.reflect.*
-    tpe.dealias.widen match
-      case AppliedType(_, List(_, _, cmdType)) =>
-        if cmdType =:= TypeRepr.of[Nothing] then None
-        else Some(cmdType)
-      case _ => None
-
-  /** Compute the LUB (least upper bound / nearest common ancestor) of all command types.
-    *
-    * Used to infer the Machine's command type from all specs and assemblies.
-    */
-  def inferCommandType(using Quotes)(cmdTypes: List[quotes.reflect.TypeRepr]): quotes.reflect.TypeRepr =
-    import quotes.reflect.*
-    if cmdTypes.isEmpty then TypeRepr.of[Nothing]
-    else if cmdTypes.size == 1 then cmdTypes.head
-    else
-      // Find the nearest common ancestor by intersecting base classes
-      def baseClasses(tpe: TypeRepr): List[Symbol] = tpe.baseClasses
-      val baseClassLists                           = cmdTypes.map(baseClasses)
-      val commonBases                              = baseClassLists.reduce { (a, b) =>
-        a.filter(sym => b.contains(sym))
-      }
-      val skipSymbols = Set("scala.Any", "scala.AnyRef", "scala.Matchable", "java.lang.Object")
-      val usefulBases = commonBases.filterNot(sym => skipSymbols.contains(sym.fullName))
-
-      if usefulBases.nonEmpty then usefulBases.head.typeRef
-      else if commonBases.nonEmpty then TypeRepr.of[Any]
-      else TypeRepr.of[Any]
-    end if
-  end inferCommandType
-
   // ====== Symbol-based Duplicate Detection ======
+
+  /** Extract producingAncestorHashes from a TransitionSpec term.
+    *
+    * Walks the AST to find `producingAncestorHashes = Some(Set(...))` patterns, which are embedded by the `producing`
+    * macro. Returns None if no producing effect is configured, or Some(Set[Int]) with the ancestor hashes.
+    */
+  def extractProducingAncestorHashes(using Quotes)(term: quotes.reflect.Term): Option[Set[Int]] =
+    import quotes.reflect.*
+    var result: Option[Set[Int]] = None
+
+    object HashFinder extends TreeAccumulator[Unit]:
+      def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+        if result.isEmpty then
+          tree match
+            // Match NamedArg pattern: producingAncestorHashes = Some(Set(...))
+            case NamedArg("producingAncestorHashes", someArg) =>
+              someArg match
+                // Some(Set(...)) pattern
+                case Apply(TypeApply(Select(_, "apply"), _), List(setArg)) =>
+                  val hashes = extractSetInts(setArg)
+                  if hashes.nonEmpty then result = Some(hashes)
+                case Apply(Select(_, "apply"), List(setArg)) =>
+                  val hashes = extractSetInts(setArg)
+                  if hashes.nonEmpty then result = Some(hashes)
+                case Apply(_, List(setArg)) if someArg.show.contains("Some") =>
+                  val hashes = extractSetInts(setArg)
+                  if hashes.nonEmpty then result = Some(hashes)
+                case _ =>
+                  foldOverTree((), tree)(owner)
+            // Also check for copy() calls with producingAncestorHashes
+            case Apply(Select(_, "copy"), args) =>
+              args.foreach { arg =>
+                arg match
+                  case NamedArg("producingAncestorHashes", someArg) =>
+                    someArg match
+                      case Apply(TypeApply(Select(_, "apply"), _), List(setArg)) =>
+                        val hashes = extractSetInts(setArg)
+                        if hashes.nonEmpty then result = Some(hashes)
+                      case Apply(Select(_, "apply"), List(setArg)) =>
+                        val hashes = extractSetInts(setArg)
+                        if hashes.nonEmpty then result = Some(hashes)
+                      case Apply(_, List(setArg)) if someArg.show.contains("Some") =>
+                        val hashes = extractSetInts(setArg)
+                        if hashes.nonEmpty then result = Some(hashes)
+                      case _ => ()
+                  case _ => ()
+              }
+              foldOverTree((), tree)(owner)
+            case _ =>
+              foldOverTree((), tree)(owner)
+    end HashFinder
+
+    HashFinder.foldTree((), term)(Symbol.spliceOwner)
+    result
+  end extractProducingAncestorHashes
 
   /** Check if a term is the @@ method (used in extension method pattern matching). */
   def isAtAtMethod(using Quotes)(t: quotes.reflect.Term): Boolean =

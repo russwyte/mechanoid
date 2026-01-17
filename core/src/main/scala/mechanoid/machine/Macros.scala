@@ -157,23 +157,87 @@ object Macros:
     else report.errorAndAbort(s"Cannot extract symbol from expression: ${term.show}")
   end computeHashForImpl
 
-  /** Implementation of `event[T]` - creates a type-based event matcher. */
-  def eventMatcherImpl[E: Type](using Quotes): Expr[EventMatcher[E]] =
+  /** Implementation of `event[T]` - creates a type-based event matcher.
+    *
+    * Returns EventMatcher parameterized with the sealed parent type to enable proper type bounds in `producing`.
+    */
+  def eventMatcherImpl[E: Type](using Quotes): Expr[EventMatcher[?]] =
     import quotes.reflect.*
     val tpe  = TypeRepr.of[E]
     val sym  = tpe.typeSymbol
     val hash = sym.fullName.hashCode
     val name = sym.name
-    '{ new EventMatcher[E](${ Expr(hash) }, ${ Expr(name) }) }
 
-  /** Implementation of `state[T]` - creates a type-based state matcher. */
-  def stateMatcherImpl[S: Type](using Quotes): Expr[StateMatcher[S]] =
+    // Find the sealed parent type for proper type bounds
+    // Check for both Sealed flag (sealed trait/class) and Enum flag (Scala 3 enum)
+    def isSealedOrEnum(s: Symbol): Boolean =
+      s.flags.is(Flags.Sealed) || s.flags.is(Flags.Enum)
+
+    def findSealedParent(s: Symbol): Option[Symbol] =
+      if !s.exists then None
+      else if isSealedOrEnum(s) then Some(s)
+      else if s.flags.is(Flags.Module) then
+        // For enum cases, owner is the companion object (Module)
+        // Look for the companion class which should be the sealed enum
+        val companion = s.companionClass
+        if companion.exists && isSealedOrEnum(companion) then Some(companion)
+        else None
+      else
+        s.owner match
+          case owner if owner.isClassDef => findSealedParent(owner)
+          case _                         => None
+
+    val parentSym = findSealedParent(sym.owner)
+
+    parentSym match
+      case Some(parent) =>
+        parent.typeRef.asType match
+          case '[p] => '{ new EventMatcher[p](${ Expr(hash) }, ${ Expr(name) }) }
+      case None =>
+        // No sealed parent found, use E directly
+        '{ new EventMatcher[E](${ Expr(hash) }, ${ Expr(name) }) }
+  end eventMatcherImpl
+
+  /** Implementation of `state[T]` - creates a type-based state matcher.
+    *
+    * Returns StateMatcher parameterized with the sealed parent type for consistency with event[T].
+    */
+  def stateMatcherImpl[S: Type](using Quotes): Expr[StateMatcher[?]] =
     import quotes.reflect.*
     val tpe  = TypeRepr.of[S]
     val sym  = tpe.typeSymbol
     val hash = sym.fullName.hashCode
     val name = sym.name
-    '{ new StateMatcher[S](${ Expr(hash) }, ${ Expr(name) }) }
+
+    // Find the sealed parent type for consistency
+    // Check for both Sealed flag (sealed trait/class) and Enum flag (Scala 3 enum)
+    def isSealedOrEnum(s: Symbol): Boolean =
+      s.flags.is(Flags.Sealed) || s.flags.is(Flags.Enum)
+
+    def findSealedParent(s: Symbol): Option[Symbol] =
+      if !s.exists then None
+      else if isSealedOrEnum(s) then Some(s)
+      else if s.flags.is(Flags.Module) then
+        // For enum cases, owner is the companion object (Module)
+        // Look for the companion class which should be the sealed enum
+        val companion = s.companionClass
+        if companion.exists && isSealedOrEnum(companion) then Some(companion)
+        else None
+      else
+        s.owner match
+          case owner if owner.isClassDef => findSealedParent(owner)
+          case _                         => None
+
+    val parentSym = findSealedParent(sym.owner)
+
+    parentSym match
+      case Some(parent) =>
+        parent.typeRef.asType match
+          case '[p] => '{ new StateMatcher[p](${ Expr(hash) }, ${ Expr(name) }) }
+      case None =>
+        // No sealed parent found, use S directly
+        '{ new StateMatcher[S](${ Expr(hash) }, ${ Expr(name) }) }
+  end stateMatcherImpl
 
 end Macros
 
@@ -288,7 +352,7 @@ inline def all[T]: AllMatcher[T] = ${ Macros.allImpl[T] }
   * @return
   *   An EventMatcher that matches by type
   */
-inline def event[E]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
+transparent inline def event[E]: EventMatcher[?] = ${ Macros.eventMatcherImpl[E] }
 
 /** Create a type-based state matcher for parameterized case classes.
   *
@@ -309,7 +373,7 @@ inline def event[E]: EventMatcher[E] = ${ Macros.eventMatcherImpl[E] }
   * @return
   *   A StateMatcher that matches by type
   */
-inline def state[S]: StateMatcher[S] = ${ Macros.stateMatcherImpl[S] }
+transparent inline def state[S]: StateMatcher[?] = ${ Macros.stateMatcherImpl[S] }
 
 /** Match multiple specific state values in a single transition.
   *
@@ -396,9 +460,9 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   *   [[include]] for including other assemblies
   */
 transparent inline def assembly[S, E](
-    inline first: TransitionSpec[S, E, ?] | Included[S, E, ?],
-    inline rest: (TransitionSpec[S, E, ?] | Included[S, E, ?])*
-): Assembly[S, E, ?] =
+    inline first: TransitionSpec[S, E, ?] | Included[S, E],
+    inline rest: (TransitionSpec[S, E, ?] | Included[S, E])*
+): Assembly[S, E] =
   ${ AssemblyMacros.assemblyImpl[S, E]('first, 'rest) }
 
 /** Create an assembly using block syntax (no commas between specs).
@@ -409,9 +473,9 @@ transparent inline def assembly[S, E](
   * @example
   *   {{{
   * val machine = Machine(assemblyAll[State, Event]:
-  *   val helper: (Event, State) => List[Cmd] = ...
+  *   val timedWaiting = Waiting @@ Aspect.timeout(30.seconds, TimeoutEvent)
   *
-  *   Idle via Start to Running emitting helper
+  *   Idle via Start to timedWaiting
   *   Running via Stop to Idle
   * )
   *   }}}
@@ -432,7 +496,7 @@ transparent inline def assembly[S, E](
   */
 transparent inline def assemblyAll[S, E](
     inline block: Any
-): Assembly[S, E, ?] =
+): Assembly[S, E] =
   ${ AssemblyMacros.assemblyAllImpl[S, E]('block) }
 
 /** Include an assembly's specs in another assembly.
@@ -455,14 +519,12 @@ transparent inline def assemblyAll[S, E](
   *   The state type
   * @tparam E
   *   The event type
-  * @tparam Cmd
-  *   The command type
   * @param a
   *   The assembly to include
   * @return
   *   An Included wrapper for compile-time tracking
   */
-transparent inline def include[S, E, Cmd](
-    inline a: Assembly[S, E, Cmd]
-): Included[S, E, Cmd] =
-  ${ AssemblyMacros.includeImpl[S, E, Cmd]('a) }
+transparent inline def include[S, E](
+    inline a: Assembly[S, E]
+): Included[S, E] =
+  ${ AssemblyMacros.includeImpl[S, E]('a) }

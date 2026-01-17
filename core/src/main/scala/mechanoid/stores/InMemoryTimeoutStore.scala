@@ -85,10 +85,13 @@ final class InMemoryTimeoutStore[Id] private (
           (ClaimResult.Claimed(claimed), timeouts + (instanceId -> claimed))
     }
 
-  override def complete(instanceId: Id): ZIO[Any, MechanoidError, Boolean] =
+  override def complete(instanceId: Id, sequenceNr: Long): ZIO[Any, MechanoidError, Boolean] =
     timeoutsRef.modify { timeouts =>
-      val existed = timeouts.contains(instanceId)
-      (existed, timeouts - instanceId)
+      timeouts.get(instanceId) match
+        case Some(t) if t.sequenceNr == sequenceNr =>
+          (true, timeouts - instanceId)
+        case _ =>
+          (false, timeouts)
     }
 
   override def release(instanceId: Id): ZIO[Any, MechanoidError, Boolean] =

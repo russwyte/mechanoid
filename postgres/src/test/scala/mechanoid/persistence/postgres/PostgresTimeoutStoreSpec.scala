@@ -129,11 +129,23 @@ object PostgresTimeoutStoreSpec extends ZIOSpecDefault:
         store     <- ZIO.service[TimeoutStore[String]]
         now       <- Clock.instant
         _         <- store.schedule("complete-test", StateHash1, SeqNr1, now.plusSeconds(60))
-        completed <- store.complete("complete-test")
+        completed <- store.complete("complete-test", SeqNr1)
         retrieved <- store.get("complete-test")
       yield assertTrue(
         completed,
         retrieved.isEmpty,
+      )
+    },
+    test("complete does not remove timeout with different sequenceNr") {
+      for
+        store     <- ZIO.service[TimeoutStore[String]]
+        now       <- Clock.instant
+        _         <- store.schedule("complete-test-2", StateHash1, SeqNr1, now.plusSeconds(60))
+        completed <- store.complete("complete-test-2", SeqNr1 + 1) // Different sequenceNr
+        retrieved <- store.get("complete-test-2")
+      yield assertTrue(
+        !completed,
+        retrieved.isDefined, // Should NOT be removed
       )
     },
     test("release clears claim fields") {

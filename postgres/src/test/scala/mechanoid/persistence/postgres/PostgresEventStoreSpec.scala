@@ -4,19 +4,19 @@ import zio.*
 import zio.test.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
+import mechanoid.finiteJsonCodec
 import mechanoid.persistence.*
-import zio.json.*
 
 object PostgresEventStoreSpec extends ZIOSpecDefault:
 
-  // Test state and event types with zio-json codecs
-  enum TestState derives JsonCodec:
+  // Test state and event types - Finite auto-derives JsonCodec
+  enum TestState derives Finite:
     case Initial
     case Processing
     case Completed
     case Failed
 
-  enum TestEvent derives JsonCodec:
+  enum TestEvent derives Finite:
     case Started(id: String)
     case Processed(result: String)
     case Finished
@@ -24,7 +24,7 @@ object PostgresEventStoreSpec extends ZIOSpecDefault:
     case Timeout // User-defined timeout event
 
   val xaLayer    = PostgresTestContainer.DataSourceProvider.transactor
-  val storeLayer = xaLayer >>> PostgresEventStore.layer[TestState, TestEvent]
+  val storeLayer = xaLayer >>> PostgresEventStore.makeLayer[TestState, TestEvent]
 
   def spec = suite("PostgresEventStore")(
     test("append persists an event with correct sequence number") {

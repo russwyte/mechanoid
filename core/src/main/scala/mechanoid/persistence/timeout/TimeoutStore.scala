@@ -174,14 +174,17 @@ trait TimeoutStore[Id]:
 
   /** Complete (remove) a timeout after successful processing.
     *
-    * Called after the timeout event has been successfully fired.
+    * Called after the timeout event has been successfully fired. Only deletes the timeout if the `sequenceNr` matches,
+    * preventing deletion of newly scheduled timeouts when the FSM re-enters the same state.
     *
     * @param instanceId
     *   The FSM instance identifier
+    * @param sequenceNr
+    *   The sequence number of the timeout that was fired (must match to delete)
     * @return
-    *   true if deleted, false if not found
+    *   true if deleted, false if not found or sequenceNr mismatch
     */
-  def complete(instanceId: Id): ZIO[Any, MechanoidError, Boolean]
+  def complete(instanceId: Id, sequenceNr: Long): ZIO[Any, MechanoidError, Boolean]
 
   /** Release a claim without completing.
     *

@@ -77,10 +77,10 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 - [Core Concepts](docs/DOCUMENTATION.md#core-concepts) - States, events, transitions
 - [Defining FSMs](docs/DOCUMENTATION.md#defining-fsms) - Entry/exit actions, timeouts
 - [Running FSMs](docs/DOCUMENTATION.md#running-fsms) - Runtime, sending events
+- [Side Effects](docs/DOCUMENTATION.md#side-effects) - Entry effects, producing effects
 - [Persistence](docs/DOCUMENTATION.md#persistence) - Event sourcing, snapshots, recovery
 - [Durable Timeouts](docs/DOCUMENTATION.md#durable-timeouts) - TimeoutStore, sweepers, leader election
 - [Distributed Locking](docs/DOCUMENTATION.md#distributed-locking) - Exactly-once transitions, FSMInstanceLock
-- [Command Queue](docs/DOCUMENTATION.md#command-queue) - Transactional outbox for side effects
 
 ## Key Components
 
@@ -90,15 +90,14 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 | `assemblyAll[S, E]: ...` | Block syntax for assemblies (no commas between specs) |
 | `Machine(assembly)` | Create a runnable Machine from a validated Assembly |
 | `include(assembly)` | Include an assembly's specs in another assembly |
-| `Machine[S, E, Cmd]` | The FSM definition that can be started and run |
-| `Assembly[S, E, Cmd]` | Composable transition fragments (cannot run directly) |
-| `FSMRuntime[Id, S, E, Cmd]` | Unified FSM execution (in-memory or persistent) |
+| `Machine[S, E]` | The FSM definition that can be started and run |
+| `Assembly[S, E]` | Composable transition fragments (cannot run directly) |
+| `FSMRuntime[Id, S, E]` | Unified FSM execution (in-memory or persistent) |
 | `TimeoutStrategy[Id]` | Strategy for state timeouts (`fiber` or `durable`) |
 | `LockingStrategy[Id]` | Strategy for concurrent access (`optimistic` or `distributed`) |
 | `TimeoutSweeper` | Background service for durable timeouts |
 | `FSMInstanceLock` | Distributed locking for exactly-once transitions |
 | `LeaderElection` | Lease-based coordination for single-active mode |
-| `CommandWorker` | Background processor for side effect commands |
 
 ## Example with Persistence
 

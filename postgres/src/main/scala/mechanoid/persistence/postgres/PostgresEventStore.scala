@@ -7,7 +7,6 @@ import zio.stream.*
 import mechanoid.core.*
 import mechanoid.persistence.*
 import java.time.Instant
-import scala.annotation.unused
 
 /** PostgreSQL implementation of EventStore using Saferis.
   *
@@ -16,51 +15,29 @@ import scala.annotation.unused
   *
   * ==Usage==
   * {{{
-  * // Define your types with JsonCodec
-  * enum MyState derives Finite, JsonCodec:
+  * // Define your types with Finite (JsonCodec is auto-derived)
+  * enum MyState derives Finite:
   *   case Idle, Running, Done
   *
-  * enum MyEvent derives Finite, JsonCodec:
+  * enum MyEvent derives Finite:
   *   case Started(id: String)
   *   case Completed
   *
-  * // Create the store layer - JsonCodec instances resolved from derives
+  * // Create the store layer using the helper
   * val storeLayer = PostgresEventStore.layer[MyState, MyEvent]
   *
   * // Use with FSMRuntime
   * FSMRuntime(id, definition, initialState).provide(storeLayer, transactorLayer)
   * }}}
-  *
-  * @tparam S
-  *   State type with a JsonCodec instance
-  * @tparam E
-  *   Event type with a JsonCodec instance
   */
-class PostgresEventStore[S: JsonCodec, E: JsonCodec](
-    transactor: Transactor
-) extends EventStore[String, S, E]:
-
-  @unused private val events    = Table[EventRow]
-  @unused private val snapshots = Table[SnapshotRow]
-
-  // Events are now encoded directly - no wrapper needed since user-defined timeout events
-  // are just regular events in the E enum
-  private def encodeEvent(event: E): String = event.toJson
-
-  private def decodeEvent(json: String): Either[Throwable, E] =
-    json.fromJson[E].left.map(err => new RuntimeException(err))
-
-  private def encodeState(state: S): String = state.toJson
-
-  private def decodeState(json: String): Either[Throwable, S] =
-    json.fromJson[S].left.map(err => new RuntimeException(err))
+class PostgresEventStore[S: JsonCodec, E: JsonCodec](transactor: Transactor) extends EventStore[String, S, E]:
 
   override def append(
       instanceId: String,
       event: E,
       expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
-    val eventJson = encodeEvent(event)
+    val eventJson = event.toJson
     // New sequence number is expectedSeqNr + 1
     // expectedSeqNr is the expected CURRENT highest sequence number
     val newSeqNr = expectedSeqNr + 1
@@ -151,8 +128,8 @@ class PostgresEventStore[S: JsonCodec, E: JsonCodec](
         case None      => ZIO.none
         case Some(row) =>
           ZIO
-            .fromEither(decodeState(row.stateData))
-            .mapError(e => new RuntimeException(s"Failed to decode state: ${e.getMessage}", e))
+            .fromEither(row.stateData.fromJson[S])
+            .mapError(e => new RuntimeException(s"Failed to decode state: $e"))
             .map { state =>
               Some(
                 FSMSnapshot(
@@ -167,7 +144,7 @@ class PostgresEventStore[S: JsonCodec, E: JsonCodec](
       .mapError(PersistenceError(_))
 
   override def saveSnapshot(snapshot: FSMSnapshot[String, S]): ZIO[Any, MechanoidError, Unit] =
-    val stateJson = encodeState(snapshot.state)
+    val stateJson = snapshot.state.toJson
 
     transactor
       .run {
@@ -210,8 +187,8 @@ class PostgresEventStore[S: JsonCodec, E: JsonCodec](
 
   private def rowToStoredEvent(row: EventRow): ZIO[Any, Throwable, StoredEvent[String, E]] =
     ZIO
-      .fromEither(decodeEvent(row.eventData))
-      .mapError(e => new RuntimeException(s"Failed to decode event: ${e.getMessage}", e))
+      .fromEither(row.eventData.fromJson[E])
+      .mapError(e => new RuntimeException(s"Failed to decode event: $e"))
       .map { event =>
         StoredEvent(
           instanceId = row.instanceId,
@@ -223,21 +200,15 @@ class PostgresEventStore[S: JsonCodec, E: JsonCodec](
 end PostgresEventStore
 
 object PostgresEventStore:
-  /** Create a ZLayer for PostgresEventStore.
+
+  /** Create a ZLayer for PostgresEventStore with the given state and event types.
     *
-    * JsonCodec instances for S and E are resolved via context bounds. Just ensure your state and event types have
-    * `derives JsonCodec`:
-    *
+    * Usage:
     * {{{
-    * enum MyState derives Finite derives JsonCodec:
-    *   case Idle, Running
-    *
-    * enum MyEvent derives Finite derives JsonCodec:
-    *   case Start, Stop
-    *
-    * val storeLayer = PostgresEventStore.layer[MyState, MyEvent]
+    * val storeLayer = PostgresEventStore.makeLayer[MyState, MyEvent]
     * }}}
     */
-  def layer[S: Tag: JsonCodec, E: Tag: JsonCodec]: ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
+  def makeLayer[S: JsonCodec: Tag, E: JsonCodec: Tag]: ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
     ZLayer.fromFunction((xa: Transactor) => new PostgresEventStore[S, E](xa))
+
 end PostgresEventStore
