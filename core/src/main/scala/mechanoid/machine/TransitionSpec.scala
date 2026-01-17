@@ -1,7 +1,7 @@
 package mechanoid.machine
 
 import mechanoid.core.*
-import zio.Duration
+import zio.{Duration, ZIO}
 
 /** Handler for what happens when a transition fires.
   *
@@ -35,10 +35,8 @@ final case class TimeoutEventConfig[E](event: E, hash: Int)
   *   The source state type (for matching)
   * @tparam E
   *   The event type (for matching)
-  * @tparam Cmd
-  *   The command type (for transactional outbox pattern)
   */
-final case class TransitionSpec[+S, +E, +Cmd](
+final case class TransitionSpec[+S, +E](
     stateHashes: Set[Int],           // Expanded from sealed hierarchies
     eventHashes: Set[Int],           // Expanded from sealed hierarchies
     stateNames: List[String],        // For error messages
@@ -47,55 +45,56 @@ final case class TransitionSpec[+S, +E, +Cmd](
     isOverride: Boolean,             // If true, won't trigger duplicate error
     handler: Handler[Any],           // Handler can go to any state
     targetTimeout: Option[Duration], // If set, configure timeout on target state when entering
-    targetTimeoutConfig: Option[TimeoutEventConfig[?]] = None, // Type-safe timeout event holder
-    preCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, sourceState) => commands
-    postCommandFactory: Option[(Any, Any) => List[Any]] = None, // (event, targetState) => commands
+    targetTimeoutConfig: Option[TimeoutEventConfig[?]] = None,       // Type-safe timeout event holder
+    entryEffect: Option[(Any, Any) => ZIO[Any, Any, Unit]] = None,   // (event, targetState) => effect
+    producingEffect: Option[(Any, Any) => ZIO[Any, Any, Any]] = None, // (event, targetState) => ZIO[.., E]
 ):
-  /** Commands to emit BEFORE state change. Receives (event, sourceState).
+  /** Synchronous side effect on entry. Receives (event, targetState).
     *
-    * Use this for commands that must be generated before the state transition occurs. The function receives the
-    * triggering event and the current (source) state.
+    * Use this for side effects that should run when the transition occurs. The function receives the triggering event
+    * and the new (target) state.
     *
     * @example
     *   {{{
-    * val spec = A via E1 to B emittingBefore { (event, state) =>
-    *   List(LogTransition(state, event))
+    * val spec = (A via E1 to B).onEntry { (event, state) =>
+    *   ZIO.logInfo(s"Transitioned to $state")
     * }
     *   }}}
     *
     * @param f
-    *   Function that generates commands from (event, sourceState)
+    *   Function that runs side effect from (event, targetState)
     * @return
-    *   A new TransitionSpec with the pre-command factory configured
+    *   A new TransitionSpec with the entry effect configured
     */
-  infix def emittingBefore[C](f: (E, S) => List[C]): TransitionSpec[S, E, C] =
-    copy(preCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
-      .asInstanceOf[TransitionSpec[S, E, C]]
+  infix def onEntry(f: (E, S) => ZIO[Any, Any, Unit]): TransitionSpec[S, E] =
+    copy(entryEffect = Some(f.asInstanceOf[(Any, Any) => ZIO[Any, Any, Unit]]))
 
-  /** Commands to emit AFTER state change. Receives (event, targetState).
+  /** Async effect that produces an event. Receives (event, targetState).
     *
-    * Use this for commands that should be generated after the state transition occurs. The function receives the
-    * triggering event and the new (target) state. This is the most common pattern for generating notifications or side
-    * effects based on state changes.
+    * Use this for async operations that should produce an event when complete. The function receives the triggering
+    * event and the new (target) state, and returns a ZIO that produces an event. The produced event is automatically
+    * sent to the FSM when the effect completes.
     *
     * @example
     *   {{{
-    * val spec = Created via Pay to Paid emitting { (event, state) =>
-    *   List(SendNotification(s"Order is now $state"))
+    * val spec = (Created via StartPayment to Processing).producing { (event, state) =>
+    *   paymentService.charge(event.amount).map {
+    *     case Success(txnId) => PaymentSucceeded(txnId)
+    *     case Failure(err)   => PaymentFailed(err)
+    *   }
     * }
     *   }}}
     *
     * @param f
-    *   Function that generates commands from (event, targetState)
+    *   Function that produces an event from (event, targetState)
     * @return
-    *   A new TransitionSpec with the post-command factory configured
+    *   A new TransitionSpec with the producing effect configured
     */
-  infix def emitting[C](f: (E, S) => List[C]): TransitionSpec[S, E, C] =
-    copy(postCommandFactory = Some(f.asInstanceOf[(Any, Any) => List[Any]]))
-      .asInstanceOf[TransitionSpec[S, E, C]]
+  infix def producing[E2](f: (E, S) => ZIO[Any, Any, E2]): TransitionSpec[S, E] =
+    copy(producingEffect = Some(f.asInstanceOf[(Any, Any) => ZIO[Any, Any, Any]]))
 
   /** Configure timeout when entering target state. */
-  def withTimeout(duration: Duration): TransitionSpec[S, E, Cmd] =
+  def withTimeout(duration: Duration): TransitionSpec[S, E] =
     copy(targetTimeout = Some(duration))
 
   /** Apply an aspect to this transition spec.
@@ -106,7 +105,7 @@ final case class TransitionSpec[+S, +E, +Cmd](
     * val timed = (A via E1 to B) @@ Aspect.timeout(30.seconds, TimeoutEvent)
     *   }}}
     */
-  infix def @@(aspect: Aspect): TransitionSpec[S, E, Cmd] = aspect match
+  infix def @@(aspect: Aspect): TransitionSpec[S, E] = aspect match
     case Aspect.overriding               => copy(isOverride = true)
     case Aspect.timeout(duration, event) =>
       // Compute hash at runtime using the same logic as anyOf matchers
@@ -132,7 +131,7 @@ object TransitionSpec:
       eventNames: List[String],
       target: S,
       timeout: Option[Duration] = None,
-  ): TransitionSpec[Any, Any, Nothing] =
+  ): TransitionSpec[Any, Any] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -142,8 +141,8 @@ object TransitionSpec:
       isOverride = false,
       handler = Handler.Goto(target),
       targetTimeout = timeout,
-      preCommandFactory = None,
-      postCommandFactory = None,
+      entryEffect = None,
+      producingEffect = None,
     )
 
   /** Create a goto transition spec to a timed target with user-defined timeout event. */
@@ -153,7 +152,7 @@ object TransitionSpec:
       stateNames: List[String],
       eventNames: List[String],
       target: TimedTarget[S, TE],
-  )(using se: Finite[TE]): TransitionSpec[Any, Any, Nothing] =
+  )(using se: Finite[TE]): TransitionSpec[Any, Any] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -164,8 +163,8 @@ object TransitionSpec:
       handler = Handler.Goto(target.state),
       targetTimeout = Some(target.duration),
       targetTimeoutConfig = Some(TimeoutEventConfig(target.timeoutEvent, se.caseHash(target.timeoutEvent))),
-      preCommandFactory = None,
-      postCommandFactory = None,
+      entryEffect = None,
+      producingEffect = None,
     )
 
   /** Create a stay transition spec. */
@@ -174,7 +173,7 @@ object TransitionSpec:
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
-  ): TransitionSpec[Any, Any, Nothing] =
+  ): TransitionSpec[Any, Any] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -184,8 +183,8 @@ object TransitionSpec:
       isOverride = false,
       handler = Handler.Stay,
       targetTimeout = None,
-      preCommandFactory = None,
-      postCommandFactory = None,
+      entryEffect = None,
+      producingEffect = None,
     )
 
   /** Create a stop transition spec. */
@@ -195,7 +194,7 @@ object TransitionSpec:
       stateNames: List[String],
       eventNames: List[String],
       reason: Option[String] = None,
-  ): TransitionSpec[Any, Any, Nothing] =
+  ): TransitionSpec[Any, Any] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -205,7 +204,7 @@ object TransitionSpec:
       isOverride = false,
       handler = Handler.Stop(reason),
       targetTimeout = None,
-      preCommandFactory = None,
-      postCommandFactory = None,
+      entryEffect = None,
+      producingEffect = None,
     )
 end TransitionSpec

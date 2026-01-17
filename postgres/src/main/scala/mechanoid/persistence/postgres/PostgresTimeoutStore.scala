@@ -102,12 +102,13 @@ class PostgresTimeoutStore(transactor: Transactor) extends TimeoutStore[String]:
       }
   end claim
 
-  override def complete(instanceId: String): ZIO[Any, MechanoidError, Boolean] =
+  override def complete(instanceId: String, sequenceNr: Long): ZIO[Any, MechanoidError, Boolean] =
     transactor
       .run {
         sql"""
         DELETE FROM scheduled_timeouts
         WHERE instance_id = $instanceId
+          AND sequence_nr = $sequenceNr
       """.dml
       }
       .map(_ > 0)

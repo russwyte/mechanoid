@@ -8,6 +8,7 @@ import mechanoid.stores.InMemoryEventStore
 import mechanoid.runtime.timeout.{TimeoutStrategy, FiberTimeoutStrategy}
 import mechanoid.runtime.locking.{LockingStrategy, OptimisticLockingStrategy}
 import java.time.Instant
+import scala.annotation.nowarn
 
 /** The runtime interface for an active FSM.
   *
@@ -19,10 +20,8 @@ import java.time.Instant
   *   The state type
   * @tparam E
   *   The event type
-  * @tparam Cmd
-  *   The command type (use `Nothing` for FSMs without commands)
   */
-trait FSMRuntime[Id, S, E, +Cmd]:
+trait FSMRuntime[Id, S, E]:
 
   /** The FSM instance identifier. */
   def instanceId: Id
@@ -31,12 +30,14 @@ trait FSMRuntime[Id, S, E, +Cmd]:
     *
     * Returns the outcome of processing the event:
     *   - result: The transition result (Stay, Goto, Stop)
-    *   - preCommands: Commands generated before state change
-    *   - postCommands: Commands generated after state change
+    *
+    * Per-transition effects (`.onEntry` and `.producing`) are executed automatically:
+    *   - Entry effects run synchronously before `send` returns
+    *   - Producing effects fork asynchronously and send their produced events back to the FSM
     *
     * If no transition is defined for the current state and event, returns an InvalidTransitionError.
     */
-  def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]]
+  def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S]]
 
   /** Get the current state of the FSM. */
   def currentState: UIO[S]
@@ -101,7 +102,7 @@ trait FSMRuntime[Id, S, E, +Cmd]:
     * Provides access to state/event enums, timeout configurations, and transition metadata. Used by TimeoutSweeper to
     * resolve event hashes back to typed events.
     */
-  def machine: Machine[S, E, Cmd]
+  def machine: Machine[S, E]
 end FSMRuntime
 
 object FSMRuntime:
@@ -136,10 +137,10 @@ object FSMRuntime:
     * @param initial
     *   The initial state
     */
-  def make[S, E, Cmd](
-      machine: Machine[S, E, Cmd],
+  def make[S, E](
+      machine: Machine[S, E],
       initial: S,
-  ): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E, Cmd]] =
+  ): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E]] =
     for
       eventStore      <- InMemoryEventStore.make[Unit, S, E]
       timeoutStrategy <- FiberTimeoutStrategy.make[Unit]
@@ -158,14 +159,8 @@ object FSMRuntime:
     * Provide the EventStore, TimeoutStrategy, and LockingStrategy via ZLayer:
     *
     * {{{
-    * // Define your store layer (created once, reused)
-    * val storeLayer: ZLayer[DataSource, Throwable, EventStore[OrderId, OrderState, OrderEvent]] =
-    *   ZLayer.scoped {
-    *     for
-    *       ds <- ZIO.service[DataSource]
-    *       store <- PostgresEventStore.make(ds)  // your implementation
-    *     yield store
-    *   }
+    * // Create the store layer - no type params needed!
+    * val storeLayer = PostgresEventStore.layer
     *
     * // Use the FSM with dependencies from the environment
     * val program = ZIO.scoped {
@@ -175,7 +170,7 @@ object FSMRuntime:
     *   yield ()
     * }.provide(
     *   storeLayer,
-    *   dataSourceLayer,
+    *   transactorLayer,
     *   TimeoutStrategy.fiber[OrderId],    // or TimeoutStrategy.durable
     *   LockingStrategy.optimistic[OrderId] // or LockingStrategy.distributed
     * )
@@ -185,6 +180,11 @@ object FSMRuntime:
     *   1. Load the latest snapshot (if any)
     *   2. Replay events since the snapshot to rebuild state
     *   3. Continue processing new events, persisting each one
+    *
+    * ==JsonCodec Requirement==
+    *
+    * State and Event types must have `JsonCodec` instances. If your types `derives Finite`, you get `JsonCodec`
+    * automatically via the package-level given (just `import mechanoid.*`).
     *
     * ==Timeout Strategy==
     *
@@ -205,9 +205,10 @@ object FSMRuntime:
     * @param initialState
     *   The initial state for new instances
     */
-  def apply[Id: Tag, S, E, Cmd](
+  @nowarn("msg=unused implicit parameter")
+  def apply[Id: Tag, S, E](
       id: Id,
-      machine: Machine[S, E, Cmd],
+      machine: Machine[S, E],
       initialState: S,
   )(using
       Tag[EventStore[Id, S, E]],
@@ -216,7 +217,7 @@ object FSMRuntime:
   ): ZIO[
     Scope & EventStore[Id, S, E] & TimeoutStrategy[Id] & LockingStrategy[Id],
     MechanoidError,
-    FSMRuntime[Id, S, E, Cmd],
+    FSMRuntime[Id, S, E],
   ] =
     for
       store           <- ZIO.service[EventStore[Id, S, E]]
@@ -248,14 +249,14 @@ object FSMRuntime:
     * @param lockingStrategy
     *   Strategy for handling concurrent access
     */
-  private def createRuntime[Id, S, E, Cmd](
+  private def createRuntime[Id, S, E](
       id: Id,
-      machine: Machine[S, E, Cmd],
+      machine: Machine[S, E],
       initialState: S,
       store: EventStore[Id, S, E],
       timeoutStrategy: TimeoutStrategy[Id],
       lockingStrategy: LockingStrategy[Id],
-  ): ZIO[Any, MechanoidError, FSMRuntimeImpl[Id, S, E, Cmd]] =
+  ): ZIO[Any, MechanoidError, FSMRuntimeImpl[Id, S, E]] =
     for
       // Load snapshot and events to rebuild state
       snapshot <- store.loadSnapshot(id)
@@ -274,9 +275,9 @@ object FSMRuntime:
       runningRef <- Ref.make(true)
 
       // Create self-reference for timeout handling
-      runtimeRef <- Ref.make[Option[FSMRuntimeImpl[Id, S, E, Cmd]]](None)
+      runtimeRef <- Ref.make[Option[FSMRuntimeImpl[Id, S, E]]](None)
 
-      sendSelf: (E => ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]]) =
+      sendSelf: (E => ZIO[Any, MechanoidError, TransitionOutcome[S]]) =
         (event: E) =>
           runtimeRef.get.flatMap(
             _.map(_.sendInternal(event))
@@ -312,8 +313,8 @@ object FSMRuntime:
     * @throws EventReplayError
     *   if an event doesn't match the current FSM definition
     */
-  private def rebuildState[S, E, Cmd](
-      machine: Machine[S, E, Cmd],
+  private def rebuildState[S, E](
+      machine: Machine[S, E],
       startState: S,
       events: List[StoredEvent[?, E]],
   ): ZIO[Any, EventReplayError, FSMState[S]] =
@@ -344,37 +345,37 @@ end FSMRuntime
   * All FSM runtimes (in-memory and persistent) use this same implementation, differing only in the EventStore,
   * TimeoutStrategy, and LockingStrategy provided.
   */
-private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
+private[mechanoid] final class FSMRuntimeImpl[Id, S, E](
     val instanceId: Id,
-    val machine: Machine[S, E, Cmd],
+    val machine: Machine[S, E],
     store: EventStore[Id, S, E],
     timeoutStrategy: TimeoutStrategy[Id],
     lockingStrategy: LockingStrategy[Id],
     stateRef: Ref[FSMState[S]],
     seqNrRef: Ref[Long],
     runningRef: Ref[Boolean],
-    sendSelf: E => ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]],
-) extends FSMRuntime[Id, S, E, Cmd]:
+    sendSelf: E => ZIO[Any, MechanoidError, TransitionOutcome[S]],
+) extends FSMRuntime[Id, S, E]:
 
-  override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+  override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S]] =
     sendSelf(event) // Direct call, no .timed wrapping
 
   private[mechanoid] def sendInternal(
       event: E
-  ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+  ): ZIO[Any, MechanoidError, TransitionOutcome[S]] =
     lockingStrategy.withLock(
       instanceId,
       for
         running <- runningRef.get
         result  <-
-          if !running then ZIO.succeed(TransitionOutcome(TransitionResult.Stop(Some("FSM stopped")), Nil, Nil))
+          if !running then ZIO.succeed(TransitionOutcome(TransitionResult.Stop(Some("FSM stopped"))))
           else processEvent(event)
       yield result,
     )
 
   private def processEvent(
       event: E
-  ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+  ): ZIO[Any, MechanoidError, TransitionOutcome[S]] =
     for
       fsmState <- stateRef.get
       currentState    = fsmState.current
@@ -392,19 +393,8 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
       transition: Transition[S, E, S],
       stateHash: Int,
       eventHash: Int,
-  ): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+  ): ZIO[Any, MechanoidError, TransitionOutcome[S]] =
     for
-      // Generate PRE-transition commands (before state change)
-      preCommands <- ZIO.succeed {
-        machine.preCommandFactories
-          .get((stateHash, eventHash))
-          .map { factory =>
-            // Events are just E now - no unwrapping needed
-            factory(event, fsmState.current).asInstanceOf[List[Cmd]]
-          }
-          .getOrElse(Nil)
-      }
-
       // Execute the transition action FIRST
       // If it fails (e.g., external service call), the event is NOT persisted
       result <- transition.action(fsmState.current, event)
@@ -415,25 +405,62 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E, Cmd](
       seqNr        <- store.append(instanceId, event, currentSeqNr)
       _            <- seqNrRef.set(seqNr)
 
-      // Determine target state for post-commands
+      // Determine target state for effects
       targetState = result match
         case TransitionResult.Goto(s) => s
         case _                        => fsmState.current
 
-      // Generate POST-transition commands (after state change)
-      postCommands <- ZIO.succeed {
-        machine.postCommandFactories
-          .get((stateHash, eventHash))
-          .map { factory =>
-            // Events are just E now - no unwrapping needed
-            factory(event, targetState).asInstanceOf[List[Cmd]]
-          }
-          .getOrElse(Nil)
-      }
-
       // Update state
       _ <- handleTransitionResult(fsmState, result)
-    yield TransitionOutcome(result, preCommands, postCommands)
+
+      // Run per-transition entry effect (sync)
+      _ <- runTransitionEntryEffect(stateHash, eventHash, event, targetState)
+
+      // Fork per-transition producing effect (async) - produces an event that is sent back to FSM
+      _ <- forkProducingEffect(stateHash, eventHash, event, targetState)
+    yield TransitionOutcome(result)
+
+  /** Run per-transition entry effect synchronously.
+    *
+    * This is different from state lifecycle `onEntry` - it runs for this specific (state, event) transition only.
+    */
+  private def runTransitionEntryEffect(
+      stateHash: Int,
+      eventHash: Int,
+      event: E,
+      targetState: S,
+  ): ZIO[Any, MechanoidError, Unit] =
+    machine.entryEffects.get((stateHash, eventHash)) match
+      case Some(f) =>
+        f(event, targetState).catchAll { e =>
+          ZIO.fail(ActionFailedError("entry effect", e))
+        }.unit
+      case None => ZIO.unit
+
+  /** Fork producing effect asynchronously.
+    *
+    * The effect runs in the background and produces an event that is automatically sent back to the FSM.
+    */
+  private def forkProducingEffect(
+      stateHash: Int,
+      eventHash: Int,
+      event: E,
+      targetState: S,
+  ): ZIO[Any, Nothing, Unit] =
+    machine.producingEffects.get((stateHash, eventHash)) match
+      case Some(f) =>
+        val effect = f(event, targetState)
+          .flatMap { producedEvent =>
+            // Send the produced event back to the FSM
+            send(producedEvent.asInstanceOf[E]).ignore
+          }
+          .catchAll { e =>
+            // Log error but don't fail - producing effects are fire-and-forget
+            // Users should use timeouts as fallback for failure handling
+            ZIO.logError(s"Producing effect failed: $e")
+          }
+        effect.forkDaemon.unit
+      case None => ZIO.unit
 
   private def handleTransitionResult(
       fsmState: FSMState[S],

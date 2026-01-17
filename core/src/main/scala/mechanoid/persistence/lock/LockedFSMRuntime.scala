@@ -42,15 +42,15 @@ import mechanoid.runtime.FSMRuntime
   * }.provide(eventStoreLayer, lockLayer)
   * }}}
   */
-final class LockedFSMRuntime[Id, S, E, Cmd] private[lock] (
-    underlying: FSMRuntime[Id, S, E, Cmd],
+final class LockedFSMRuntime[Id, S, E] private[lock] (
+    underlying: FSMRuntime[Id, S, E],
     lock: FSMInstanceLock[Id],
     config: LockConfig,
-) extends FSMRuntime[Id, S, E, Cmd]:
+) extends FSMRuntime[Id, S, E]:
 
   override def instanceId: Id = underlying.instanceId
 
-  override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+  override def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S]] =
     lock
       .withLock(instanceId, config.nodeId, config.lockDuration, Some(config.acquireTimeout)) {
         // Optionally validate lock is still held before proceeding
@@ -124,32 +124,30 @@ final class LockedFSMRuntime[Id, S, E, Cmd] private[lock] (
     *
     * ==When NOT to Use (Anti-Patterns)==
     *
-    * '''Do NOT use this for long-running work.''' That defeats the purpose of the lock (which should be held briefly)
-    * and the Command pattern (which handles retries and recovery).
+    * '''Do NOT use this for long-running work.''' That defeats the purpose of the lock (which should be held briefly).
     *
     * '''Bad - Don't do this:'''
     * {{{
     * fsm.withAtomicTransitions() { ctx =>
     *   for
     *     _ <- ctx.send(StartProcessing)
-    *     _ <- callExternalPaymentAPI()  // ❌ WRONG - should be a Command!
+    *     _ <- callExternalPaymentAPI()  // ❌ WRONG - long-running work
     *     _ <- ctx.send(CompleteProcessing)
     *   yield ()
     * }
     * }}}
     *
-    * '''Good - Fast orchestration that generates Commands:'''
+    * '''Good - Fast orchestration:'''
     * {{{
     * fsm.withAtomicTransitions() { ctx =>
     *   for
-    *     outcome1 <- ctx.send(ValidateOrder)      // Generates ValidateCmd
+    *     outcome1 <- ctx.send(ValidateOrder)
     *     state    <- ctx.currentState
     *     _        <- if state.needsApproval
-    *                 then ctx.send(RequestApproval) // Generates NotifyCmd
-    *                 else ctx.send(AutoApprove)     // Generates ProcessCmd
+    *                 then ctx.send(RequestApproval)
+    *                 else ctx.send(AutoApprove)
     *   yield ()
     * }
-    * // Commands are processed later by CommandWorker
     * }}}
     *
     * ==Lock Loss Behavior==
@@ -166,10 +164,10 @@ final class LockedFSMRuntime[Id, S, E, Cmd] private[lock] (
     */
   def withAtomicTransitions[R, A](
       heartbeat: LockHeartbeatConfig = LockHeartbeatConfig()
-  )(f: AtomicTransactionContext[Id, S, E, Cmd] => ZIO[R, MechanoidError, A]): ZIO[R, MechanoidError | LockError, A] =
+  )(f: AtomicTransactionContext[Id, S, E] => ZIO[R, MechanoidError, A]): ZIO[R, MechanoidError | LockError, A] =
     lock.withLockAndHeartbeat(instanceId, config.nodeId, config.lockDuration, heartbeat = heartbeat) {
-      val ctx = new AtomicTransactionContext[Id, S, E, Cmd]:
-        def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]] =
+      val ctx = new AtomicTransactionContext[Id, S, E]:
+        def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S]] =
           underlying.send(event)
         def currentState: UIO[FSMState[S]] = underlying.state
       f(ctx)
@@ -189,11 +187,11 @@ object LockedFSMRuntime:
     * @return
     *   A new runtime that acquires locks around event processing
     */
-  def apply[Id, S, E, Cmd](
-      underlying: FSMRuntime[Id, S, E, Cmd],
+  def apply[Id, S, E](
+      underlying: FSMRuntime[Id, S, E],
       lock: FSMInstanceLock[Id],
       config: LockConfig = LockConfig.default,
-  ): LockedFSMRuntime[Id, S, E, Cmd] =
+  ): LockedFSMRuntime[Id, S, E] =
     new LockedFSMRuntime(underlying, lock, config)
 end LockedFSMRuntime
 
@@ -204,13 +202,11 @@ end LockedFSMRuntime
   *
   * ==Intended Use==
   *
-  * Fast orchestration logic that requires multiple transitions to be atomic (no other node can interleave). The actual
-  * work should still be delegated to Commands via the transactional outbox pattern.
+  * Fast orchestration logic that requires multiple transitions to be atomic (no other node can interleave).
   *
   * ==Anti-Pattern Warning==
   *
-  * Do NOT use this to hold a lock while doing long-running work (API calls, I/O, etc.). That work should be a Command
-  * processed by [[mechanoid.persistence.command.CommandWorker]].
+  * Do NOT use this to hold a lock while doing long-running work (API calls, I/O, etc.).
   *
   * @tparam Id
   *   FSM instance identifier type
@@ -218,10 +214,8 @@ end LockedFSMRuntime
   *   State type
   * @tparam E
   *   Event type
-  * @tparam Cmd
-  *   Command type
   */
-trait AtomicTransactionContext[Id, S, E, Cmd]:
+trait AtomicTransactionContext[Id, S, E]:
 
   /** Send an event to the FSM.
     *
@@ -230,9 +224,9 @@ trait AtomicTransactionContext[Id, S, E, Cmd]:
     * @param event
     *   The event to send
     * @return
-    *   The transition outcome including any generated commands
+    *   The transition outcome
     */
-  def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S, Cmd]]
+  def send(event: E): ZIO[Any, MechanoidError, TransitionOutcome[S]]
 
   /** Get the current FSM state.
     *

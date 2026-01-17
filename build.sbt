@@ -24,7 +24,7 @@ ThisBuild / developers := List(
     url = url("https://github.com/russwyte"),
   )
 )
-ThisBuild / versionScheme        := Some("early-semver")
+ThisBuild / versionScheme          := Some("early-semver")
 ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
 
 usePgpKeyHex("2F64727A87F1BCF42FD307DD8582C4F16659A7D6")
@@ -63,8 +63,8 @@ lazy val core = project
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"               % zioVersion,
       "dev.zio" %% "zio-streams"       % zioVersion,
-      "dev.zio" %% "zio-logging"       % "2.5.2",
-      "dev.zio" %% "zio-logging-slf4j" % "2.5.2",
+      "dev.zio" %% "zio-logging"       % "2.5.3",
+      "dev.zio" %% "zio-logging-slf4j" % "2.5.3",
       "dev.zio" %% "zio-json"          % "0.8.0",
       "dev.zio" %% "zio-test"          % zioVersion % Test,
       "dev.zio" %% "zio-test-sbt"      % zioVersion % Test,
@@ -82,7 +82,7 @@ lazy val postgres = project
     description := "PostgreSQL persistence implementation for Mechanoid FSM library",
     libraryDependencies ++= Seq(
       "io.github.russwyte" %% "saferis"      % "0.1.1",
-      "org.postgresql"      % "postgresql"   % "42.7.8",
+      "org.postgresql"      % "postgresql"   % "42.7.9",
       "org.testcontainers"  % "postgresql"   % "1.21.4"   % Test,
       "dev.zio"            %% "zio-test"     % zioVersion % Test,
       "dev.zio"            %% "zio-test-sbt" % zioVersion % Test,
@@ -100,6 +100,17 @@ lazy val examples = project
       "dev.zio" %% "zio-test"     % zioVersion % Test,
       "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
     ),
+    assembly / mainClass             := Some("mechanoid.examples.heartbeat.Main"),
+    assembly / assemblyJarName       := "app.jar",
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "MANIFEST.MF")                                       => MergeStrategy.discard
+      case PathList("META-INF", xs @ _*) if xs.lastOption.exists(_.endsWith(".SF"))  => MergeStrategy.discard
+      case PathList("META-INF", xs @ _*) if xs.lastOption.exists(_.endsWith(".DSA")) => MergeStrategy.discard
+      case PathList("META-INF", xs @ _*) if xs.lastOption.exists(_.endsWith(".RSA")) => MergeStrategy.discard
+      case PathList("META-INF", "services", _*)                                      => MergeStrategy.concat
+      case PathList("reference.conf")                                                => MergeStrategy.concat
+      case _                                                                         => MergeStrategy.first
+    },
   )
 
 lazy val compileExperiments = project

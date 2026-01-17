@@ -11,28 +11,26 @@ import mechanoid.visualization.{TransitionMeta, TransitionKind}
   *   - Transitions map (state hash, event hash) → action
   *   - State lifecycles (entry/exit actions)
   *   - State timeouts
-  *   - Command factories for the transactional outbox pattern
+  *   - Per-transition effects (entry effects and producing effects)
   *   - Visualization metadata
   *
   * @tparam S
   *   The state type (sealed enum or sealed trait - Finite typeclass derived automatically)
   * @tparam E
   *   The event type (sealed enum or sealed trait - Finite typeclass derived automatically)
-  * @tparam Cmd
-  *   The command type for transactional outbox pattern (use Nothing for FSMs without commands)
   */
-final class Machine[S, E, +Cmd] private[machine] (
+final class Machine[S, E] private[machine] (
     // Runtime data - events are just E now (no Timed wrapper)
     private[mechanoid] val transitions: Map[(Int, Int), Transition[S, E, S]],
-    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S, Cmd @scala.annotation.unchecked.uncheckedVariance]],
+    private[mechanoid] val lifecycles: Map[Int, StateLifecycle[S]],
     private[mechanoid] val timeouts: Map[Int, Duration],
     private[mechanoid] val timeoutEvents: Map[Int, E], // state hash -> event to fire on timeout
     private[mechanoid] val transitionMeta: List[TransitionMeta],
-    // Command factories for transactional outbox pattern
-    private[mechanoid] val preCommandFactories: Map[(Int, Int), (Any, Any) => List[Any]],
-    private[mechanoid] val postCommandFactories: Map[(Int, Int), (Any, Any) => List[Any]],
+    // Per-transition effects
+    private[mechanoid] val entryEffects: Map[(Int, Int), (Any, Any) => ZIO[Any, Any, Unit]],
+    private[mechanoid] val producingEffects: Map[(Int, Int), (Any, Any) => ZIO[Any, Any, Any]],
     // Spec data for compile-time validation and introspection
-    private[machine] val specs: List[TransitionSpec[S, E, Cmd @scala.annotation.unchecked.uncheckedVariance]],
+    private[machine] val specs: List[TransitionSpec[S, E]],
     private[machine] val timeoutSpecs: List[TimeoutSpec[S, E]],
 )(using
     private[mechanoid] val stateEnum: Finite[S],
@@ -43,7 +41,7 @@ final class Machine[S, E, +Cmd] private[machine] (
     *
     * Creates an in-memory FSM runtime suitable for testing or single-process use.
     */
-  def start(initial: S): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E, Cmd]] =
+  def start(initial: S): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E]] =
     FSMRuntime.make(this, initial)
 
   /** Get state names for visualization (caseHash -> name). */
@@ -57,6 +55,9 @@ final class Machine[S, E, +Cmd] private[machine] (
     * The action runs when the FSM enters the specified state. Multiple calls for the same state will replace the
     * previous action.
     *
+    * Note: This is a per-state entry action that runs for ALL transitions entering the state. For per-transition
+    * effects, use `.onEntry` in the DSL.
+    *
     * Usage:
     * {{{
     * val machine = build[State, Event](
@@ -64,7 +65,7 @@ final class Machine[S, E, +Cmd] private[machine] (
     * ).withEntry(Running)(ZIO.logInfo("Entered running state"))
     * }}}
     */
-  def withEntry(state: S)(action: ZIO[Any, MechanoidError, Unit]): Machine[S, E, Cmd] =
+  def withEntry(state: S)(action: ZIO[Any, MechanoidError, Unit]): Machine[S, E] =
     val stateHash = stateEnum.caseHash(state)
     updateLifecycle(stateHash, lc => lc.copy(onEntry = Some(action)))
 
@@ -80,7 +81,7 @@ final class Machine[S, E, +Cmd] private[machine] (
     * ).withExit(Idle)(ZIO.logInfo("Exited idle state"))
     * }}}
     */
-  def withExit(state: S)(action: ZIO[Any, MechanoidError, Unit]): Machine[S, E, Cmd] =
+  def withExit(state: S)(action: ZIO[Any, MechanoidError, Unit]): Machine[S, E] =
     val stateHash = stateEnum.caseHash(state)
     updateLifecycle(stateHash, lc => lc.copy(onExit = Some(action)))
 
@@ -91,7 +92,7 @@ final class Machine[S, E, +Cmd] private[machine] (
   def withLifecycle(state: S)(
       onEntry: Option[ZIO[Any, MechanoidError, Unit]] = None,
       onExit: Option[ZIO[Any, MechanoidError, Unit]] = None,
-  ): Machine[S, E, Cmd] =
+  ): Machine[S, E] =
     val stateHash = stateEnum.caseHash(state)
     updateLifecycle(
       stateHash,
@@ -113,15 +114,15 @@ final class Machine[S, E, +Cmd] private[machine] (
       eventCaseHash: Int,
       transition: Transition[S, E, S],
       meta: TransitionMeta,
-  ): Machine[S, E, Cmd] =
+  ): Machine[S, E] =
     new Machine(
       transitions + ((fromCaseHash, eventCaseHash) -> transition),
       lifecycles,
       timeouts,
       timeoutEvents,
       transitionMeta :+ meta,
-      preCommandFactories,
-      postCommandFactories,
+      entryEffects,
+      producingEffects,
       specs,
       timeoutSpecs,
     )
@@ -129,20 +130,17 @@ final class Machine[S, E, +Cmd] private[machine] (
   /** Update lifecycle for a state. */
   private[mechanoid] def updateLifecycle(
       stateCaseHash: Int,
-      f: StateLifecycle[S, Cmd @scala.annotation.unchecked.uncheckedVariance] => StateLifecycle[
-        S,
-        Cmd @scala.annotation.unchecked.uncheckedVariance,
-      ],
-  ): Machine[S, E, Cmd] =
-    val current = lifecycles.getOrElse(stateCaseHash, StateLifecycle.empty[S, Cmd])
+      f: StateLifecycle[S] => StateLifecycle[S],
+  ): Machine[S, E] =
+    val current = lifecycles.getOrElse(stateCaseHash, StateLifecycle.empty[S])
     new Machine(
       transitions,
       lifecycles + (stateCaseHash -> f(current)),
       timeouts,
       timeoutEvents,
       transitionMeta,
-      preCommandFactories,
-      postCommandFactories,
+      entryEffects,
+      producingEffects,
       specs,
       timeoutSpecs,
     )
@@ -152,15 +150,15 @@ final class Machine[S, E, +Cmd] private[machine] (
   private[mechanoid] def setStateTimeout(
       stateCaseHash: Int,
       timeout: Duration,
-  ): Machine[S, E, Cmd] =
+  ): Machine[S, E] =
     new Machine(
       transitions,
       lifecycles,
       timeouts + (stateCaseHash -> timeout),
       timeoutEvents,
       transitionMeta,
-      preCommandFactories,
-      postCommandFactories,
+      entryEffects,
+      producingEffects,
       specs,
       timeoutSpecs,
     )
@@ -177,8 +175,6 @@ object Machine:
     *   The state type (must have Finite instance)
     * @tparam E
     *   The event type (must have Finite instance)
-    * @tparam Cmd
-    *   The command type for transactional outbox pattern
     * @param assembly
     *   A validated assembly created via `assembly()` or `assemblyAll()`
     * @return
@@ -201,11 +197,11 @@ object Machine:
     * )
     *   }}}
     */
-  inline def apply[S, E, Cmd](inline assembly: Assembly[S, E, Cmd])(using
+  inline def apply[S, E](inline assembly: Assembly[S, E])(using
       inline finiteS: Finite[S],
       inline finiteE: Finite[E],
-  ): Machine[S, E, Cmd] =
-    ${ MachineMacros.applyImpl[S, E, Cmd]('assembly, 'finiteS, 'finiteE) }
+  ): Machine[S, E] =
+    ${ MachineMacros.applyImpl[S, E]('assembly, 'finiteS, 'finiteE) }
 
   /** Create a Machine from validated specs.
     *
@@ -215,16 +211,16 @@ object Machine:
     *   - Duplicates without isOverride = true cause an IllegalArgumentException
     *   - Duplicates with isOverride = true are allowed; later spec wins
     */
-  private[machine] def fromSpecs[S: Finite, E: Finite, Cmd](
-      specs: List[TransitionSpec[S, E, Cmd]],
+  private[machine] def fromSpecs[S: Finite, E: Finite](
+      specs: List[TransitionSpec[S, E]],
       timeoutSpecs: List[TimeoutSpec[S, E]] = Nil,
-  ): Machine[S, E, Cmd] =
-    var transitions          = Map.empty[(Int, Int), Transition[S, E, S]]
-    var transitionMetaList   = List.empty[TransitionMeta]
-    var stateTimeouts        = Map.empty[Int, Duration]
-    var stateTimeoutEvents   = Map.empty[Int, E] // state hash -> event to fire on timeout
-    var preCommandFactories  = Map.empty[(Int, Int), (Any, Any) => List[Any]]
-    var postCommandFactories = Map.empty[(Int, Int), (Any, Any) => List[Any]]
+  ): Machine[S, E] =
+    var transitions         = Map.empty[(Int, Int), Transition[S, E, S]]
+    var transitionMetaList  = List.empty[TransitionMeta]
+    var stateTimeouts       = Map.empty[Int, Duration]
+    var stateTimeoutEvents  = Map.empty[Int, E] // state hash -> event to fire on timeout
+    var entryEffectsMap     = Map.empty[(Int, Int), (Any, Any) => ZIO[Any, Any, Unit]]
+    var producingEffectsMap = Map.empty[(Int, Int), (Any, Any) => ZIO[Any, Any, Any]]
 
     // Track which (state, event) pairs we've seen for duplicate detection
     // Maps key -> (first spec index, first spec description)
@@ -311,12 +307,12 @@ object Machine:
         transitions = transitions + (key -> transition)
         transitionMetaList = transitionMetaList :+ meta
 
-        // Extract command factories
-        spec.preCommandFactory.foreach { f =>
-          preCommandFactories = preCommandFactories + (key -> f)
+        // Extract effects
+        spec.entryEffect.foreach { f =>
+          entryEffectsMap = entryEffectsMap + (key -> f)
         }
-        spec.postCommandFactory.foreach { f =>
-          postCommandFactories = postCommandFactories + (key -> f)
+        spec.producingEffect.foreach { f =>
+          producingEffectsMap = producingEffectsMap + (key -> f)
         }
       end for
 
@@ -346,18 +342,14 @@ object Machine:
       stateTimeouts,
       stateTimeoutEvents,
       transitionMetaList,
-      preCommandFactories,
-      postCommandFactories,
+      entryEffectsMap,
+      producingEffectsMap,
       specs,
       timeoutSpecs,
     )
   end fromSpecs
 
   /** Create an empty Machine. */
-  def empty[S: Finite, E: Finite]: Machine[S, E, Nothing] =
-    new Machine(Map.empty, Map.empty, Map.empty, Map.empty, Nil, Map.empty, Map.empty, Nil, Nil)
-
-  /** Create an empty Machine with commands. */
-  def emptyWithCommands[S: Finite, E: Finite, Cmd]: Machine[S, E, Cmd] =
+  def empty[S: Finite, E: Finite]: Machine[S, E] =
     new Machine(Map.empty, Map.empty, Map.empty, Map.empty, Nil, Map.empty, Map.empty, Nil, Nil)
 end Machine

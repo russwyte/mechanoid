@@ -23,13 +23,11 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
   import TestState.*
   import TestEvent.*
 
-  type TestCmd = Nothing
-
   // Create a test Machine with timeout configuration using the DSL
   // IMPORTANT: Aspect.timeout configures timeout for the TARGET state of the transition,
   // not the source state. So "(Initial via Start to Waiting) @@ Aspect.timeout(...)"
   // configures a 10-second timeout for Waiting state.
-  private val testMachine: Machine[TestState, TestEvent, TestCmd] = Machine(
+  private val testMachine: Machine[TestState, TestEvent] = Machine(
     assembly[TestState, TestEvent](
       // Enter Waiting from Initial with a 10s timeout that fires TimeoutFired
       (Initial via Start to Waiting) @@ Aspect.timeout(10.seconds, TimeoutFired),
@@ -53,7 +51,7 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
       eventsRef: Ref[List[(String, TestEvent)]],
       instanceId: String = "test-fsm",
       shouldFail: Boolean = false,
-  ): FSMRuntime[String, TestState, TestEvent, TestCmd] =
+  ): FSMRuntime[String, TestState, TestEvent] =
     makeMockRuntimeWithState(eventsRef, instanceId, shouldFail, Waiting, 0L)
 
   /** Create a mock FSMRuntime with configurable state and sequence number for state validation tests. */
@@ -63,29 +61,25 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
       shouldFail: Boolean,
       currentStateValue: TestState,
       currentSeqNr: Long,
-  ): FSMRuntime[String, TestState, TestEvent, TestCmd] =
+  ): FSMRuntime[String, TestState, TestEvent] =
     // Capture parameters in local vals to ensure proper closure
     val capturedId    = fsmInstanceId
     val capturedState = currentStateValue
     val capturedSeqNr = currentSeqNr
     val capturedFail  = shouldFail
 
-    new FSMRuntime[String, TestState, TestEvent, TestCmd]:
-      override val instanceId: String                              = capturedId
-      override val machine: Machine[TestState, TestEvent, TestCmd] = testMachine
+    new FSMRuntime[String, TestState, TestEvent]:
+      override val instanceId: String                     = capturedId
+      override val machine: Machine[TestState, TestEvent] = testMachine
 
-      override def send(event: TestEvent): ZIO[Any, MechanoidError, TransitionOutcome[TestState, TestCmd]] =
+      override def send(event: TestEvent): ZIO[Any, MechanoidError, TransitionOutcome[TestState]] =
         if capturedFail then
           eventsRef.update(_ :+ (capturedId, event)) *>
             ZIO.fail(PersistenceError(new RuntimeException("Simulated failure")))
         else
           eventsRef.update(_ :+ (capturedId, event)) *>
             ZIO.succeed(
-              TransitionOutcome(
-                result = TransitionResult.Stay,
-                preCommands = Nil,
-                postCommands = Nil,
-              )
+              TransitionOutcome(TransitionResult.Stay)
             )
 
       override def currentState: UIO[TestState] = ZIO.succeed(capturedState)
@@ -833,6 +827,88 @@ object TimeoutSweeperSpec extends ZIOSpecDefault:
           metrics.timeoutsSkipped >= 1,
         )
       } @@ TestAspect.withLiveClock,
+    ),
+    suite("timeout rescheduling bug")(
+      test("BUG: complete() deletes newly scheduled timeout when FSM re-enters same state") {
+        // This test demonstrates the race condition where:
+        // 1. Sweeper fires timeout and calls runtime.send(TimeoutFired)
+        // 2. Runtime handles Goto(SameState), which calls:
+        //    a. cancel(instanceId) - deletes the old timeout
+        //    b. schedule(instanceId, newSeqNr, ...) - inserts a NEW timeout
+        // 3. Sweeper then calls complete(instanceId) - THIS DELETES THE NEW TIMEOUT!
+        //
+        // Expected behavior: new timeout should survive
+        // Actual behavior (bug): new timeout is deleted
+        for
+          store     <- ZIO.succeed(new InMemoryTimeoutStore[String]())
+          eventsRef <- Ref.make(List.empty[(String, TestEvent)])
+
+          // Track how many times schedule was called
+          scheduleCountRef <- Ref.make(0)
+
+          // Create a runtime that simulates re-entering the same state with a new timeout
+          runtime = new FSMRuntime[String, TestState, TestEvent]:
+            override val instanceId: String                     = "fsm-1"
+            override val machine: Machine[TestState, TestEvent] = testMachine
+
+            override def send(event: TestEvent): ZIO[Any, MechanoidError, TransitionOutcome[TestState]] =
+              for
+                _ <- eventsRef.update(_ :+ ("fsm-1", event))
+                // Simulate what FSMRuntime does on Goto(SameState):
+                // 1. Cancel the old timeout
+                _ <- store.cancel(instanceId)
+                // 2. Schedule a new timeout (simulating re-entry with incremented seqNr)
+                now   <- Clock.instant
+                count <- scheduleCountRef.updateAndGet(_ + 1)
+                newSeqNr = count.toLong // Each re-entry gets a new seqNr
+                _ <- store.schedule(instanceId, waitingStateHash, newSeqNr, now.plusSeconds(30))
+              yield TransitionOutcome(TransitionResult.Stay)
+
+            override def currentState: UIO[TestState]    = ZIO.succeed(Waiting)
+            override def state: UIO[FSMState[TestState]] =
+              Clock.instant.map { now =>
+                FSMState(Waiting, Nil, Map.empty, now, now)
+              }
+            override def history: UIO[List[TestState]]                = ZIO.succeed(Nil)
+            override def lastSequenceNr: UIO[Long]                    = scheduleCountRef.get.map(_.toLong)
+            override def saveSnapshot: ZIO[Any, MechanoidError, Unit] = ZIO.unit
+            override def stop: UIO[Unit]                              = ZIO.unit
+            override def stop(reason: String): UIO[Unit]              = ZIO.unit
+            override def isRunning: UIO[Boolean]                      = ZIO.succeed(true)
+            override def timeoutConfigForState(state: TestState): Option[(Duration, TestEvent)] =
+              state match
+                case Waiting => Some((30.seconds, TimeoutFired))
+                case _       => None
+
+          config = TimeoutSweeperConfig()
+            .withSweepInterval(Duration.fromMillis(50))
+            .withJitterFactor(0.0)
+            .withNodeId("test-node")
+
+          now <- Clock.instant
+          // Schedule initial timeout with seqNr=0
+          _ <- store.schedule("fsm-1", waitingStateHash, 0L, now.minusSeconds(10))
+
+          // Run sweeper to fire the timeout
+          _ <- ZIO.scoped {
+            for
+              _ <- TimeoutSweeper.make(config, store, runtime)
+              _ <- ZIO.sleep(Duration.fromMillis(200))
+            yield ()
+          }
+
+          events <- eventsRef.get
+          // Check if the NEW timeout (scheduled by runtime during event handling) still exists
+          newTimeout    <- store.get("fsm-1")
+          scheduleCount <- scheduleCountRef.get
+        yield assertTrue(
+          events.length == 1, // Timeout was fired
+          scheduleCount == 1, // Runtime scheduled a new timeout
+          // BUG: newTimeout is None because complete() deleted it!
+          // EXPECTED: newTimeout should be Some(...) with seqNr=1
+          newTimeout.isDefined, // This FAILS - proving the bug
+        )
+      } @@ TestAspect.withLiveClock
     ),
   ) @@ TestAspect.sequential @@ TestAspect.timeout(Duration.fromSeconds(60)) @@ TestAspect.withLiveClock
 end TimeoutSweeperSpec

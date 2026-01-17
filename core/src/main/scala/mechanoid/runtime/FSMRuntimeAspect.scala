@@ -38,12 +38,10 @@ import mechanoid.core.MechanoidError
   *   State type
   * @tparam E
   *   Event type
-  * @tparam Cmd
-  *   Command type
   * @tparam ROut
   *   Additional environment requirements this aspect adds
   */
-trait FSMRuntimeAspect[Id, S, E, Cmd, ROut]:
+trait FSMRuntimeAspect[Id, S, E, ROut]:
 
   /** Apply this aspect to a runtime-creating effect.
     *
@@ -53,8 +51,8 @@ trait FSMRuntimeAspect[Id, S, E, Cmd, ROut]:
     *   An effect that creates the transformed runtime with additional requirements
     */
   def apply[R](
-      makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E, Cmd]]
-  ): ZIO[Scope & R & ROut, MechanoidError, FSMRuntime[Id, S, E, Cmd]]
+      makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E]]
+  ): ZIO[Scope & R & ROut, MechanoidError, FSMRuntime[Id, S, E]]
 
   /** Compose this aspect with another.
     *
@@ -66,14 +64,14 @@ trait FSMRuntimeAspect[Id, S, E, Cmd, ROut]:
     *   A combined aspect
     */
   def >>>[ROut2](
-      that: FSMRuntimeAspect[Id, S, E, Cmd, ROut2]
-  ): FSMRuntimeAspect[Id, S, E, Cmd, ROut & ROut2] =
+      that: FSMRuntimeAspect[Id, S, E, ROut2]
+  ): FSMRuntimeAspect[Id, S, E, ROut & ROut2] =
     FSMRuntimeAspect.andThen(this, that)
 
   /** Alias for `>>>` composition. */
   def andThen[ROut2](
-      that: FSMRuntimeAspect[Id, S, E, Cmd, ROut2]
-  ): FSMRuntimeAspect[Id, S, E, Cmd, ROut & ROut2] =
+      that: FSMRuntimeAspect[Id, S, E, ROut2]
+  ): FSMRuntimeAspect[Id, S, E, ROut & ROut2] =
     this >>> that
 
 end FSMRuntimeAspect
@@ -87,13 +85,13 @@ object FSMRuntimeAspect:
     * @return
     *   An aspect that applies the transformation
     */
-  def transform[Id, S, E, Cmd](
-      f: FSMRuntime[Id, S, E, Cmd] => FSMRuntime[Id, S, E, Cmd]
-  ): FSMRuntimeAspect[Id, S, E, Cmd, Any] =
-    new FSMRuntimeAspect[Id, S, E, Cmd, Any]:
+  def transform[Id, S, E](
+      f: FSMRuntime[Id, S, E] => FSMRuntime[Id, S, E]
+  ): FSMRuntimeAspect[Id, S, E, Any] =
+    new FSMRuntimeAspect[Id, S, E, Any]:
       def apply[R](
-          makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E, Cmd]]
-      ): ZIO[Scope & R & Any, MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
+          makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E]]
+      ): ZIO[Scope & R & Any, MechanoidError, FSMRuntime[Id, S, E]] =
         makeRuntime.map(f)
 
   /** Create an aspect from an effectful transformation that may add environment requirements.
@@ -103,13 +101,13 @@ object FSMRuntimeAspect:
     * @return
     *   An aspect that applies the transformation and adds `RNew` to requirements
     */
-  def transformZIO[Id, S, E, Cmd, RNew](
-      f: FSMRuntime[Id, S, E, Cmd] => ZIO[RNew, MechanoidError, FSMRuntime[Id, S, E, Cmd]]
-  ): FSMRuntimeAspect[Id, S, E, Cmd, RNew] =
-    new FSMRuntimeAspect[Id, S, E, Cmd, RNew]:
+  def transformZIO[Id, S, E, RNew](
+      f: FSMRuntime[Id, S, E] => ZIO[RNew, MechanoidError, FSMRuntime[Id, S, E]]
+  ): FSMRuntimeAspect[Id, S, E, RNew] =
+    new FSMRuntimeAspect[Id, S, E, RNew]:
       def apply[R](
-          makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E, Cmd]]
-      ): ZIO[Scope & R & RNew, MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
+          makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E]]
+      ): ZIO[Scope & R & RNew, MechanoidError, FSMRuntime[Id, S, E]] =
         makeRuntime.flatMap(f)
 
   /** Compose two aspects sequentially.
@@ -121,24 +119,24 @@ object FSMRuntimeAspect:
     * @return
     *   A combined aspect
     */
-  def andThen[Id, S, E, Cmd, R1, R2](
-      first: FSMRuntimeAspect[Id, S, E, Cmd, R1],
-      second: FSMRuntimeAspect[Id, S, E, Cmd, R2],
-  ): FSMRuntimeAspect[Id, S, E, Cmd, R1 & R2] =
-    new FSMRuntimeAspect[Id, S, E, Cmd, R1 & R2]:
+  def andThen[Id, S, E, R1, R2](
+      first: FSMRuntimeAspect[Id, S, E, R1],
+      second: FSMRuntimeAspect[Id, S, E, R2],
+  ): FSMRuntimeAspect[Id, S, E, R1 & R2] =
+    new FSMRuntimeAspect[Id, S, E, R1 & R2]:
       def apply[R](
-          makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E, Cmd]]
-      ): ZIO[Scope & R & R1 & R2, MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
+          makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E]]
+      ): ZIO[Scope & R & R1 & R2, MechanoidError, FSMRuntime[Id, S, E]] =
         second(first(makeRuntime))
 
   /** Identity aspect that passes through unchanged. */
-  def identity[Id, S, E, Cmd]: FSMRuntimeAspect[Id, S, E, Cmd, Any] =
+  def identity[Id, S, E]: FSMRuntimeAspect[Id, S, E, Any] =
     transform(rt => rt)
 
 end FSMRuntimeAspect
 
 /** Extension methods for composing FSMRuntime effects with aspects. */
-extension [Id, S, E, Cmd, R](makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E, Cmd]])
+extension [Id, S, E, R](makeRuntime: ZIO[Scope & R, MechanoidError, FSMRuntime[Id, S, E]])
 
   /** Apply an aspect to this runtime-creating effect.
     *
@@ -149,7 +147,7 @@ extension [Id, S, E, Cmd, R](makeRuntime: ZIO[Scope & R, MechanoidError, FSMRunt
     *   }}}
     */
   infix def @@[ROut](
-      aspect: FSMRuntimeAspect[Id, S, E, Cmd, ROut]
-  ): ZIO[Scope & R & ROut, MechanoidError, FSMRuntime[Id, S, E, Cmd]] =
+      aspect: FSMRuntimeAspect[Id, S, E, ROut]
+  ): ZIO[Scope & R & ROut, MechanoidError, FSMRuntime[Id, S, E]] =
     aspect(makeRuntime)
 end extension

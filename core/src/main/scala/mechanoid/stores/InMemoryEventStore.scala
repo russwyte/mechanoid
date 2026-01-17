@@ -4,6 +4,7 @@ import zio.*
 import zio.stream.*
 import mechanoid.core.*
 import mechanoid.persistence.*
+import scala.annotation.unused
 
 /** ZIO Ref-based in-memory EventStore implementation.
   *
@@ -17,10 +18,6 @@ import mechanoid.persistence.*
   *   store <- InMemoryEventStore.make[String, MyState, MyEvent]
   *   _     <- store.append("instance-1", event, 0L)
   * yield ()
-  *
-  * // Or as a ZLayer
-  * val storeLayer = InMemoryEventStore.layer[String, MyState, MyEvent]
-  * myProgram.provide(storeLayer)
   * }}}
   */
 final class InMemoryEventStore[Id, S, E] private (
@@ -32,7 +29,7 @@ final class InMemoryEventStore[Id, S, E] private (
   override def append(
       instanceId: Id,
       event: E,
-      expectedSeqNr: Long,
+      @unused expectedSeqNr: Long,
   ): ZIO[Any, MechanoidError, Long] =
     for
       now   <- Clock.instant
@@ -48,29 +45,21 @@ final class InMemoryEventStore[Id, S, E] private (
       }
     yield seqNr
 
-  override def loadEvents(
-      instanceId: Id
-  ): ZStream[Any, MechanoidError, StoredEvent[Id, E]] =
+  override def loadEvents(instanceId: Id): ZStream[Any, MechanoidError, StoredEvent[Id, E]] =
     ZStream.unwrap(
-      eventsRef.get.map(events => ZStream.fromIterable(events.getOrElse(instanceId, Vector.empty)))
+      eventsRef.get.map { events =>
+        ZStream.fromIterable(events.getOrElse(instanceId, Vector.empty))
+      }
     )
 
-  override def loadSnapshot(
-      instanceId: Id
-  ): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]] =
+  override def loadSnapshot(instanceId: Id): ZIO[Any, MechanoidError, Option[FSMSnapshot[Id, S]]] =
     snapshotsRef.get.map(_.get(instanceId))
 
-  override def saveSnapshot(
-      snapshot: FSMSnapshot[Id, S]
-  ): ZIO[Any, MechanoidError, Unit] =
+  override def saveSnapshot(snapshot: FSMSnapshot[Id, S]): ZIO[Any, MechanoidError, Unit] =
     snapshotsRef.update(_ + (snapshot.instanceId -> snapshot))
 
   override def highestSequenceNr(instanceId: Id): ZIO[Any, MechanoidError, Long] =
     seqNrRef.get.map(_.getOrElse(instanceId, 0L))
-
-  /** Get all events for an instance (for testing/debugging). */
-  def getEvents(instanceId: Id): UIO[List[StoredEvent[Id, E]]] =
-    eventsRef.get.map(_.getOrElse(instanceId, Vector.empty).toList)
 
   /** Clear all data (for testing). */
   def clear: UIO[Unit] =

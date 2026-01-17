@@ -69,7 +69,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
     PostgresTestContainer.DataSourceProvider.transactor
 
   val postgresStoreLayer: ZLayer[Any, Throwable, EventStore[String, OrderState, OrderEvent]] =
-    xaLayer >>> PostgresEventStore.layer[OrderState, OrderEvent]
+    xaLayer >>> PostgresEventStore.makeLayer[OrderState, OrderEvent]
 
   // ============================================
   // Test Suites

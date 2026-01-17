@@ -32,8 +32,8 @@ object GraphVizVisualizer:
     * }
     * ```
     */
-  def digraph[S, E, Cmd](
-      fsm: Machine[S, E, Cmd],
+  def digraph[S, E](
+      fsm: Machine[S, E],
       name: String = "FSM",
       initialState: Option[S] = None,
       config: Config = Config.default,
@@ -111,8 +111,8 @@ object GraphVizVisualizer:
 
   /** Generate a digraph with execution trace highlighting.
     */
-  def digraphWithTrace[S, E, Cmd](
-      fsm: Machine[S, E, Cmd],
+  def digraphWithTrace[S, E](
+      fsm: Machine[S, E],
       trace: ExecutionTrace[S, E],
       name: String = "FSM",
       config: Config = Config.default,

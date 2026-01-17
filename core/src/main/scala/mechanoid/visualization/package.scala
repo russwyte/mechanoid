@@ -7,7 +7,7 @@ import mechanoid.machine.Machine
 package object visualization:
 
   /** Extension methods for visualizing Machine definitions. */
-  extension [S, E, Cmd](fsm: Machine[S, E, Cmd])
+  extension [S, E](fsm: Machine[S, E])
 
     /** Generate a Mermaid state diagram. */
     def toMermaidStateDiagram(initialState: Option[S] = None): String =

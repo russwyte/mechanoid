@@ -107,8 +107,6 @@ trait TimeoutSweeper:
   *   State type
   * @tparam E
   *   Event type
-  * @tparam Cmd
-  *   Command type
   * @param config
   *   Sweeper configuration
   * @param timeoutStore
@@ -118,10 +116,10 @@ trait TimeoutSweeper:
   * @param leaseStore
   *   Optional lease store for leader election
   */
-final case class TimeoutSweeperImpl[Id, S, E, Cmd](
+final case class TimeoutSweeperImpl[Id, S, E](
     config: TimeoutSweeperConfig,
     timeoutStore: TimeoutStore[Id],
-    runtime: FSMRuntime[Id, S, E, Cmd],
+    runtime: FSMRuntime[Id, S, E],
     leaseStore: Option[LeaseStore] = None,
 ):
   /** Look up the timeout event for a state hash.
@@ -150,10 +148,10 @@ object TimeoutSweeper:
     * @return
     *   A scoped TimeoutSweeper service
     */
-  def make[Id, S, E, Cmd](
+  def make[Id, S, E](
       config: TimeoutSweeperConfig,
       timeoutStore: TimeoutStore[Id],
-      runtime: FSMRuntime[Id, S, E, Cmd],
+      runtime: FSMRuntime[Id, S, E],
       leaseStore: Option[LeaseStore] = None,
   ): ZIO[Scope, MechanoidError, TimeoutSweeper] =
     val impl = TimeoutSweeperImpl(config, timeoutStore, runtime, leaseStore)
@@ -194,8 +192,8 @@ object TimeoutSweeper:
     end for
   end make
 
-  private def runSweepLoop[Id, S, E, Cmd](
-      impl: TimeoutSweeperImpl[Id, S, E, Cmd],
+  private def runSweepLoop[Id, S, E](
+      impl: TimeoutSweeperImpl[Id, S, E],
       runningRef: Ref[Boolean],
       metricsRef: Ref[SweeperMetrics],
       leaderElection: Option[LeaderElection],
@@ -223,29 +221,38 @@ object TimeoutSweeper:
       yield shouldContinue
 
     // Schedule with timing, jitter, and stop condition
+    // jittered(min, max) scales delay by random factor in [min, max]
+    // e.g., jitterFactor=0.1 → jittered(0.9, 1.1) → ±10% random variation
     val baseSchedule     = Schedule.spaced(impl.config.sweepInterval)
     val jitteredSchedule =
-      if impl.config.jitterFactor > 0 then baseSchedule.jittered(0.0, impl.config.jitterFactor)
+      if impl.config.jitterFactor > 0 then
+        baseSchedule.jittered(1.0 - impl.config.jitterFactor, 1.0 + impl.config.jitterFactor)
       else baseSchedule
     val schedule = jitteredSchedule && Schedule.recurWhile[Boolean](identity)
 
     sweep.repeat(schedule).unit
   end runSweepLoop
 
-  private def performSweep[Id, S, E, Cmd](
-      impl: TimeoutSweeperImpl[Id, S, E, Cmd],
+  private def performSweep[Id, S, E](
+      impl: TimeoutSweeperImpl[Id, S, E],
       metricsRef: Ref[SweeperMetrics],
   ): ZIO[Any, MechanoidError, Int] =
     for
       now     <- Clock.instant
+      metrics <- metricsRef.get
+      _       <- ZIO.logInfo(s"Sweep #${metrics.sweepCount + 1} starting (nodeId=${impl.config.nodeId})")
       expired <- impl.timeoutStore.queryExpired(impl.config.batchSize, now)
       results <- ZIO.foreach(expired) { timeout =>
         processTimeout(impl, timeout, metricsRef)
       }
-    yield results.count(identity)
+      fired = results.count(identity)
+      _ <- ZIO.logInfo(
+        s"Sweep #${metrics.sweepCount + 1} complete: found=${expired.size}, fired=$fired, skipped=${expired.size - fired}"
+      )
+    yield fired
 
-  private def processTimeout[Id, S, E, Cmd](
-      impl: TimeoutSweeperImpl[Id, S, E, Cmd],
+  private def processTimeout[Id, S, E](
+      impl: TimeoutSweeperImpl[Id, S, E],
       timeout: ScheduledTimeout[Id],
       metricsRef: Ref[SweeperMetrics],
   ): ZIO[Any, MechanoidError, Boolean] =
@@ -276,7 +283,7 @@ object TimeoutSweeper:
                     impl.runtime
                       .send(event)
                       .flatMap { _ =>
-                        impl.timeoutStore.complete(timeout.instanceId) *>
+                        impl.timeoutStore.complete(timeout.instanceId, timeout.sequenceNr) *>
                           metricsRef.update(m => m.copy(timeoutsFired = m.timeoutsFired + 1))
                       }
                       .catchAll { error =>
@@ -290,7 +297,7 @@ object TimeoutSweeper:
                   case None =>
                     // No timeout event for this state (shouldn't happen in normal operation)
                     ZIO.logWarning(s"No timeout event for state hash ${timeout.stateHash} on ${timeout.instanceId}") *>
-                      impl.timeoutStore.complete(timeout.instanceId) *>
+                      impl.timeoutStore.complete(timeout.instanceId, timeout.sequenceNr) *>
                       metricsRef.update(m => m.copy(timeoutsSkipped = m.timeoutsSkipped + 1)).as(false)
               else
                 // State or seqNr changed - timeout is stale, just complete it
@@ -299,7 +306,7 @@ object TimeoutSweeper:
                     s"stateMatch=$stateMatches (expected=${timeout.stateHash}, actual=$currentStateHash), " +
                     s"seqNrMatch=$seqNrMatches (expected=${timeout.sequenceNr}, actual=$currentSeqNr)"
                 ) *>
-                  impl.timeoutStore.complete(timeout.instanceId) *>
+                  impl.timeoutStore.complete(timeout.instanceId, timeout.sequenceNr) *>
                   metricsRef.update(m => m.copy(timeoutsSkipped = m.timeoutsSkipped + 1)).as(false)
           yield result
 

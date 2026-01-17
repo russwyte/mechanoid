@@ -10,7 +10,6 @@ package mechanoid
   *
   * For production distributed deployments, use database-backed implementations like:
   *   - `mechanoid.persistence.postgres.PostgresEventStore`
-  *   - `mechanoid.persistence.postgres.PostgresCommandStore`
   *   - `mechanoid.persistence.postgres.PostgresTimeoutStore`
   *   - `mechanoid.persistence.postgres.PostgresInstanceLock`
   *
@@ -22,13 +21,13 @@ package mechanoid
   *
   * // Create individual stores
   * for
-  *   eventStore <- InMemoryEventStore.make[String, MyState, MyEvent]
-  *   cmdStore   <- InMemoryCommandStore.make[String, MyCommand]
-  * yield (eventStore, cmdStore)
+  *   eventStore   <- InMemoryEventStore.make[String, MyState, MyEvent]
+  *   timeoutStore <- InMemoryTimeoutStore.make[String]
+  * yield (eventStore, timeoutStore)
   *
   * // Or use layers
   * val layers = InMemoryEventStore.layer[String, MyState, MyEvent] ++
-  *              InMemoryCommandStore.layer[String, MyCommand]
+  *              InMemoryTimeoutStore.layer[String]
   * }}}
   */
 package object stores

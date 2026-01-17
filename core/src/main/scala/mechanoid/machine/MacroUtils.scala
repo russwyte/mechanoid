@@ -14,7 +14,6 @@ import scala.quoted.*
   *   - AST Unwrapping & Extraction: `unwrap`, `extractBoolean`, `qualifiedName`, etc.
   *   - Hash Info Extraction: `SpecHashInfo`, `extractHashInfo`, etc.
   *   - Expression Generation: `hashInfoToExpr`, `orphanInfoToExpr`, etc.
-  *   - Command Type Inference: `extractCmdType`, `inferCommandType`
   *   - Duplicate Detection: `checkDuplicates` (wraps pure logic)
   */
 private[machine] object MacroUtils:
@@ -835,44 +834,6 @@ private[machine] object MacroUtils:
       orphanInfoToExpr(info)
     }
   end computeOrphanExprs
-
-  // ====== Command Type Inference ======
-
-  /** Extract command type from a TransitionSpec[S, E, Cmd] or Assembly[S, E, Cmd] type.
-    *
-    * Returns None if the command type is Nothing (default when no commands).
-    */
-  def extractCmdType(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[quotes.reflect.TypeRepr] =
-    import quotes.reflect.*
-    tpe.dealias.widen match
-      case AppliedType(_, List(_, _, cmdType)) =>
-        if cmdType =:= TypeRepr.of[Nothing] then None
-        else Some(cmdType)
-      case _ => None
-
-  /** Compute the LUB (least upper bound / nearest common ancestor) of all command types.
-    *
-    * Used to infer the Machine's command type from all specs and assemblies.
-    */
-  def inferCommandType(using Quotes)(cmdTypes: List[quotes.reflect.TypeRepr]): quotes.reflect.TypeRepr =
-    import quotes.reflect.*
-    if cmdTypes.isEmpty then TypeRepr.of[Nothing]
-    else if cmdTypes.size == 1 then cmdTypes.head
-    else
-      // Find the nearest common ancestor by intersecting base classes
-      def baseClasses(tpe: TypeRepr): List[Symbol] = tpe.baseClasses
-      val baseClassLists                           = cmdTypes.map(baseClasses)
-      val commonBases                              = baseClassLists.reduce { (a, b) =>
-        a.filter(sym => b.contains(sym))
-      }
-      val skipSymbols = Set("scala.Any", "scala.AnyRef", "scala.Matchable", "java.lang.Object")
-      val usefulBases = commonBases.filterNot(sym => skipSymbols.contains(sym.fullName))
-
-      if usefulBases.nonEmpty then usefulBases.head.typeRef
-      else if commonBases.nonEmpty then TypeRepr.of[Any]
-      else TypeRepr.of[Any]
-    end if
-  end inferCommandType
 
   // ====== Symbol-based Duplicate Detection ======
 

@@ -193,14 +193,22 @@ object TimeoutStoreSpec extends ZIOSpecDefault:
         val store = new InMemoryTimeoutStore[String]()
         for
           _         <- store.schedule("fsm-1", StateHash1, SeqNr1, Instant.now().minusSeconds(10))
-          completed <- store.complete("fsm-1")
+          completed <- store.complete("fsm-1", SeqNr1)
           stored    <- store.get("fsm-1")
         yield assertTrue(completed, stored.isEmpty)
       },
       test("returns false for non-existent timeout") {
         val store = new InMemoryTimeoutStore[String]()
-        for completed <- store.complete("non-existent")
+        for completed <- store.complete("non-existent", SeqNr1)
         yield assertTrue(!completed)
+      },
+      test("returns false when sequenceNr does not match") {
+        val store = new InMemoryTimeoutStore[String]()
+        for
+          _         <- store.schedule("fsm-1", StateHash1, SeqNr1, Instant.now().minusSeconds(10))
+          completed <- store.complete("fsm-1", SeqNr1 + 1) // Different sequenceNr
+          stored    <- store.get("fsm-1")
+        yield assertTrue(!completed, stored.isDefined) // Should NOT be removed
       },
     ),
     suite("release")(

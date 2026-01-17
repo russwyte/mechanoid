@@ -32,7 +32,7 @@ object LockedFSMRuntimeSpec extends ZIOSpecDefault:
   )
 
   // Helper to create a runtime with String ID
-  def makeRuntime(id: String): ZIO[Scope, MechanoidError, FSMRuntime[String, TestState, TestEvent, Nothing]] =
+  def makeRuntime(id: String): ZIO[Scope, MechanoidError, FSMRuntime[String, TestState, TestEvent]] =
     for
       eventStore <- InMemoryEventStore.make[String, TestState, TestEvent]
       storeLayer = ZLayer.succeed[EventStore[String, TestState, TestEvent]](eventStore)

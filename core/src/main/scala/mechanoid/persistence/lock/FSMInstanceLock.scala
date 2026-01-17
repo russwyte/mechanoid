@@ -323,9 +323,10 @@ trait FSMInstanceLock[Id]:
           yield ()
 
         // Start heartbeat fiber (scoped - will be interrupted when scope closes)
+        // jittered(min, max) scales delay by random factor in [min, max]
         schedule = Schedule
           .spaced(heartbeat.renewalInterval)
-          .jittered(0.0, heartbeat.jitterFactor)
+          .jittered(1.0 - heartbeat.jitterFactor, 1.0 + heartbeat.jitterFactor)
         _ <- renewLock
           .repeat(schedule)
           .race(stopHeartbeat.await)

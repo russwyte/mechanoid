@@ -20,11 +20,11 @@ private[machine] object MachineMacros:
     * the assembly is stored in a regular `val`, the orphan information cannot be extracted and a compile error is
     * emitted requiring inline usage.
     */
-  def applyImpl[S: Type, E: Type, Cmd: Type](
-      assemblyExpr: Expr[Assembly[S, E, Cmd]],
+  def applyImpl[S: Type, E: Type](
+      assemblyExpr: Expr[Assembly[S, E]],
       finiteS: Expr[Finite[S]],
       finiteE: Expr[Finite[E]],
-  )(using Quotes): Expr[Machine[S, E, Cmd]] =
+  )(using Quotes): Expr[Machine[S, E]] =
     import quotes.reflect.*
 
     // Extract orphan overrides from the Assembly
@@ -52,7 +52,7 @@ private[machine] object MachineMacros:
           report.warning(
             s"${orphan.description}: marked @@ Aspect.overriding but no duplicate to override"
           )
-        '{ Machine.fromSpecs[S, E, Cmd]($assemblyExpr.specs)(using $finiteS, $finiteE) }
+        '{ Machine.fromSpecs[S, E]($assemblyExpr.specs)(using $finiteS, $finiteE) }
     end match
   end applyImpl
 
@@ -74,7 +74,7 @@ private[machine] object MachineMacros:
     */
   private def extractOrphanOverrides(using
       Quotes
-  )(assemblyExpr: Expr[Assembly[?, ?, ?]]): Option[List[OrphanData]] =
+  )(assemblyExpr: Expr[Assembly[?, ?]]): Option[List[OrphanData]] =
     import quotes.reflect.*
 
     def extractFromTerm(term: Term): Option[List[OrphanData]] =

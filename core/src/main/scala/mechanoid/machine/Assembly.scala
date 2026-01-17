@@ -73,8 +73,6 @@ package mechanoid.machine
   *   The state type for this assembly
   * @tparam E
   *   The event type for this assembly
-  * @tparam Cmd
-  *   The command type emitted by transitions (covariant)
   * @param specs
   *   The list of transition specifications in this assembly
   *
@@ -85,8 +83,8 @@ package mechanoid.machine
   * @see
   *   [[mechanoid.machine.Aspect.overriding]] for the override aspect
   */
-final class Assembly[S, E, +Cmd] private[machine] (
-    val specs: List[TransitionSpec[S, E, Cmd]],
+final class Assembly[S, E] private[machine] (
+    val specs: List[TransitionSpec[S, E]],
     val hashInfos: List[IncludedHashInfo],
     val orphanOverrides: Set[OrphanInfo] = Set.empty,
 ):
@@ -101,7 +99,7 @@ final class Assembly[S, E, +Cmd] private[machine] (
     * @return
     *   this assembly (for chaining)
     */
-  def validated: Assembly[S, E, Cmd] =
+  def validated: Assembly[S, E] =
     // Track (stateHash, eventHash) -> (specIndex, description)
     var seenTransitions = Map.empty[(Int, Int), (Int, String)]
 
@@ -158,8 +156,6 @@ object Assembly:
     *   The state type
     * @tparam E
     *   The event type
-    * @tparam Cmd
-    *   The command type
     * @param specs
     *   The list of transition specifications
     * @param hashInfos
@@ -167,11 +163,11 @@ object Assembly:
     * @return
     *   An Assembly containing the specs
     */
-  def apply[S, E, Cmd](
-      specs: List[TransitionSpec[S, E, Cmd]],
+  def apply[S, E](
+      specs: List[TransitionSpec[S, E]],
       hashInfos: List[IncludedHashInfo],
       orphanOverrides: Set[OrphanInfo] = Set.empty,
-  ): Assembly[S, E, Cmd] =
+  ): Assembly[S, E] =
     new Assembly(specs, hashInfos, orphanOverrides)
 
 end Assembly
@@ -217,16 +213,14 @@ final case class OrphanInfo(
   *   The state type
   * @tparam E
   *   The event type
-  * @tparam Cmd
-  *   The command type (covariant)
   * @param assembly
   *   The wrapped assembly
   * @param hashInfos
   *   Hash info for each spec in the assembly, used for compile-time duplicate detection
   */
-final class Included[S, E, +Cmd](
-    val assembly: Assembly[S, E, Cmd],
+final class Included[S, E](
+    val assembly: Assembly[S, E],
     val hashInfos: List[IncludedHashInfo],
 ):
   /** Get the specs from the wrapped assembly. */
-  def specs: List[TransitionSpec[S, E, Cmd]] = assembly.specs
+  def specs: List[TransitionSpec[S, E]] = assembly.specs

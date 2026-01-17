@@ -17,9 +17,9 @@ private[machine] object AssemblyMacros:
     *   4. Generates a literal `Assembly.apply(List(...))` expression for compile-time visibility
     */
   def assemblyImpl[S: Type, E: Type](
-      first: Expr[TransitionSpec[S, E, ?] | Included[S, E, ?]],
-      rest: Expr[Seq[TransitionSpec[S, E, ?] | Included[S, E, ?]]],
-  )(using Quotes): Expr[Assembly[S, E, ?]] =
+      first: Expr[TransitionSpec[S, E] | Included[S, E]],
+      rest: Expr[Seq[TransitionSpec[S, E] | Included[S, E]]],
+  )(using Quotes): Expr[Assembly[S, E]] =
     import quotes.reflect.*
 
     // Use shared type checkers from MacroUtils
@@ -42,7 +42,7 @@ private[machine] object AssemblyMacros:
     def extractHashInfosFromIncluded(term: Term): List[MacroUtils.SpecHashInfo] =
       def extractFromIncludedConstructor(t: Term): List[MacroUtils.SpecHashInfo] =
         t match
-          // Match new Included[S, E, Cmd](assembly, hashInfos) - TypeApply constructor
+          // Match new Included[S, E](assembly, hashInfos) - TypeApply constructor
           case Apply(TypeApply(Select(New(tpt), "<init>"), _), args)
               if tpt.show.contains("Included") && args.length >= 2 =>
             extractHashInfoList(args(1))
@@ -143,32 +143,23 @@ private[machine] object AssemblyMacros:
 
     MacroUtils.checkDuplicates(allSpecInfos, "Duplicate transition in assembly")
 
-    // Command type inference
-    val specCmdTypes     = specTerms.flatMap(t => MacroUtils.extractCmdType(t.tpe))
-    val includedCmdTypes = includedTerms.flatMap(t => MacroUtils.extractCmdType(t.tpe))
-    val allCmdTypes      = specCmdTypes ++ includedCmdTypes
-    val inferredCmdType  = MacroUtils.inferCommandType(allCmdTypes)
-
     // Code generation - include hash info as literal for compile-time extraction by include()
-    inferredCmdType.asType match
-      case '[cmd] =>
-        val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, cmd]]]] = argTerms.map { term =>
-          if isIncludedType(term.tpe) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E, cmd]]] }.specs }
-          else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]] }) }
-        }
-        val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, cmd]]]] =
-          Expr.ofList(orderedSpecLists)
+    val orderedSpecLists: List[Expr[List[TransitionSpec[S, E]]]] = argTerms.map { term =>
+      if isIncludedType(term.tpe) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E]]] }.specs }
+      else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E]]] }) }
+    }
+    val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E]]]] =
+      Expr.ofList(orderedSpecLists)
 
-        // Generate literal hash info for compile-time extraction by include()
-        val allHashInfoExprs = allSpecInfos.map { case (info, _) => MacroUtils.hashInfoToExpr(info) }
-        val hashInfosExpr    = Expr.ofList(allHashInfoExprs)
+    // Generate literal hash info for compile-time extraction by include()
+    val allHashInfoExprs = allSpecInfos.map { case (info, _) => MacroUtils.hashInfoToExpr(info) }
+    val hashInfosExpr    = Expr.ofList(allHashInfoExprs)
 
-        // Compute orphan overrides using shared helper
-        val orphanInfoExprs = MacroUtils.computeOrphanExprs(allSpecInfos)
-        val orphansExpr     = '{ Set(${ Varargs(orphanInfoExprs) }*) }
+    // Compute orphan overrides using shared helper
+    val orphanInfoExprs = MacroUtils.computeOrphanExprs(allSpecInfos)
+    val orphansExpr     = '{ Set(${ Varargs(orphanInfoExprs) }*) }
 
-        '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
-    end match
+    '{ Assembly.apply[S, E]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
   end assemblyImpl
 
   /** Implementation of `include` macro - wraps an assembly for composition.
@@ -176,9 +167,9 @@ private[machine] object AssemblyMacros:
     * This macro extracts hash info from the Assembly's hashInfos field (which was embedded by the assembly macro). This
     * enables compile-time duplicate detection across includes.
     */
-  def includeImpl[S: Type, E: Type, Cmd: Type](
-      assemblyExpr: Expr[Assembly[S, E, Cmd]]
-  )(using Quotes): Expr[Included[S, E, Cmd]] =
+  def includeImpl[S: Type, E: Type](
+      assemblyExpr: Expr[Assembly[S, E]]
+  )(using Quotes): Expr[Included[S, E]] =
     import quotes.reflect.*
 
     // Extract hashInfos from Assembly.apply(specs, hashInfos) constructor
@@ -297,7 +288,7 @@ private[machine] object AssemblyMacros:
   /** Implementation of `assemblyAll` macro - block syntax for creating Assemblies. */
   def assemblyAllImpl[S: Type, E: Type](
       block: Expr[Any]
-  )(using Quotes): Expr[Assembly[S, E, ?]] =
+  )(using Quotes): Expr[Assembly[S, E]] =
     import quotes.reflect.*
 
     val term = block.asTerm
@@ -441,37 +432,28 @@ private[machine] object AssemblyMacros:
 
     MacroUtils.checkDuplicates(specInfos, "Duplicate transition in assemblyAll")
 
-    // Command type inference
-    val specCmdTypes     = specTerms.flatMap(t => MacroUtils.extractCmdType(t.tpe))
-    val includedCmdTypes = includedTerms.flatMap(t => MacroUtils.extractCmdType(t.tpe))
-    val allCmdTypes      = specCmdTypes ++ includedCmdTypes
-    val inferredCmdType  = MacroUtils.inferCommandType(allCmdTypes)
-
     // Code generation
-    inferredCmdType.asType match
-      case '[cmd] =>
-        val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, cmd]]]] = orderedTerms.map { term =>
-          if isIncluded(term) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E, cmd]]] }.specs }
-          else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, cmd]]] }) }
-        }
-        val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, cmd]]]] =
-          Expr.ofList(orderedSpecLists)
+    val orderedSpecLists: List[Expr[List[TransitionSpec[S, E]]]] = orderedTerms.map { term =>
+      if isIncluded(term) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E]]] }.specs }
+      else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E]]] }) }
+    }
+    val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E]]]] =
+      Expr.ofList(orderedSpecLists)
 
-        // Generate literal hash info for compile-time extraction by include()
-        val allHashInfoExprs = specInfos.map { case (info, _) => MacroUtils.hashInfoToExpr(info) }
-        val hashInfosExpr    = Expr.ofList(allHashInfoExprs)
+    // Generate literal hash info for compile-time extraction by include()
+    val allHashInfoExprs = specInfos.map { case (info, _) => MacroUtils.hashInfoToExpr(info) }
+    val hashInfosExpr    = Expr.ofList(allHashInfoExprs)
 
-        // Compute orphan overrides using shared helper
-        val orphanInfoExprs = MacroUtils.computeOrphanExprs(specInfos)
-        val orphansExpr     = '{ Set(${ Varargs(orphanInfoExprs) }*) }
+    // Compute orphan overrides using shared helper
+    val orphanInfoExprs = MacroUtils.computeOrphanExprs(specInfos)
+    val orphansExpr     = '{ Set(${ Varargs(orphanInfoExprs) }*) }
 
-        val assemblyExpr = '{ Assembly.apply[S, E, cmd]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
+    val assemblyExpr = '{ Assembly.apply[S, E]($orderedSpecListsExpr.flatten, $hashInfosExpr, $orphansExpr) }
 
-        if helperVals.nonEmpty then
-          val assemblyTerm = assemblyExpr.asTerm
-          Block(helperVals.toList, assemblyTerm).asExprOf[Assembly[S, E, cmd]]
-        else assemblyExpr
-    end match
+    if helperVals.nonEmpty then
+      val assemblyTerm = assemblyExpr.asTerm
+      Block(helperVals.toList, assemblyTerm).asExprOf[Assembly[S, E]]
+    else assemblyExpr
   end assemblyAllImpl
 
 end AssemblyMacros
