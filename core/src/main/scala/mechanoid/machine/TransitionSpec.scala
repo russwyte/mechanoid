@@ -78,6 +78,9 @@ final case class TransitionSpec[+SourceS, +E, +TargetS](
     entryEffect: Option[EntryEffect[E @uncheckedVariance, TargetS @uncheckedVariance]] = None,
     producingEffect: Option[ProducingEffect[E @uncheckedVariance, TargetS @uncheckedVariance, E @uncheckedVariance]] =
       None,
+    // Compile-time validation: sealed ancestor hashes of the produced event type (E2).
+    // Used by assembly macro to validate E2 shares a common ancestor (LUB) with FSM's event type E.
+    producingAncestorHashes: Option[Set[Int]] = None,
 ):
   /** Synchronous side effect on entry. Receives (event, targetState).
     *
@@ -105,6 +108,10 @@ final case class TransitionSpec[+SourceS, +E, +TargetS](
     * event and the new (target) state, and returns a ZIO that produces an event. The produced event is automatically
     * sent to the FSM when the effect completes.
     *
+    * '''Compile-time validation:''' The macro validates that E2 is a case of a sealed enum/trait, and the assembly
+    * macro validates that E2 shares a common ancestor (LUB) with the FSM's event type. This ensures type safety at
+    * compile time rather than runtime.
+    *
     * @example
     *   {{{
     * val spec = (Created via StartPayment to Processing).producing { (event, state) =>
@@ -120,11 +127,10 @@ final case class TransitionSpec[+SourceS, +E, +TargetS](
     * @return
     *   A new TransitionSpec with the producing effect configured
     */
-  infix def producing[E2](f: (E, TargetS) => ZIO[Any, Any, E2]): TransitionSpec[SourceS, E, TargetS] =
-    // E2 should be a subtype of the FSM's event type (verified at machine construction).
-    // Cast needed because E here is the specific triggering event (e.g., InitiatePayment),
-    // but E2 may be any event in the FSM's event hierarchy (e.g., PaymentSucceeded).
-    copy(producingEffect = Some(ProducingEffect(f.asInstanceOf[(E, TargetS) => ZIO[Any, Any, E]])))
+  inline infix def producing[E2 <: E @uncheckedVariance](
+      f: (E, TargetS) => ZIO[Any, Any, E2]
+  ): TransitionSpec[SourceS, E, TargetS] =
+    ${ ProducingMacros.producingImpl[SourceS, E, TargetS, E2]('this, 'f) }
 
   /** Configure timeout when entering target state. */
   def withTimeout(duration: Duration): TransitionSpec[SourceS, E, TargetS] =

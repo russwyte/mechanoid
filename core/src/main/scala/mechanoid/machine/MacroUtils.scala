@@ -837,6 +837,61 @@ private[machine] object MacroUtils:
 
   // ====== Symbol-based Duplicate Detection ======
 
+  /** Extract producingAncestorHashes from a TransitionSpec term.
+    *
+    * Walks the AST to find `producingAncestorHashes = Some(Set(...))` patterns, which are embedded by the `producing`
+    * macro. Returns None if no producing effect is configured, or Some(Set[Int]) with the ancestor hashes.
+    */
+  def extractProducingAncestorHashes(using Quotes)(term: quotes.reflect.Term): Option[Set[Int]] =
+    import quotes.reflect.*
+    var result: Option[Set[Int]] = None
+
+    object HashFinder extends TreeAccumulator[Unit]:
+      def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
+        if result.isEmpty then
+          tree match
+            // Match NamedArg pattern: producingAncestorHashes = Some(Set(...))
+            case NamedArg("producingAncestorHashes", someArg) =>
+              someArg match
+                // Some(Set(...)) pattern
+                case Apply(TypeApply(Select(_, "apply"), _), List(setArg)) =>
+                  val hashes = extractSetInts(setArg)
+                  if hashes.nonEmpty then result = Some(hashes)
+                case Apply(Select(_, "apply"), List(setArg)) =>
+                  val hashes = extractSetInts(setArg)
+                  if hashes.nonEmpty then result = Some(hashes)
+                case Apply(_, List(setArg)) if someArg.show.contains("Some") =>
+                  val hashes = extractSetInts(setArg)
+                  if hashes.nonEmpty then result = Some(hashes)
+                case _ =>
+                  foldOverTree((), tree)(owner)
+            // Also check for copy() calls with producingAncestorHashes
+            case Apply(Select(_, "copy"), args) =>
+              args.foreach { arg =>
+                arg match
+                  case NamedArg("producingAncestorHashes", someArg) =>
+                    someArg match
+                      case Apply(TypeApply(Select(_, "apply"), _), List(setArg)) =>
+                        val hashes = extractSetInts(setArg)
+                        if hashes.nonEmpty then result = Some(hashes)
+                      case Apply(Select(_, "apply"), List(setArg)) =>
+                        val hashes = extractSetInts(setArg)
+                        if hashes.nonEmpty then result = Some(hashes)
+                      case Apply(_, List(setArg)) if someArg.show.contains("Some") =>
+                        val hashes = extractSetInts(setArg)
+                        if hashes.nonEmpty then result = Some(hashes)
+                      case _ => ()
+                  case _ => ()
+              }
+              foldOverTree((), tree)(owner)
+            case _ =>
+              foldOverTree((), tree)(owner)
+    end HashFinder
+
+    HashFinder.foldTree((), term)(Symbol.spliceOwner)
+    result
+  end extractProducingAncestorHashes
+
   /** Check if a term is the @@ method (used in extension method pattern matching). */
   def isAtAtMethod(using Quotes)(t: quotes.reflect.Term): Boolean =
     import quotes.reflect.*

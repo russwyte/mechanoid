@@ -143,6 +143,33 @@ private[machine] object AssemblyMacros:
 
     MacroUtils.checkDuplicates(allSpecInfos, "Duplicate transition in assembly")
 
+    // LUB validation for producing effects
+    // Get E's hash (the FSM's event type) and its sealed ancestors
+    val eventTypeHash    = TypeRepr.of[E].typeSymbol.fullName.hashCode
+    val eventAncestors   = ProducingMacros.getSealedAncestorHashes[E]
+    val validEventHashes = eventAncestors + eventTypeHash
+
+    // Validate each spec's producing effect has a common ancestor with E
+    argTerms.zipWithIndex.foreach { case (term, idx) =>
+      if isTransitionSpecType(term.tpe) then
+        MacroUtils.extractProducingAncestorHashes(term) match
+          case Some(producedAncestors) =>
+            val commonAncestors = producedAncestors.intersect(validEventHashes)
+            if commonAncestors.isEmpty then
+              report.errorAndAbort(
+                s"""Type mismatch in producing effect at spec #${idx + 1}!
+                   |
+                   |The produced event type does not share a common sealed ancestor with the FSM's event type.
+                   |The produced event must be a case within the same sealed hierarchy as the FSM's event type ${TypeRepr
+                    .of[E]
+                    .typeSymbol
+                    .name}.""".stripMargin,
+                term.pos,
+              )
+            end if
+          case None => () // No producing effect on this spec
+    }
+
     // Code generation - include hash info as literal for compile-time extraction by include()
     val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, ?]]]] = argTerms.map { term =>
       if isIncludedType(term.tpe) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E]]] }.specs }
@@ -431,6 +458,32 @@ private[machine] object AssemblyMacros:
     }
 
     MacroUtils.checkDuplicates(specInfos, "Duplicate transition in assemblyAll")
+
+    // LUB validation for producing effects
+    // Get E's hash (the FSM's event type) and its sealed ancestors
+    val eventTypeHash    = TypeRepr.of[E].typeSymbol.fullName.hashCode
+    val eventAncestors   = ProducingMacros.getSealedAncestorHashes[E]
+    val validEventHashes = eventAncestors + eventTypeHash
+
+    // Validate each spec's producing effect has a common ancestor with E
+    specTerms.zipWithIndex.foreach { case (term, idx) =>
+      MacroUtils.extractProducingAncestorHashes(term) match
+        case Some(producedAncestors) =>
+          val commonAncestors = producedAncestors.intersect(validEventHashes)
+          if commonAncestors.isEmpty then
+            report.errorAndAbort(
+              s"""Type mismatch in producing effect at spec #${idx + 1}!
+                 |
+                 |The produced event type does not share a common sealed ancestor with the FSM's event type.
+                 |The produced event must be a case within the same sealed hierarchy as the FSM's event type ${TypeRepr
+                  .of[E]
+                  .typeSymbol
+                  .name}.""".stripMargin,
+              term.pos,
+            )
+          end if
+        case None => () // No producing effect on this spec
+    }
 
     // Code generation
     val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, ?]]]] = orderedTerms.map { term =>
