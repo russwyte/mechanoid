@@ -199,17 +199,17 @@ private[machine] object AssemblyMacros:
   )(using Quotes): Expr[Included[S, E]] =
     import quotes.reflect.*
 
-    // Extract hashInfos from Assembly.apply(specs, hashInfos) constructor
+    // Extract hashInfos from Assembly.apply(specs, hashInfos, orphans) constructor
     def extractAssemblyHashInfos(term: Term): List[Term] =
       term match
-        // Assembly.apply(specs, hashInfos)
-        case Apply(TypeApply(Select(_, "apply"), _), List(_, hashInfosArg)) =>
-          MacroUtils.extractListElements(hashInfosArg)
-        case Apply(Select(_, "apply"), List(_, hashInfosArg)) =>
-          MacroUtils.extractListElements(hashInfosArg)
-        // new Assembly(specs, hashInfos)
-        case Apply(Select(New(tpt), "<init>"), List(_, hashInfosArg)) if tpt.show.contains("Assembly") =>
-          MacroUtils.extractListElements(hashInfosArg)
+        // Assembly.apply(specs, hashInfos, orphans) - 2+ args
+        case Apply(TypeApply(Select(_, "apply"), _), args) if args.length >= 2 =>
+          MacroUtils.extractListElements(args(1))
+        case Apply(Select(_, "apply"), args) if args.length >= 2 =>
+          MacroUtils.extractListElements(args(1))
+        // new Assembly(specs, hashInfos, orphans)
+        case Apply(Select(New(tpt), "<init>"), args) if tpt.show.contains("Assembly") && args.length >= 2 =>
+          MacroUtils.extractListElements(args(1))
         case Inlined(_, _, inner) =>
           extractAssemblyHashInfos(inner)
         case Block(_, expr) =>

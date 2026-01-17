@@ -93,8 +93,7 @@ object Experiment:
   val machineInlineComposed = Machine(
     assembly[TestState, TestEvent](
       include(assembly[TestState, TestEvent](A via E2 to B)),
-      include(assembly[TestState, TestEvent](A via E2 to B)),
-//      include(assembly[TestState, TestEvent]((A via E2 to C) @@ Aspect.overriding)),
+      include(assembly[TestState, TestEvent]((A via E2 to C) @@ Aspect.overriding)),
     )
   )
 
