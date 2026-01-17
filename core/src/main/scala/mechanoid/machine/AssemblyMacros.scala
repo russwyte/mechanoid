@@ -34,10 +34,6 @@ private[machine] object AssemblyMacros:
 
     val argTerms: List[Term] = first.asTerm :: restTerms
 
-    // Separate individual specs from Included wrappers
-    val specTerms     = argTerms.filter(t => isTransitionSpecType(t.tpe))
-    val includedTerms = argTerms.filter(t => isIncludedType(t.tpe))
-
     // Extract hash info from Included terms' hashInfos field
     def extractHashInfosFromIncluded(term: Term): List[MacroUtils.SpecHashInfo] =
       def extractFromIncludedConstructor(t: Term): List[MacroUtils.SpecHashInfo] =

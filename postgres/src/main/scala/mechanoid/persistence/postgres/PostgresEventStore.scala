@@ -32,9 +32,6 @@ import java.time.Instant
   */
 class PostgresEventStore[S: JsonCodec, E: JsonCodec](transactor: Transactor) extends EventStore[String, S, E]:
 
-  private val events    = Table[EventRow]
-  private val snapshots = Table[SnapshotRow]
-
   override def append(
       instanceId: String,
       event: E,

@@ -1,6 +1,5 @@
 package mechanoid.machine
 
-import mechanoid.core.Finite
 import scala.quoted.*
 
 /** Macros for the suite-style DSL.
@@ -460,7 +459,7 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   * @see
   *   [[include]] for including other assemblies
   */
-transparent inline def assembly[S: Finite, E: Finite](
+transparent inline def assembly[S, E](
     inline first: TransitionSpec[S, E, ?] | Included[S, E],
     inline rest: (TransitionSpec[S, E, ?] | Included[S, E])*
 ): Assembly[S, E] =
@@ -495,7 +494,7 @@ transparent inline def assembly[S: Finite, E: Finite](
   * @see
   *   [[include]] for including other assemblies
   */
-transparent inline def assemblyAll[S: Finite, E: Finite](
+transparent inline def assemblyAll[S, E](
     inline block: Any
 ): Assembly[S, E] =
   ${ AssemblyMacros.assemblyAllImpl[S, E]('block) }
@@ -525,7 +524,7 @@ transparent inline def assemblyAll[S: Finite, E: Finite](
   * @return
   *   An Included wrapper for compile-time tracking
   */
-transparent inline def include[S: Finite, E: Finite](
+transparent inline def include[S, E](
     inline a: Assembly[S, E]
 ): Included[S, E] =
   ${ AssemblyMacros.includeImpl[S, E]('a) }

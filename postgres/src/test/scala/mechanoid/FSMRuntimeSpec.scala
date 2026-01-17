@@ -11,7 +11,6 @@ import mechanoid.runtime.FSMRuntime
 import mechanoid.runtime.timeout.TimeoutStrategy
 import mechanoid.runtime.locking.LockingStrategy
 import mechanoid.stores.InMemoryEventStore
-import mechanoid.machine.AssemblySpec.TestState
 
 /** Unified FSMRuntime tests that work with any EventStore implementation.
   *
@@ -674,8 +673,8 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           fsm <- FSMRuntime(id, orderDefinition, Pending)
           // Ship is not valid from Pending
           result <- fsm.send(Ship).either
-        yield result match
-          case Left(e: InvalidTransitionError[TestState, OrderEvent]) =>
+        yield (result: @unchecked) match
+          case Left(e: InvalidTransitionError[?, ?]) =>
             assertTrue(
               e.currentState == Pending,
               e.event == Ship,
@@ -691,8 +690,8 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           _   <- fsm.send(Pay) // Valid: Pending -> Paid
           // Deliver is not valid from Paid
           result <- fsm.send(Deliver).either
-        yield result match
-          case Left(e: InvalidTransitionError[TestState, OrderEvent]) =>
+        yield (result: @unchecked) match
+          case Left(e: InvalidTransitionError[?, ?]) =>
             assertTrue(
               e.currentState == Paid,
               e.event == Deliver,
@@ -748,8 +747,8 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
         result <- ZIO.scoped {
           FSMRuntime(id, restrictedDefinition, Pending)
         }.either
-      yield result match
-        case Left(e: EventReplayError[TestState, OrderEvent]) =>
+      yield (result: @unchecked) match
+        case Left(e: EventReplayError[?, ?]) =>
           assertTrue(
             e.currentState == Paid,
             e.sequenceNr == 2L,
