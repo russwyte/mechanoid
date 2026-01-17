@@ -396,8 +396,8 @@ inline def anyOfEvents[E](inline first: E, inline rest: E*): AnyOfEventMatcher[E
   *   [[include]] for including other assemblies
   */
 transparent inline def assembly[S, E](
-    inline first: TransitionSpec[S, E] | Included[S, E],
-    inline rest: (TransitionSpec[S, E] | Included[S, E])*
+    inline first: TransitionSpec[S, E, ?] | Included[S, E],
+    inline rest: (TransitionSpec[S, E, ?] | Included[S, E])*
 ): Assembly[S, E] =
   ${ AssemblyMacros.assemblyImpl[S, E]('first, 'rest) }
 

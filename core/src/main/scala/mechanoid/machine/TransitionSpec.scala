@@ -55,24 +55,29 @@ final case class TimeoutEventConfig[E](event: E, hash: Int)
   * Captures state/event hash information for compile-time duplicate detection, along with the handler that determines
   * what happens when the transition fires.
   *
-  * @tparam S
-  *   The source state type (for matching)
+  * @tparam SourceS
+  *   The source state type (for matching in transition table)
   * @tparam E
   *   The event type (for matching)
+  * @tparam TargetS
+  *   The target state type (what we transition to). `Nothing` for stay/stop.
   */
-final case class TransitionSpec[+S, +E](
+final case class TransitionSpec[+SourceS, +E, +TargetS](
     stateHashes: Set[Int],           // Expanded from sealed hierarchies
     eventHashes: Set[Int],           // Expanded from sealed hierarchies
     stateNames: List[String],        // For error messages
     eventNames: List[String],        // For error messages
     targetDesc: String,              // "-> Paid", "stay", "stop" - for error messages
     isOverride: Boolean,             // If true, won't trigger duplicate error
-    handler: Handler[Any],           // Handler can go to any state
+    handler: Handler[TargetS],       // Properly typed handler
     targetTimeout: Option[Duration], // If set, configure timeout on target state when entering
     targetTimeoutConfig: Option[TimeoutEventConfig[?]] = None, // Type-safe timeout event holder
-    // Effects use @uncheckedVariance because they are contravariant in E/S but TransitionSpec is covariant
-    entryEffect: Option[EntryEffect[E @uncheckedVariance, S @uncheckedVariance]] = None,
-    producingEffect: Option[ProducingEffect[E @uncheckedVariance, S @uncheckedVariance, E @uncheckedVariance]] = None,
+    // Effects use @uncheckedVariance because they are contravariant in E/TargetS but TransitionSpec must be
+    // covariant for hierarchical FSMs (e.g., TransitionSpec[InReview, _, _] <: TransitionSpec[DocumentState, _, _]).
+    // This is safe because effects are stored (not passed through) and at runtime receive the actual types.
+    entryEffect: Option[EntryEffect[E @uncheckedVariance, TargetS @uncheckedVariance]] = None,
+    producingEffect: Option[ProducingEffect[E @uncheckedVariance, TargetS @uncheckedVariance, E @uncheckedVariance]] =
+      None,
 ):
   /** Synchronous side effect on entry. Receives (event, targetState).
     *
@@ -91,7 +96,7 @@ final case class TransitionSpec[+S, +E](
     * @return
     *   A new TransitionSpec with the entry effect configured
     */
-  infix def onEntry(f: (E, S) => ZIO[Any, Any, Unit]): TransitionSpec[S, E] =
+  infix def onEntry(f: (E, TargetS) => ZIO[Any, Any, Unit]): TransitionSpec[SourceS, E, TargetS] =
     copy(entryEffect = Some(EntryEffect(f)))
 
   /** Async effect that produces an event. Receives (event, targetState).
@@ -115,12 +120,14 @@ final case class TransitionSpec[+S, +E](
     * @return
     *   A new TransitionSpec with the producing effect configured
     */
-  infix def producing[E2](f: (E, S) => ZIO[Any, Any, E2]): TransitionSpec[S, E] =
-    // E2 should be a subtype of E at the call site, enforced by usage context
-    copy(producingEffect = Some(ProducingEffect(f.asInstanceOf[(E, S) => ZIO[Any, Any, E]])))
+  infix def producing[E2](f: (E, TargetS) => ZIO[Any, Any, E2]): TransitionSpec[SourceS, E, TargetS] =
+    // E2 should be a subtype of the FSM's event type (verified at machine construction).
+    // Cast needed because E here is the specific triggering event (e.g., InitiatePayment),
+    // but E2 may be any event in the FSM's event hierarchy (e.g., PaymentSucceeded).
+    copy(producingEffect = Some(ProducingEffect(f.asInstanceOf[(E, TargetS) => ZIO[Any, Any, E]])))
 
   /** Configure timeout when entering target state. */
-  def withTimeout(duration: Duration): TransitionSpec[S, E] =
+  def withTimeout(duration: Duration): TransitionSpec[SourceS, E, TargetS] =
     copy(targetTimeout = Some(duration))
 
   /** Apply an aspect to this transition spec.
@@ -131,7 +138,7 @@ final case class TransitionSpec[+S, +E](
     * val timed = (A via E1 to B) @@ Aspect.timeout(30.seconds, TimeoutEvent)
     *   }}}
     */
-  infix def @@(aspect: Aspect): TransitionSpec[S, E] = aspect match
+  infix def @@(aspect: Aspect): TransitionSpec[SourceS, E, TargetS] = aspect match
     case Aspect.overriding               => copy(isOverride = true)
     case Aspect.timeout(duration, event) =>
       // Compute hash at runtime using the same logic as anyOf matchers
@@ -149,15 +156,23 @@ final case class TransitionSpec[+S, +E](
 end TransitionSpec
 
 object TransitionSpec:
-  /** Create a goto transition spec. */
-  def goto[S](
+  /** Create a goto transition spec.
+    *
+    * @tparam SourceS
+    *   Source state type (for matching)
+    * @tparam SourceE
+    *   Event type (for matching)
+    * @tparam TargetS
+    *   Target state type
+    */
+  def goto[SourceS, SourceE, TargetS](
       stateHashes: Set[Int],
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
-      target: S,
+      target: TargetS,
       timeout: Option[Duration] = None,
-  ): TransitionSpec[Any, Any] =
+  ): TransitionSpec[SourceS, SourceE, TargetS] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -171,14 +186,24 @@ object TransitionSpec:
       producingEffect = None,
     )
 
-  /** Create a goto transition spec to a timed target with user-defined timeout event. */
-  def gotoTimed[S, TE](
+  /** Create a goto transition spec to a timed target with user-defined timeout event.
+    *
+    * @tparam SourceS
+    *   Source state type (for matching)
+    * @tparam SourceE
+    *   Event type (for matching)
+    * @tparam TargetS
+    *   Target state type
+    * @tparam TE
+    *   Timeout event type
+    */
+  def gotoTimed[SourceS, SourceE, TargetS, TE](
       stateHashes: Set[Int],
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
-      target: TimedTarget[S, TE],
-  )(using se: Finite[TE]): TransitionSpec[Any, Any] =
+      target: TimedTarget[TargetS, TE],
+  )(using se: Finite[TE]): TransitionSpec[SourceS, SourceE, TargetS] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -193,13 +218,19 @@ object TransitionSpec:
       producingEffect = None,
     )
 
-  /** Create a stay transition spec. */
-  def stay(
+  /** Create a stay transition spec.
+    *
+    * @tparam SourceS
+    *   Source state type (for matching)
+    * @tparam SourceE
+    *   Event type (for matching)
+    */
+  def stay[SourceS, SourceE](
       stateHashes: Set[Int],
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
-  ): TransitionSpec[Any, Any] =
+  ): TransitionSpec[SourceS, SourceE, Nothing] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,
@@ -213,14 +244,20 @@ object TransitionSpec:
       producingEffect = None,
     )
 
-  /** Create a stop transition spec. */
-  def stop(
+  /** Create a stop transition spec.
+    *
+    * @tparam SourceS
+    *   Source state type (for matching)
+    * @tparam SourceE
+    *   Event type (for matching)
+    */
+  def stop[SourceS, SourceE](
       stateHashes: Set[Int],
       eventHashes: Set[Int],
       stateNames: List[String],
       eventNames: List[String],
       reason: Option[String] = None,
-  ): TransitionSpec[Any, Any] =
+  ): TransitionSpec[SourceS, SourceE, Nothing] =
     TransitionSpec(
       stateHashes = stateHashes,
       eventHashes = eventHashes,

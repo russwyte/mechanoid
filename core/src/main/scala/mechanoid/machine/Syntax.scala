@@ -112,10 +112,8 @@ final class ViaBuilder[S, E](
     val eventNames: List[String],
 ):
   /** Transition to a target state. */
-  inline infix def to[S2](target: S2): TransitionSpec[S, E] =
-    TransitionSpec
-      .goto(stateHashes, eventHashes, stateNames, eventNames, target)
-      .asInstanceOf[TransitionSpec[S, E]]
+  inline infix def to[S2](target: S2): TransitionSpec[S, E, S2] =
+    TransitionSpec.goto[S, E, S2](stateHashes, eventHashes, stateNames, eventNames, target)
 
   /** Transition to a timed target state (starts timeout timer on entry).
     *
@@ -125,29 +123,21 @@ final class ViaBuilder[S, E](
     * Idle via Start to timedWaiting
     * }}}
     */
-  inline infix def to[S2, TE](target: TimedTarget[S2, TE])(using Finite[TE]): TransitionSpec[S, E] =
-    TransitionSpec
-      .gotoTimed(stateHashes, eventHashes, stateNames, eventNames, target)
-      .asInstanceOf[TransitionSpec[S, E]]
+  inline infix def to[S2, TE](target: TimedTarget[S2, TE])(using Finite[TE]): TransitionSpec[S, E, S2] =
+    TransitionSpec.gotoTimed[S, E, S2, TE](stateHashes, eventHashes, stateNames, eventNames, target)
 
   /** Alias for `to` using >> operator. */
-  inline def >>[S2](target: S2): TransitionSpec[S, E] = to(target)
+  inline def >>[S2](target: S2): TransitionSpec[S, E, S2] = to(target)
 
   /** Stay in the current state. */
-  infix def to(terminal: stay.type): TransitionSpec[S, E] =
-    TransitionSpec
-      .stay(stateHashes, eventHashes, stateNames, eventNames)
-      .asInstanceOf[TransitionSpec[S, E]]
+  infix def to(terminal: stay.type): TransitionSpec[S, E, Nothing] =
+    TransitionSpec.stay[S, E](stateHashes, eventHashes, stateNames, eventNames)
 
   /** Stop the FSM. */
-  infix def to(terminal: stop.type): TransitionSpec[S, E] =
-    TransitionSpec
-      .stop(stateHashes, eventHashes, stateNames, eventNames)
-      .asInstanceOf[TransitionSpec[S, E]]
+  infix def to(terminal: stop.type): TransitionSpec[S, E, Nothing] =
+    TransitionSpec.stop[S, E](stateHashes, eventHashes, stateNames, eventNames)
 
   /** Stop the FSM with a reason. */
-  infix def to(terminal: StopReason): TransitionSpec[S, E] =
-    TransitionSpec
-      .stop(stateHashes, eventHashes, stateNames, eventNames, Some(terminal.reason))
-      .asInstanceOf[TransitionSpec[S, E]]
+  infix def to(terminal: StopReason): TransitionSpec[S, E, Nothing] =
+    TransitionSpec.stop[S, E](stateHashes, eventHashes, stateNames, eventNames, Some(terminal.reason))
 end ViaBuilder

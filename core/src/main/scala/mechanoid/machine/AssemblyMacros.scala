@@ -17,8 +17,8 @@ private[machine] object AssemblyMacros:
     *   4. Generates a literal `Assembly.apply(List(...))` expression for compile-time visibility
     */
   def assemblyImpl[S: Type, E: Type](
-      first: Expr[TransitionSpec[S, E] | Included[S, E]],
-      rest: Expr[Seq[TransitionSpec[S, E] | Included[S, E]]],
+      first: Expr[TransitionSpec[S, E, ?] | Included[S, E]],
+      rest: Expr[Seq[TransitionSpec[S, E, ?] | Included[S, E]]],
   )(using Quotes): Expr[Assembly[S, E]] =
     import quotes.reflect.*
 
@@ -144,11 +144,11 @@ private[machine] object AssemblyMacros:
     MacroUtils.checkDuplicates(allSpecInfos, "Duplicate transition in assembly")
 
     // Code generation - include hash info as literal for compile-time extraction by include()
-    val orderedSpecLists: List[Expr[List[TransitionSpec[S, E]]]] = argTerms.map { term =>
+    val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, ?]]]] = argTerms.map { term =>
       if isIncludedType(term.tpe) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E]]] }.specs }
-      else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E]]] }) }
+      else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, ?]]] }) }
     }
-    val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E]]]] =
+    val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, ?]]]] =
       Expr.ofList(orderedSpecLists)
 
     // Generate literal hash info for compile-time extraction by include()
@@ -433,11 +433,11 @@ private[machine] object AssemblyMacros:
     MacroUtils.checkDuplicates(specInfos, "Duplicate transition in assemblyAll")
 
     // Code generation
-    val orderedSpecLists: List[Expr[List[TransitionSpec[S, E]]]] = orderedTerms.map { term =>
+    val orderedSpecLists: List[Expr[List[TransitionSpec[S, E, ?]]]] = orderedTerms.map { term =>
       if isIncluded(term) then '{ ${ term.asExpr.asInstanceOf[Expr[Included[S, E]]] }.specs }
-      else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E]]] }) }
+      else '{ List(${ term.asExpr.asInstanceOf[Expr[TransitionSpec[S, E, ?]]] }) }
     }
-    val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E]]]] =
+    val orderedSpecListsExpr: Expr[List[List[TransitionSpec[S, E, ?]]]] =
       Expr.ofList(orderedSpecLists)
 
     // Generate literal hash info for compile-time extraction by include()

@@ -84,7 +84,7 @@ package mechanoid.machine
   *   [[mechanoid.machine.Aspect.overriding]] for the override aspect
   */
 final class Assembly[S, E] private[machine] (
-    val specs: List[TransitionSpec[S, E]],
+    val specs: List[TransitionSpec[S, E, ?]],
     val hashInfos: List[IncludedHashInfo],
     val orphanOverrides: Set[OrphanInfo] = Set.empty,
 ):
@@ -164,7 +164,7 @@ object Assembly:
     *   An Assembly containing the specs
     */
   def apply[S, E](
-      specs: List[TransitionSpec[S, E]],
+      specs: List[TransitionSpec[S, E, ?]],
       hashInfos: List[IncludedHashInfo],
       orphanOverrides: Set[OrphanInfo] = Set.empty,
   ): Assembly[S, E] =
@@ -223,4 +223,4 @@ final class Included[S, E](
     val hashInfos: List[IncludedHashInfo],
 ):
   /** Get the specs from the wrapped assembly. */
-  def specs: List[TransitionSpec[S, E]] = assembly.specs
+  def specs: List[TransitionSpec[S, E, ?]] = assembly.specs

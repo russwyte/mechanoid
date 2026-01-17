@@ -1,6 +1,6 @@
 # Order 5 Execution Trace
 
-**Final State:** Delivered
+**Final State:** Cancelled
 
 ## Sequence Diagram
 
@@ -10,15 +10,9 @@ sequenceDiagram
     Note over FSM: Created
     FSM->>FSM: InitiatePayment(...)
     Note over FSM: PaymentProcessing
-    FSM->>FSM: PaymentSucceeded(...)
-    Note over FSM: Paid
-    FSM->>FSM: RequestShipping(5,456 Oak Ave, Riverside)
-    Note over FSM: ShippingRequested
-    FSM->>FSM: ShipmentDispatched(...)
-    Note over FSM: Shipped
-    FSM->>FSM: DeliveryConfirmed(5,2026-01-17T21:29:37.988266372Z)
-    Note over FSM: Delivered
-    Note over FSM: Current: Delivered
+    FSM->>FSM: PaymentFailed(5,NetworkTimeout)
+    Note over FSM: Cancelled
+    Note over FSM: Current: Cancelled
 
 ```
 
@@ -44,11 +38,8 @@ flowchart LR
     Shipped -->|DeliveryConfirmed| Delivered
 
     style Created fill:#ADD8E6
-    style Delivered fill:#ADD8E6
-    style ShippingRequested fill:#ADD8E6
     style PaymentProcessing fill:#ADD8E6
-    style Shipped fill:#ADD8E6
-    style Paid fill:#ADD8E6
-    style Delivered fill:#90EE90
+    style Cancelled fill:#ADD8E6
+    style Cancelled fill:#90EE90
 
 ```

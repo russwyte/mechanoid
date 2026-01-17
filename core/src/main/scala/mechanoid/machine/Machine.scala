@@ -30,7 +30,7 @@ final class Machine[S, E] private[machine] (
     private[mechanoid] val entryEffects: Map[(Int, Int), EntryEffect[E, S]],
     private[mechanoid] val producingEffects: Map[(Int, Int), ProducingEffect[E, S, E]],
     // Spec data for compile-time validation and introspection
-    private[machine] val specs: List[TransitionSpec[S, E]],
+    private[machine] val specs: List[TransitionSpec[S, E, ?]],
     private[machine] val timeoutSpecs: List[TimeoutSpec[S, E]],
 )(using
     private[mechanoid] val stateEnum: Finite[S],
@@ -212,7 +212,7 @@ object Machine:
     *   - Duplicates with isOverride = true are allowed; later spec wins
     */
   private[machine] def fromSpecs[S: Finite, E: Finite](
-      specs: List[TransitionSpec[S, E]],
+      specs: List[TransitionSpec[S, E, ?]],
       timeoutSpecs: List[TimeoutSpec[S, E]] = Nil,
   ): Machine[S, E] =
     var transitions         = Map.empty[(Int, Int), Transition[S, E, S]]
@@ -241,10 +241,12 @@ object Machine:
     }.toSet
 
     // Convert each TransitionSpec to runtime data
+    // Handler[?] uses existential type - we know targets are S because DSL enforces it,
+    // but the type system sees ? (existential) when specs have different target types.
     for (spec, specIdx) <- specs.zipWithIndex do
       val transition = spec.handler match
         case Handler.Goto(target) =>
-          val targetState = target.asInstanceOf[S]
+          val targetState = target.asInstanceOf[S] // Safe: existential erases to S via DSL
           Transition[S, E, S](
             (_, _) => ZIO.succeed(TransitionResult.Goto(targetState)),
             None,
@@ -263,7 +265,7 @@ object Machine:
       // Determine target hash for metadata
       val targetHash = spec.handler match
         case Handler.Goto(target) =>
-          Some(stateEnumInstance.caseHash(target.asInstanceOf[S]))
+          Some(stateEnumInstance.caseHash(target.asInstanceOf[S])) // Safe: same reasoning as above
         case _ => None
 
       val kind = spec.handler match
@@ -319,11 +321,11 @@ object Machine:
       // Configure timeout on target state if specified via TimedTarget
       (spec.targetTimeout, spec.handler) match
         case (Some(duration), Handler.Goto(target)) =>
-          val targetStateHash = stateEnumInstance.caseHash(target.asInstanceOf[S])
+          val targetStateHash = stateEnumInstance.caseHash(target.asInstanceOf[S]) // Safe: DSL-created
           stateTimeouts = stateTimeouts + (targetStateHash -> duration)
           // Store the user-defined timeout event if provided
-          // Safe cast: the event was created in TransitionSpec.gotoTimed with type TE <: E
           spec.targetTimeoutConfig.foreach { config =>
+            // Safe: TimeoutEventConfig[?] erases TE <: E, but event was created with valid type
             stateTimeoutEvents = stateTimeoutEvents + (targetStateHash -> config.event.asInstanceOf[E])
           }
         case _ => // No timeout or not a goto transition
