@@ -5,7 +5,7 @@ import scala.quoted.*
 /** Shared utilities for mechanoid macro implementations.
   *
   * This object provides common helpers for AST extraction, type checking, and validation that are used across
-  * `assemblyImpl`, `buildWithInferredCmdImpl`, and `buildAllImpl` macros.
+  * `assemblyImpl`, `assemblyAllImpl`, `includeImpl`, and `applyImpl` macros.
   *
   * ==Organization==
   *

@@ -2,6 +2,30 @@ package mechanoid.machine
 
 import mechanoid.core.*
 import zio.{Duration, ZIO}
+import scala.annotation.unchecked.uncheckedVariance
+
+/** Type-safe wrapper for entry effects.
+  *
+  * Encapsulates `(E, S) => ZIO[Any, Any, Unit]` with proper variance handling.
+  */
+opaque type EntryEffect[-E, -S] = (E, S) => ZIO[Any, Any, Unit]
+
+object EntryEffect:
+  def apply[E, S](f: (E, S) => ZIO[Any, Any, Unit]): EntryEffect[E, S] = f
+
+  extension [E, S](effect: EntryEffect[E, S]) def run(event: E, state: S): ZIO[Any, Any, Unit] = effect(event, state)
+
+/** Type-safe wrapper for producing effects.
+  *
+  * Encapsulates `(E, S) => ZIO[Any, Any, R]` with proper variance handling.
+  */
+opaque type ProducingEffect[-E, -S, +R] = (E, S) => ZIO[Any, Any, R]
+
+object ProducingEffect:
+  def apply[E, S, R](f: (E, S) => ZIO[Any, Any, R]): ProducingEffect[E, S, R] = f
+
+  extension [E, S, R](effect: ProducingEffect[E, S, R])
+    def run(event: E, state: S): ZIO[Any, Any, R] = effect(event, state)
 
 /** Handler for what happens when a transition fires.
   *
@@ -45,9 +69,10 @@ final case class TransitionSpec[+S, +E](
     isOverride: Boolean,             // If true, won't trigger duplicate error
     handler: Handler[Any],           // Handler can go to any state
     targetTimeout: Option[Duration], // If set, configure timeout on target state when entering
-    targetTimeoutConfig: Option[TimeoutEventConfig[?]] = None,       // Type-safe timeout event holder
-    entryEffect: Option[(Any, Any) => ZIO[Any, Any, Unit]] = None,   // (event, targetState) => effect
-    producingEffect: Option[(Any, Any) => ZIO[Any, Any, Any]] = None, // (event, targetState) => ZIO[.., E]
+    targetTimeoutConfig: Option[TimeoutEventConfig[?]] = None, // Type-safe timeout event holder
+    // Effects use @uncheckedVariance because they are contravariant in E/S but TransitionSpec is covariant
+    entryEffect: Option[EntryEffect[E @uncheckedVariance, S @uncheckedVariance]] = None,
+    producingEffect: Option[ProducingEffect[E @uncheckedVariance, S @uncheckedVariance, E @uncheckedVariance]] = None,
 ):
   /** Synchronous side effect on entry. Receives (event, targetState).
     *
@@ -67,7 +92,7 @@ final case class TransitionSpec[+S, +E](
     *   A new TransitionSpec with the entry effect configured
     */
   infix def onEntry(f: (E, S) => ZIO[Any, Any, Unit]): TransitionSpec[S, E] =
-    copy(entryEffect = Some(f.asInstanceOf[(Any, Any) => ZIO[Any, Any, Unit]]))
+    copy(entryEffect = Some(EntryEffect(f)))
 
   /** Async effect that produces an event. Receives (event, targetState).
     *
@@ -91,7 +116,8 @@ final case class TransitionSpec[+S, +E](
     *   A new TransitionSpec with the producing effect configured
     */
   infix def producing[E2](f: (E, S) => ZIO[Any, Any, E2]): TransitionSpec[S, E] =
-    copy(producingEffect = Some(f.asInstanceOf[(Any, Any) => ZIO[Any, Any, Any]]))
+    // E2 should be a subtype of E at the call site, enforced by usage context
+    copy(producingEffect = Some(ProducingEffect(f.asInstanceOf[(E, S) => ZIO[Any, Any, E]])))
 
   /** Configure timeout when entering target state. */
   def withTimeout(duration: Duration): TransitionSpec[S, E] =

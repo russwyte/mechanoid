@@ -2,7 +2,7 @@ package mechanoid.runtime
 
 import zio.*
 import mechanoid.core.*
-import mechanoid.machine.Machine
+import mechanoid.machine.{Machine, EntryEffect, ProducingEffect}
 import mechanoid.persistence.{EventStore, FSMSnapshot, StoredEvent}
 import mechanoid.stores.InMemoryEventStore
 import mechanoid.runtime.timeout.{TimeoutStrategy, FiberTimeoutStrategy}
@@ -317,7 +317,7 @@ object FSMRuntime:
       machine: Machine[S, E],
       startState: S,
       events: List[StoredEvent[?, E]],
-  ): ZIO[Any, EventReplayError, FSMState[S]] =
+  ): ZIO[Any, EventReplayError[S, E], FSMState[S]] =
     ZIO.foldLeft(events)(FSMState.initial(startState)) { (fsmState, stored) =>
       val currentCaseHash = machine.stateEnum.caseHash(fsmState.current)
       val eventCaseHash   = machine.eventEnum.caseHash(stored.event)
@@ -431,10 +431,13 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E](
       targetState: S,
   ): ZIO[Any, MechanoidError, Unit] =
     machine.entryEffects.get((stateHash, eventHash)) match
-      case Some(f) =>
-        f(event, targetState).catchAll { e =>
-          ZIO.fail(ActionFailedError("entry effect", e))
-        }.unit
+      case Some(effect) =>
+        effect
+          .run(event, targetState)
+          .catchAll { e =>
+            ZIO.fail(ActionFailedError("entry effect", e))
+          }
+          .unit
       case None => ZIO.unit
 
   /** Fork producing effect asynchronously.
@@ -448,11 +451,12 @@ private[mechanoid] final class FSMRuntimeImpl[Id, S, E](
       targetState: S,
   ): ZIO[Any, Nothing, Unit] =
     machine.producingEffects.get((stateHash, eventHash)) match
-      case Some(f) =>
-        val effect = f(event, targetState)
+      case Some(producingEffect) =>
+        val effect = producingEffect
+          .run(event, targetState)
           .flatMap { producedEvent =>
             // Send the produced event back to the FSM
-            send(producedEvent.asInstanceOf[E]).ignore
+            send(producedEvent).ignore
           }
           .catchAll { e =>
             // Log error but don't fail - producing effects are fire-and-forget

@@ -11,6 +11,7 @@ import mechanoid.runtime.FSMRuntime
 import mechanoid.runtime.timeout.TimeoutStrategy
 import mechanoid.runtime.locking.LockingStrategy
 import mechanoid.stores.InMemoryEventStore
+import mechanoid.machine.AssemblySpec.TestState
 
 /** Unified FSMRuntime tests that work with any EventStore implementation.
   *
@@ -674,7 +675,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           // Ship is not valid from Pending
           result <- fsm.send(Ship).either
         yield result match
-          case Left(e: InvalidTransitionError) =>
+          case Left(e: InvalidTransitionError[TestState, OrderEvent]) =>
             assertTrue(
               e.currentState == Pending,
               e.event == Ship,
@@ -691,7 +692,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           // Deliver is not valid from Paid
           result <- fsm.send(Deliver).either
         yield result match
-          case Left(e: InvalidTransitionError) =>
+          case Left(e: InvalidTransitionError[TestState, OrderEvent]) =>
             assertTrue(
               e.currentState == Paid,
               e.event == Deliver,
@@ -748,7 +749,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
           FSMRuntime(id, restrictedDefinition, Pending)
         }.either
       yield result match
-        case Left(e: EventReplayError) =>
+        case Left(e: EventReplayError[TestState, OrderEvent]) =>
           assertTrue(
             e.currentState == Paid,
             e.sequenceNr == 2L,

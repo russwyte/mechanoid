@@ -26,9 +26,9 @@ final class Machine[S, E] private[machine] (
     private[mechanoid] val timeouts: Map[Int, Duration],
     private[mechanoid] val timeoutEvents: Map[Int, E], // state hash -> event to fire on timeout
     private[mechanoid] val transitionMeta: List[TransitionMeta],
-    // Per-transition effects
-    private[mechanoid] val entryEffects: Map[(Int, Int), (Any, Any) => ZIO[Any, Any, Unit]],
-    private[mechanoid] val producingEffects: Map[(Int, Int), (Any, Any) => ZIO[Any, Any, Any]],
+    // Per-transition effects: (event, targetState) => effect
+    private[mechanoid] val entryEffects: Map[(Int, Int), EntryEffect[E, S]],
+    private[mechanoid] val producingEffects: Map[(Int, Int), ProducingEffect[E, S, E]],
     // Spec data for compile-time validation and introspection
     private[machine] val specs: List[TransitionSpec[S, E]],
     private[machine] val timeoutSpecs: List[TimeoutSpec[S, E]],
@@ -219,8 +219,8 @@ object Machine:
     var transitionMetaList  = List.empty[TransitionMeta]
     var stateTimeouts       = Map.empty[Int, Duration]
     var stateTimeoutEvents  = Map.empty[Int, E] // state hash -> event to fire on timeout
-    var entryEffectsMap     = Map.empty[(Int, Int), (Any, Any) => ZIO[Any, Any, Unit]]
-    var producingEffectsMap = Map.empty[(Int, Int), (Any, Any) => ZIO[Any, Any, Any]]
+    var entryEffectsMap     = Map.empty[(Int, Int), EntryEffect[E, S]]
+    var producingEffectsMap = Map.empty[(Int, Int), ProducingEffect[E, S, E]]
 
     // Track which (state, event) pairs we've seen for duplicate detection
     // Maps key -> (first spec index, first spec description)
@@ -307,7 +307,7 @@ object Machine:
         transitions = transitions + (key -> transition)
         transitionMetaList = transitionMetaList :+ meta
 
-        // Extract effects
+        // Extract effects - no casts needed, opaque types handle variance
         spec.entryEffect.foreach { f =>
           entryEffectsMap = entryEffectsMap + (key -> f)
         }
