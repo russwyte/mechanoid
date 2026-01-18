@@ -2,17 +2,8 @@ package mechanoid.examples
 
 import zio.*
 import zio.Console.printLine
-import mechanoid.{
-  EventStore,
-  Finite,
-  FSMRuntime,
-  LockingStrategy,
-  Machine,
-  MechanoidError,
-  StoredEvent,
-  TimeoutStrategy,
-}
-import mechanoid.visualization.*
+import mechanoid.*
+import mechanoid.stores.InMemoryEventStore
 import mechanoid.examples.petstore.*
 import java.time.format.DateTimeFormatter
 import java.nio.file.{Files, Paths}
@@ -105,13 +96,15 @@ object PetStoreApp extends ZIOAppDefault:
   // Order Processing
   // ============================================
 
+  // Type alias for FSM runtime layers
+  type OrderFSMLayers = EventStore[Int, OrderState, OrderEvent] & TimeoutStrategy[Int] & LockingStrategy[Int]
+
   def processOrder(
       orderId: Int,
       pet: Pet,
       customer: Customer,
       machine: Machine[OrderState, OrderEvent],
-      eventStore: SimpleEventStore[Int, OrderState, OrderEvent],
-  ): ZIO[Scope, Throwable | MechanoidError, OrderState] =
+  ): ZIO[Scope & OrderFSMLayers, Throwable | MechanoidError, OrderState] =
     import OrderEvent.*
     import OrderState.*
 
@@ -123,13 +116,8 @@ object PetStoreApp extends ZIOAppDefault:
       correlationId <- Random.nextUUID.map(_.toString)
       messageId     <- Random.nextUUID.map(_.toString)
 
-      // Create the FSM runtime
-      storeLayer = ZLayer.succeed[EventStore[Int, OrderState, OrderEvent]](eventStore)
-      fsm <- FSMRuntime(orderId, machine, Created).provideSome[Scope](
-        storeLayer,
-        TimeoutStrategy.fiber[Int],
-        LockingStrategy.optimistic[Int],
-      )
+      // Create FSM runtime - layers provided via ZIO environment
+      fsm <- FSMRuntime(orderId, machine, Created)
 
       // Send the initial event - the FSM will self-drive from here via .producing effects
       initiateEvent = InitiatePayment(
@@ -194,14 +182,14 @@ object PetStoreApp extends ZIOAppDefault:
   // ============================================
 
   def generateVisualizations(
-      eventStore: SimpleEventStore[Int, OrderState, OrderEvent],
-      orderResults: List[(Int, OrderState)],
-  ): ZIO[Any, Throwable, Unit] =
+      orderResults: List[(Int, OrderState)]
+  ): ZIO[EventStore[Int, OrderState, OrderEvent], Throwable | MechanoidError, Unit] =
     val vizDir  = Paths.get("docs", "visualizations")
     val machine = OrderFSM.simpleStructure
 
     for
-      _ <- ZIO.attempt(Files.createDirectories(vizDir))
+      eventStore <- ZIO.service[EventStore[Int, OrderState, OrderEvent]]
+      _          <- ZIO.attempt(Files.createDirectories(vizDir))
 
       // Generate FSM structure diagram
       stateDiagram = MermaidVisualizer.stateDiagram(machine, Some(OrderState.Created))
@@ -235,35 +223,37 @@ object PetStoreApp extends ZIOAppDefault:
 
       // Generate execution traces for each order
       _ <- ZIO.foreachDiscard(orderResults) { case (orderId, finalState) =>
-        val events = eventStore.getEvents(orderId)
-        val trace  = buildExecutionTrace(orderId, events, finalState)
+        for
+          events <- eventStore.loadEvents(orderId).runCollect.map(_.toList)
+          trace = buildExecutionTrace(orderId, events, finalState)
 
-        val sequenceDiagram = MermaidVisualizer.sequenceDiagram(
-          trace,
-          summon[Finite[OrderState]],
-          summon[Finite[OrderEvent]],
-        )
+          sequenceDiagram = MermaidVisualizer.sequenceDiagram(
+            trace,
+            summon[Finite[OrderState]],
+            summon[Finite[OrderEvent]],
+          )
 
-        val flowchartWithTrace = MermaidVisualizer.flowchart(machine, Some(trace))
+          flowchartWithTrace = MermaidVisualizer.flowchart(machine, Some(trace))
 
-        val traceMd = s"""# Order $orderId Execution Trace
-                         |
-                         |**Final State:** $finalState
-                         |
-                         |## Sequence Diagram
-                         |
-                         |```mermaid
-                         |$sequenceDiagram
-                         |```
-                         |
-                         |## Flowchart with Execution Path
-                         |
-                         |```mermaid
-                         |$flowchartWithTrace
-                         |```
-                         |""".stripMargin
+          traceMd = s"""# Order $orderId Execution Trace
+                       |
+                       |**Final State:** $finalState
+                       |
+                       |## Sequence Diagram
+                       |
+                       |```mermaid
+                       |$sequenceDiagram
+                       |```
+                       |
+                       |## Flowchart with Execution Path
+                       |
+                       |```mermaid
+                       |$flowchartWithTrace
+                       |```
+                       |""".stripMargin
 
-        ZIO.attempt(Files.writeString(vizDir.resolve(s"order-$orderId-trace.md"), traceMd))
+          _ <- ZIO.attempt(Files.writeString(vizDir.resolve(s"order-$orderId-trace.md"), traceMd))
+        yield ()
       }
 
       _ <- printLine(s"\n${info("Visualization files written to docs/visualizations/")}").orDie
@@ -319,66 +309,70 @@ object PetStoreApp extends ZIOAppDefault:
   // ============================================
 
   def run: ZIO[Any, Any, Unit] =
-    val program = for
-      _ <- printLine(s"""
-        |${Bold}${Cyan}╔════════════════════════════════════════════════════════════════════╗
-        |║                         PET STORE DEMO                             ║
-        |║                                                                    ║
-        |║  Demonstrating Mechanoid FSM patterns:                             ║
-        |║  • .onEntry - synchronous logging/metrics                          ║
-        |║  • .producing - async service calls that drive FSM forward         ║
-        |║  • Self-driving FSMs via event-producing effects                   ║
-        |║  • Visualization generation                                        ║
-        |╚════════════════════════════════════════════════════════════════════╝$Reset
-        |""".stripMargin).orDie
+    // Create services with 85% success rate for demo variety
+    val paymentProcessor = LoggingPaymentProcessor(PaymentProcessor.make(PaymentProcessor.Config(successRate = 0.85)))
+    val shipper          = LoggingShipper(Shipper.make(Shipper.Config(successRate = 0.95)))
+    val notificationService = LoggingNotificationService(NotificationService.make(NotificationService.Config()))
 
-      // Create services with 85% success rate for demo variety
-      paymentProcessor    = LoggingPaymentProcessor(PaymentProcessor.make(PaymentProcessor.Config(successRate = 0.85)))
-      shipper             = LoggingShipper(Shipper.make(Shipper.Config(successRate = 0.95)))
-      notificationService = LoggingNotificationService(NotificationService.make(NotificationService.Config()))
+    // Create the FSM machine with injected services
+    val machine = OrderFSM.machine(paymentProcessor, shipper, notificationService)
 
-      // Create the FSM machine with injected services
-      machine = OrderFSM.machine(paymentProcessor, shipper, notificationService)
+    // Define the program with its layer requirements
+    def program: ZIO[OrderFSMLayers, Throwable | MechanoidError, Unit] =
+      for
+        _ <- printLine(s"""
+          |${Bold}${Cyan}╔════════════════════════════════════════════════════════════════════╗
+          |║                         PET STORE DEMO                             ║
+          |║                                                                    ║
+          |║  Demonstrating Mechanoid FSM patterns:                             ║
+          |║  • .onEntry - synchronous logging/metrics                          ║
+          |║  • .producing - async service calls that drive FSM forward         ║
+          |║  • Self-driving FSMs via event-producing effects                   ║
+          |║  • Visualization generation                                        ║
+          |╚════════════════════════════════════════════════════════════════════╝$Reset
+          |""".stripMargin).orDie
 
-      // Create event store
-      eventStore <- ZIO.succeed(new SimpleEventStore[Int, OrderState, OrderEvent])
+        // Process several orders (each scoped independently)
+        orderResults <- ZIO.foreach(List(1, 2, 3, 4, 5)) { orderId =>
+          val petIdx      = (orderId - 1) % Pet.catalog.length
+          val customerIdx = (orderId - 1) % Customer.samples.length
+          val pet         = Pet.catalog(petIdx)
+          val customer    = Customer.samples(customerIdx)
 
-      // Process several orders
-      orderResults <- ZIO.foreach(List(1, 2, 3, 4, 5)) { orderId =>
-        val petIdx      = (orderId - 1) % Pet.catalog.length
-        val customerIdx = (orderId - 1) % Customer.samples.length
-        val pet         = Pet.catalog(petIdx)
-        val customer    = Customer.samples(customerIdx)
+          ZIO
+            .scoped(processOrder(orderId, pet, customer, machine))
+            .map(state => orderId -> state)
+            .catchAll { err =>
+              printLine(s"${error(s"Order $orderId failed: $err")}").orDie *>
+                ZIO.succeed(orderId -> OrderState.Cancelled)
+            }
+        }
 
-        ZIO
-          .scoped(processOrder(orderId, pet, customer, machine, eventStore))
-          .map(state => orderId -> state)
-          .catchAll { err =>
-            printLine(s"${error(s"Order $orderId failed: $err")}").orDie *>
-              ZIO.succeed(orderId -> OrderState.Cancelled)
-          }
-      }
+        // Display summary
+        _ <- printLine("").orDie
+        _ <- printLine(s"${Bold}════════════════════════════════════════════════════════════════════$Reset").orDie
+        _ <- printLine(s"${Bold}Order Summary:$Reset").orDie
+        _ <- ZIO.foreachDiscard(orderResults) { case (orderId, state) =>
+          printLine(s"  Order $orderId: ${stateColor(state)}").orDie
+        }
+        delivered = orderResults.count(_._2 == OrderState.Delivered)
+        cancelled = orderResults.count(_._2 == OrderState.Cancelled)
+        _ <- printLine(s"\n  ${success(s"Delivered: $delivered")} | ${error(s"Cancelled: $cancelled")}").orDie
+        _ <- printLine(s"${Bold}════════════════════════════════════════════════════════════════════$Reset").orDie
 
-      // Display summary
-      _ <- printLine("").orDie
-      _ <- printLine(s"${Bold}════════════════════════════════════════════════════════════════════$Reset").orDie
-      _ <- printLine(s"${Bold}Order Summary:$Reset").orDie
-      _ <- ZIO.foreachDiscard(orderResults) { case (orderId, state) =>
-        printLine(s"  Order $orderId: ${stateColor(state)}").orDie
-      }
-      delivered = orderResults.count(_._2 == OrderState.Delivered)
-      cancelled = orderResults.count(_._2 == OrderState.Cancelled)
-      _ <- printLine(s"\n  ${success(s"Delivered: $delivered")} | ${error(s"Cancelled: $cancelled")}").orDie
-      _ <- printLine(s"${Bold}════════════════════════════════════════════════════════════════════$Reset").orDie
+        // Generate visualizations
+        _ <- printLine(s"\n${info("Generating visualization files...")}").orDie
+        _ <- generateVisualizations(orderResults)
 
-      // Generate visualizations
-      _ <- printLine(s"\n${info("Generating visualization files...")}").orDie
-      _ <- generateVisualizations(eventStore, orderResults)
+        _ <- printLine(s"\n${Bold}${Green}Demo complete!$Reset").orDie
+      yield ()
 
-      _ <- printLine(s"\n${Bold}${Green}Demo complete!$Reset").orDie
-    yield ()
-
-    program
+    // Provide all layers at the edge
+    program.provide(
+      InMemoryEventStore.unboundedLayer[Int, OrderState, OrderEvent],
+      TimeoutStrategy.fiber[Int],
+      LockingStrategy.optimistic[Int],
+    )
   end run
 
 end PetStoreApp

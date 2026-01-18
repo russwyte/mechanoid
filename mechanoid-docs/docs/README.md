@@ -30,15 +30,15 @@ Add to your `build.sbt`:
 
 ```scala
 // Core library
-libraryDependencies += "io.github.russwyte" %% "mechanoid" % "0.2.0+1-93127db1+20260118-1042"
+libraryDependencies += "io.github.russwyte" %% "mechanoid" % "@VERSION@"
 
 // PostgreSQL persistence (optional)
-libraryDependencies += "io.github.russwyte" %% "mechanoid-postgres" % "0.2.0+1-93127db1+20260118-1042"
+libraryDependencies += "io.github.russwyte" %% "mechanoid-postgres" % "@VERSION@"
 ```
 
 ## Quick Start
 
-```scala
+```scala mdoc:silent
 import mechanoid.*
 import zio.*
 
@@ -58,7 +58,7 @@ val orderMachine = Machine(assembly[OrderState, OrderEvent](
 ))
 ```
 
-```scala
+```scala mdoc:compile-only
 // Run
 val program = ZIO.scoped {
   for
@@ -101,7 +101,7 @@ See the [full documentation](docs/DOCUMENTATION.md) for:
 
 ## Example with Persistence
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -125,7 +125,7 @@ val eventStoreLayer: zio.ULayer[EventStore[OrderId, OrderState, OrderEvent]] =
   InMemoryEventStore.layer[OrderId, OrderState, OrderEvent]
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, orderMachine, Pending)
@@ -141,7 +141,7 @@ val program = ZIO.scoped {
 
 ## Example with Durable Timeouts
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -169,7 +169,7 @@ val timeoutStoreLayer: zio.ULayer[TimeoutStore[PaymentId]] =
   ZLayer.fromZIO(InMemoryTimeoutStore.make[PaymentId])
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(id, paymentMachine, Pending)
@@ -188,7 +188,7 @@ For sweeper setup, see examples/heartbeat - sweeper runs alongside FSMRuntime.
 
 ## Example with Distributed Locking
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -232,7 +232,7 @@ val paymentEventStoreLayer: zio.ULayer[EventStore[OrderId, PaymentState, Payment
   InMemoryEventStore.layer[OrderId, PaymentState, PaymentEvent]
 ```
 
-```scala
+```scala mdoc:compile-only
 // Exactly-once transitions across multiple nodes
 val program = ZIO.scoped {
   for

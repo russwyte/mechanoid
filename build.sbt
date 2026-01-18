@@ -121,3 +121,17 @@ lazy val compileExperiments = project
     name           := "compile-experiments",
     publish / skip := true,
   )
+
+lazy val docs = project
+  .in(file("mechanoid-docs"))
+  .dependsOn(core, postgres)
+  .enablePlugins(MdocPlugin)
+  .settings(
+    name           := "mechanoid-docs",
+    publish / skip := true,
+    mdocVariables := Map(
+      "VERSION" -> version.value,
+    ),
+    mdocIn  := file("mechanoid-docs") / "docs",
+    mdocOut := file("."),
+  )

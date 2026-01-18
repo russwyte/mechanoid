@@ -1,9 +1,6 @@
 package mechanoid.examples.hierarchical
 
-import zio.*
-import zio.json.*
-import mechanoid.Finite
-import mechanoid.machine.*
+import mechanoid.*
 
 // ============================================
 // Document Workflow - Hierarchical States
@@ -43,7 +40,7 @@ import mechanoid.machine.*
   *
   * Leaf-level transitions can override parent-level ones using `@@ Aspect.overriding`.
   */
-sealed trait DocumentState derives JsonCodec
+sealed trait DocumentState
 
 // Initial state - document being drafted
 case object Draft extends DocumentState
@@ -84,7 +81,7 @@ case object Cancelled extends DocumentState
 // ============================================
 
 /** Events that drive document workflow transitions. */
-sealed trait DocumentEvent derives JsonCodec
+sealed trait DocumentEvent
 
 case object SubmitForReview      extends DocumentEvent
 case object AssignReviewer       extends DocumentEvent

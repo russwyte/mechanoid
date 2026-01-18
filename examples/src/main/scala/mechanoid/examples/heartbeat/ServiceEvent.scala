@@ -1,6 +1,6 @@
 package mechanoid.examples.heartbeat
 
-import mechanoid.Finite
+import mechanoid.*
 
 /** Service events for the health monitoring FSM.
   *

@@ -4,7 +4,7 @@ import zio.*
 import zio.test.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
-import mechanoid.finiteJsonCodec
+import mechanoid.postgres.finiteJsonCodec
 import mechanoid.persistence.*
 
 object PostgresEventStoreSpec extends ZIOSpecDefault:

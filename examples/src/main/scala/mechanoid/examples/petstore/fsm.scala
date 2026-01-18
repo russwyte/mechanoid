@@ -1,8 +1,7 @@
 package mechanoid.examples.petstore
 
 import zio.*
-import mechanoid.Finite
-import mechanoid.machine.*
+import mechanoid.*
 
 // ============================================
 // Order FSM - States and Events

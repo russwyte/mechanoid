@@ -30,3 +30,8 @@ metals.sbt
 .idea
 .idea_modules
 /.worksheet/
+
+# LLM Stuff
+.mcp.json
+.claude
+CLAUDE.md

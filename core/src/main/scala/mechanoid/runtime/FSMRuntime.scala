@@ -114,14 +114,17 @@ object FSMRuntime:
   /** Create a simple in-memory FSM runtime.
     *
     * This is the simplest way to use an FSM - no persistence, no distributed features. State is held in memory and lost
-    * when the scope closes.
+    * when the scope closes. Events are stored in a bounded buffer (default 1000) to prevent unbounded memory growth.
+    *
+    * For custom event buffer size or unbounded storage, use [[InMemoryEventStore.layer]] with the layer-based
+    * [[FSMRuntime.apply]] instead.
     *
     * {{{
-    * val machine = build[TrafficLight, TrafficEvent](
+    * val machine = Machine(assembly[TrafficLight, TrafficEvent](
     *   Red via Timer to Green,
     *   Green via Timer to Yellow,
     *   Yellow via Timer to Red,
-    * )
+    * ))
     *
     * val program = ZIO.scoped {
     *   for
@@ -142,7 +145,7 @@ object FSMRuntime:
       initial: S,
   ): ZIO[Scope, MechanoidError, FSMRuntime[Unit, S, E]] =
     for
-      eventStore      <- InMemoryEventStore.make[Unit, S, E]
+      eventStore      <- InMemoryEventStore.make[Unit, S, E]()
       timeoutStrategy <- FiberTimeoutStrategy.make[Unit]
       lockingStrategy = OptimisticLockingStrategy.make[Unit]
       runtime <- ZIO.acquireRelease(

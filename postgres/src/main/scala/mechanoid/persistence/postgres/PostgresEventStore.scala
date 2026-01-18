@@ -203,12 +203,33 @@ object PostgresEventStore:
 
   /** Create a ZLayer for PostgresEventStore with the given state and event types.
     *
+    * JsonCodec is automatically derived from Finite, so users only need `derives Finite` on their state and event
+    * types.
+    *
     * Usage:
     * {{{
+    * import mechanoid.*
+    * import mechanoid.postgres.*
+    *
+    * enum MyState derives Finite:
+    *   case Idle, Running, Done
+    *
+    * enum MyEvent derives Finite:
+    *   case Started, Completed
+    *
     * val storeLayer = PostgresEventStore.makeLayer[MyState, MyEvent]
     * }}}
     */
-  def makeLayer[S: JsonCodec: Tag, E: JsonCodec: Tag]: ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
+  @scala.annotation.nowarn("msg=unused implicit parameter")
+  transparent inline def makeLayer[S: Tag, E: Tag](using
+      inline fs: mechanoid.core.Finite[S],
+      inline fe: mechanoid.core.Finite[E],
+      inline ms: scala.deriving.Mirror.Of[S],
+      inline me: scala.deriving.Mirror.Of[E],
+  ): ZLayer[Transactor, Nothing, EventStore[String, S, E]] =
+    given JsonCodec[S] = JsonCodec.derived[S]
+    given JsonCodec[E] = JsonCodec.derived[E]
     ZLayer.fromFunction((xa: Transactor) => new PostgresEventStore[S, E](xa))
+  end makeLayer
 
 end PostgresEventStore
