@@ -1,20 +1,8 @@
 package mechanoid
 
 import mechanoid.core.*
-import zio.json.*
 
 object Mechanoid
-
-import scala.annotation.nowarn
-
-// Auto-derive JsonCodec for any type with Finite
-// The inline Mirror parameter allows derivation at the use site
-@nowarn("msg=unused implicit parameter")
-transparent inline given finiteJsonCodec[T](using
-    inline f: Finite[T],
-    inline m: scala.deriving.Mirror.Of[T],
-): JsonCodec[T] =
-  JsonCodec.derived[T]
 
 // Re-export core types
 export core.Finite
@@ -49,6 +37,8 @@ export machine.ViaBuilder
 export machine.AllMatcher
 export machine.AnyOfMatcher
 export machine.AnyOfEventMatcher
+export machine.event
+export machine.EventMatcher
 
 // Re-export runtime
 export runtime.FSMRuntime
@@ -105,3 +95,22 @@ export persistence.lock.LockHeartbeatConfig
 export persistence.lock.LockLostBehavior
 export persistence.lock.AtomicTransactionContext
 export core.LockingError
+
+// Re-export timeout persistence types
+export persistence.timeout.TimeoutStore
+export persistence.timeout.TimeoutSweeper
+export persistence.timeout.TimeoutSweeperConfig
+export persistence.timeout.ScheduledTimeout
+export persistence.timeout.LeaderElectionConfig
+export persistence.timeout.LeaseStore
+export persistence.timeout.SweeperMetrics
+export persistence.timeout.ClaimResult
+
+// Re-export visualization extension methods
+export visualization.toMermaidStateDiagram
+export visualization.toMermaidFlowchart
+export visualization.toMermaidFlowchartWithTrace
+export visualization.toGraphViz
+export visualization.toGraphVizWithTrace
+export visualization.toMermaidSequenceDiagram
+export visualization.toGraphVizTimeline

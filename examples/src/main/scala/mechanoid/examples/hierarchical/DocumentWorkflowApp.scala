@@ -1,7 +1,7 @@
 package mechanoid.examples.hierarchical
 
 import zio.*
-import mechanoid.visualization.toMermaidStateDiagram
+import mechanoid.*
 
 /** Demonstrates hierarchical state organization in Mechanoid FSMs.
   *

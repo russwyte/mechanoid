@@ -1,6 +1,6 @@
 package mechanoid.examples.heartbeat
 
-import mechanoid.Finite
+import mechanoid.*
 
 /** Service states with health monitoring.
   *

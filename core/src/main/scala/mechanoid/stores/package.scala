@@ -19,15 +19,14 @@ package mechanoid
   * import mechanoid.*
   * import mechanoid.stores.*
   *
-  * // Create individual stores
+  * // Create bounded store (default, prevents unbounded memory growth)
   * for
-  *   eventStore   <- InMemoryEventStore.make[String, MyState, MyEvent]
+  *   eventStore   <- InMemoryEventStore.make[String, MyState, MyEvent]()
   *   timeoutStore <- InMemoryTimeoutStore.make[String]
   * yield (eventStore, timeoutStore)
   *
-  * // Or use layers
-  * val layers = InMemoryEventStore.layer[String, MyState, MyEvent] ++
-  *              InMemoryTimeoutStore.layer[String]
+  * // Create unbounded store (for testing when you need full event history)
+  * eventStore <- InMemoryEventStore.makeUnbounded[String, MyState, MyEvent]
   * }}}
   */
 package object stores

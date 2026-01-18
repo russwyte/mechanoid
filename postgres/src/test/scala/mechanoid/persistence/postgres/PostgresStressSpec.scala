@@ -4,7 +4,7 @@ import zio.*
 import zio.test.*
 import mechanoid.PostgresTestContainer
 import mechanoid.core.*
-import mechanoid.finiteJsonCodec
+import mechanoid.postgres.finiteJsonCodec
 import mechanoid.persistence.*
 import mechanoid.persistence.lock.*
 import mechanoid.persistence.timeout.*

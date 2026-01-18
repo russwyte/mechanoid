@@ -10,10 +10,14 @@ import java.sql.SQLException
   * Users provide zio-json JsonEncoder/JsonDecoder for their domain types, and these helpers create the necessary
   * Saferis Encoder/Decoder instances for transparent JSON serialization to/from JSONB columns.
   *
-  * Note: Types with `derives Finite` automatically get JsonCodec via the package-level `finiteJsonCodec` given.
+  * Note: Types with `derives Finite` automatically get JsonCodec via the `finiteJsonCodec` given in
+  * `mechanoid.postgres`. This is included automatically when using `import mechanoid.postgres.*`.
   *
   * Usage:
   * {{{
+  * import mechanoid.*
+  * import mechanoid.postgres.*  // brings in finiteJsonCodec
+  *
   * // Your domain types with Finite derive JsonCodec automatically
   * enum MyEvent derives Finite:
   *   case Created(id: String)

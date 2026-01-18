@@ -3,13 +3,8 @@ package mechanoid.examples.heartbeat
 import zio.*
 import org.postgresql.ds.PGSimpleDataSource
 import saferis.{ConnectionProvider, Transactor}
-import mechanoid.{*, given}
-import mechanoid.persistence.EventStore
-import mechanoid.persistence.postgres.*
-import mechanoid.persistence.timeout.{TimeoutStore, TimeoutSweeper, TimeoutSweeperConfig}
-import mechanoid.runtime.FSMRuntime
-import mechanoid.runtime.timeout.{DurableTimeoutStrategy, TimeoutStrategy}
-import mechanoid.runtime.locking.{LockingStrategy, OptimisticLockingStrategy}
+import mechanoid.*
+import mechanoid.postgres.*
 
 // ============================================
 // Layers
@@ -78,7 +73,7 @@ object Main extends ZIOAppDefault:
       instanceId = "service-instance-1"
 
       // JsonCodec for ServiceState/ServiceEvent is auto-derived from Finite
-      // via the `import mechanoid.{*, given}` which brings in finiteJsonCodec
+      // via `import mechanoid.postgres.*` which brings in finiteJsonCodec
       runtime <- FSMRuntime(
         instanceId,
         ServiceFSM.machine,

@@ -2,7 +2,7 @@ package mechanoid.examples.test.scala.mechanoid.examples
 
 import zio.*
 import zio.test.*
-import mechanoid.core.Finite
+import mechanoid.*
 import mechanoid.examples.hierarchical.*
 
 /** Tests for hierarchical state organization using nested sealed traits.

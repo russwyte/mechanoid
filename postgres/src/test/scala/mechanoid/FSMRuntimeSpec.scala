@@ -55,7 +55,7 @@ object FSMRuntimeSpec extends ZIOSpecDefault:
   /** In-memory store for fast unit tests. */
   def inMemoryStoreLayer: ZLayer[Any, Nothing, EventStore[String, OrderState, OrderEvent]] =
     ZLayer.scoped {
-      InMemoryEventStore.make[String, OrderState, OrderEvent]
+      InMemoryEventStore.makeUnbounded[String, OrderState, OrderEvent]
     }
 
   /** Timeout strategy layer for tests. */
