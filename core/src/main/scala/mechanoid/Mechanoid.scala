@@ -38,6 +38,7 @@ export machine.AllMatcher
 export machine.AnyOfMatcher
 export machine.AnyOfEventMatcher
 export machine.event
+export machine.anyOfEvents
 export machine.EventMatcher
 
 // Re-export runtime
@@ -114,3 +115,16 @@ export visualization.toGraphViz
 export visualization.toGraphVizWithTrace
 export visualization.toMermaidSequenceDiagram
 export visualization.toGraphVizTimeline
+
+// Extension methods for DSL - re-exported from machine package
+extension [S](inline state: S)(using scala.util.NotGiven[S <:< machine.IsMatcher])
+  /** Handle anyOf events: `State viaAnyOf anyOfEvents(E1, E2) to Target` */
+  inline infix def viaAnyOf[E](events: AnyOfEventMatcher[E]): ViaBuilder[S, E] =
+    val stateHash = machine.Macros.computeHashFor(state)
+    new ViaBuilder[S, E](Set(stateHash), events.hashes, List(state.toString), events.names)
+
+  /** Handle all events: `State viaAll all[E] to Target` */
+  inline infix def viaAll[E](events: AllMatcher[E]): ViaBuilder[S, E] =
+    val stateHash = machine.Macros.computeHashFor(state)
+    new ViaBuilder[S, E](Set(stateHash), events.hashes, List(state.toString), events.names)
+end extension

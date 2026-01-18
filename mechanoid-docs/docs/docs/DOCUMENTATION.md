@@ -71,7 +71,7 @@ Mechanoid provides a declarative DSL for defining finite state machines with:
 - **Durable timeouts** that survive node failures
 - **Distributed coordination** with claim-based locking and leader election
 
-```scala
+```scala mdoc:silent
 import mechanoid.*
 import zio.*
 
@@ -92,7 +92,7 @@ val orderMachine = Machine(assembly[OrderState, OrderEvent](
 ))
 ```
 
-```scala
+```scala mdoc:compile-only
 // Run the FSM
 val program = ZIO.scoped {
   for
@@ -112,19 +112,19 @@ val program = ZIO.scoped {
 
 States represent the possible conditions of your FSM. Define them as plain Scala 3 enums:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 ```
 
-```scala
+```scala mdoc:compile-only
 enum TrafficLight:
   case Red, Yellow, Green
 ```
 
 States can also carry data (rich states):
 
-```scala
+```scala mdoc:compile-only
 enum OrderState:
   case Pending
   case Paid(transactionId: String)
@@ -137,7 +137,7 @@ When defining transitions, the state's "shape" (which case it is) is used for ma
 
 For complex domains, organize related states using sealed traits:
 
-```scala
+```scala mdoc:compile-only
 sealed trait OrderState
 
 case object Created extends OrderState
@@ -159,7 +159,7 @@ Benefits:
 
 Use `all[T]` to define transitions that apply to all subtypes of a sealed type:
 
-```scala
+```scala mdoc:silent
 // Setup for multi-state transition examples
 sealed trait OrderState derives Finite
 
@@ -177,7 +177,7 @@ enum OrderEvent derives Finite:
   case Cancel, Archive
 ```
 
-```scala
+```scala mdoc:compile-only
 import OrderEvent.*
 
 // All Processing states can be cancelled
@@ -188,7 +188,7 @@ val transitions = assembly[OrderState, OrderEvent](
 
 Use `anyOf(...)` for specific states that don't share a common parent:
 
-```scala
+```scala mdoc:compile-only
 import OrderEvent.*
 
 // These specific states can be archived
@@ -201,19 +201,19 @@ val transitions = assembly[OrderState, OrderEvent](
 
 Events trigger transitions between states. Define them as plain enums:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 ```
 
-```scala
+```scala mdoc:compile-only
 enum TrafficEvent:
   case Timer, EmergencyOverride
 ```
 
 **Events with data:**
 
-```scala
+```scala mdoc:compile-only
 enum PaymentEvent:
   case Pay(amount: BigDecimal)
   case Refund(orderId: String, amount: BigDecimal)
@@ -223,7 +223,7 @@ enum PaymentEvent:
 
 Like states, events can be organized hierarchically:
 
-```scala
+```scala mdoc:compile-only
 sealed trait UserEvent
 sealed trait InputEvent extends UserEvent
 case object Click extends InputEvent
@@ -235,7 +235,7 @@ case object Swipe extends InputEvent
 
 Use `event[T]` to match events by type (useful for events with data):
 
-```scala
+```scala mdoc:silent
 enum OrderState derives Finite:
   case Pending, Processing
 
@@ -245,7 +245,7 @@ enum OrderEvent derives Finite:
 import OrderState.*, OrderEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // Match any Pay event, regardless of amount
 val transitions = assembly[OrderState, OrderEvent](
   Pending via event[Pay] to Processing,
@@ -254,7 +254,7 @@ val transitions = assembly[OrderState, OrderEvent](
 
 Use `anyOfEvents(...)` for specific events:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -269,7 +269,7 @@ case object Swipe extends UIEvent
 import UIState.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // Multiple events trigger same transition
 val transitions = assembly[UIState, UIEvent](
   Idle viaAnyOf anyOfEvents(Click, Tap, Swipe) to Active,
@@ -280,7 +280,7 @@ val transitions = assembly[UIState, UIEvent](
 
 Transitions define what happens when an event is received in a specific state. Use the clean infix syntax:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -293,7 +293,7 @@ enum MyEvent derives Finite:
 import MyState.*, MyEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val transitions = assembly[MyState, MyEvent](
   // Simple transition: Pending + Pay -> Paid
   Pending via Pay to Paid,
@@ -318,7 +318,7 @@ val transitions = assembly[MyState, MyEvent](
 
 `FSMState[S]` holds runtime information about the FSM:
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[MyState, MyEvent](
   Pending via Pay to Paid,
 ))
@@ -347,7 +347,7 @@ val program = ZIO.scoped {
 
 Create FSM definitions using `assembly` to define transitions and `Machine` to make them runnable:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -360,7 +360,7 @@ enum MyEvent derives Finite:
 import MyState.*, MyEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[MyState, MyEvent](
   State1 via Event1 to State2,
   State1 via Event2 to stay,
@@ -381,166 +381,33 @@ States and events must derive `Finite` to be used in an FSM. The macro validates
 1. **Sealed requirement** - Type must be `sealed trait`, `sealed class`, or `enum`
 2. **Non-empty cases** - Must have at least one case
 
-```scala
+```scala mdoc:fail
 // Non-sealed types fail compilation:
 trait NotSealed derives Finite
-// error:
-// OrderState is already defined as class OrderState
-// trait NotSealed derives Finite
-//      ^
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-//
 ```
 
-```scala
+```scala mdoc:fail
 // Sealed types with no cases fail:
 sealed trait EmptySealed derives Finite
-// error:
-// OrderState is already defined as class OrderState
-// sealed trait EmptySealed derives Finite
-//             ^
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-//
 ```
 
 #### Duplicate Transition Detection
 
 The `assembly` macro detects duplicate transitions at compile time:
 
-```scala
+```scala mdoc:fail
 // This will fail at compile time:
 val bad = assembly[MyState, MyEvent](
   State1 via Event1 to State2,
   State1 via Event1 to State3,  // Error: Duplicate transition for State1 + Event1
 )
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-// 
-// error:
-// Duplicate transition in assembly without override!
-//   Transition: MyState.State1 via MyEvent.Event1 -> State3
-//   First defined at spec #1: -> State2
-//   Duplicate at spec #2: -> State3
-// 
-//   To override, use: (...) @@ Aspect.overriding
-// val bad = assembly[MyState, MyEvent](
-//           ^
 ```
 
 #### Override Validation
 
 To intentionally override a transition (e.g., after using `all[T]`), use `@@ Aspect.overriding`:
 
-```scala
+```scala mdoc:silent
 sealed trait MyState2 derives Finite
 
 sealed trait Processing extends MyState2 derives Finite
@@ -556,7 +423,7 @@ enum MyEvent2 derives Finite:
 import MyEvent2.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[MyState2, MyEvent2](
   all[Processing] via Cancel to Cancelled,
   (SpecialState via Cancel to Special) @@ Aspect.overriding,  // OK: Intentional override
@@ -567,7 +434,7 @@ val machine = Machine(assembly[MyState2, MyEvent2](
 
 If you mark a transition with `@@ Aspect.overriding` but there's nothing to override, the compiler emits a warning:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -580,11 +447,12 @@ enum MyEvent derives Finite:
 import MyState.*, MyEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // This produces a compile-time warning about orphan override:
 val machine = Machine(assembly[MyState, MyEvent](
   (State1 via Event1 to State2) @@ Aspect.overriding,  // Warning: no duplicate to override
 ))
+// Compiler emits: MyState.State1 via MyEvent.Event1: marked @@ Aspect.overriding but no duplicate to override
 ```
 
 This helps catch typos or refactoring issues where an override becomes orphaned.
@@ -593,64 +461,17 @@ This helps catch typos or refactoring issues where an override becomes orphaned.
 
 For orphan override detection to work, assemblies must be passed inline to `Machine()`:
 
-```scala
+```scala mdoc:fail
 // Using a val prevents orphan detection - this fails:
 val myAssembly = assembly[MyState, MyEvent](
   State1 via Event1 to State2
 )
 Machine(myAssembly)  // Error: Assembly must be passed inline
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-// 
-// error: 
-// Conflicting definitions:
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState, MdocApp4.this.MyEvent] in class MdocApp4 at line 153 and
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState2, MdocApp4.this.MyEvent2] in class MdocApp4 at line 167
-//
 ```
 
 Use `inline def` if you need to store an assembly:
 
-```scala
+```scala mdoc:compile-only
 inline def myAssembly = assembly[MyState, MyEvent](
   State1 via Event1 to State2
 )
@@ -661,7 +482,7 @@ Machine(myAssembly)  // OK: inline def preserves the expression
 
 The `.producing` effect must return an event type that's part of the FSM's event hierarchy:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -677,82 +498,25 @@ case class UnrelatedEvent(msg: String)
 import MyState.*, MyEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // OK: Produced is part of MyEvent
 val good = assembly[MyState, MyEvent](
   (A via E1 to B).producing { (_, _) => ZIO.succeed(Produced) }
 )
 ```
 
-```scala
+```scala mdoc:fail
 // Error: UnrelatedEvent is not part of MyEvent hierarchy
 val bad = assembly[MyState, MyEvent](
   (A via E1 to B).producing { (_, _) => ZIO.succeed(UnrelatedEvent("oops")) }
 )
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-// 
-// error: 
-// Conflicting definitions:
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState, MdocApp4.this.MyEvent] in class MdocApp4 at line 153 and
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState2, MdocApp4.this.MyEvent2] in class MdocApp4 at line 167
-// 
-// error:
-// Found:    MdocApp6.this.UnrelatedEvent
-// Required: MdocApp6.this.MyEvent
-//   (A via E1 to B).producing { (_, _) => ZIO.succeed(UnrelatedEvent("oops")) }
-//                                                     ^^^^^^^^^^^^^^^^^^^^^^
-// error:
-// Found:    MdocApp6.this.UnrelatedEvent
-// Required: MdocApp6.this.MyEvent
-//   (A via E1 to B).producing { (_, _) => ZIO.succeed(UnrelatedEvent("oops")) }
-//                                                     ^^^^^^^^^^^^^^^^^^^^^^
 ```
 
 #### Val Reference in assemblyAll
 
 In `assemblyAll` blocks, local vals holding assemblies must use `include()`:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -765,63 +529,12 @@ enum E derives Finite:
 import S.*, E.*
 ```
 
-```scala
+```scala mdoc:fail
 // Error: Val reference requires include() wrapper
 val machine = Machine(assemblyAll[S, E]:
   val shared = assembly[S, E](A via E1 to B)
   shared  // Error! Should be: include(shared)
 )
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-// 
-// error: 
-// Conflicting definitions:
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState, MdocApp4.this.MyEvent] in class MdocApp4 at line 153 and
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState2, MdocApp4.this.MyEvent2] in class MdocApp4 at line 167
-// 
-// error:
-// No TransitionSpec or include() expressions found in block. Each line should be a transition (State via Event to Target) or include(assembly).
-// val machine = Machine(assemblyAll[S, E]:
-//                       ^
 ```
 
 The correct way is to wrap val references with `include()`:
@@ -839,7 +552,7 @@ val machine = Machine(assemblyAll[S, E]:
 
 For more complex definitions with local helper values, use `assemblyAll`:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -854,7 +567,7 @@ enum OrderEvent derives Finite:
 import OrderState.*, OrderEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assemblyAll[OrderState, OrderEvent]:
   // Local helper vals at the top
   val logPaymentStart: (OrderEvent, OrderState) => ZIO[Any, Nothing, Unit] = { (event, _) =>
@@ -874,7 +587,7 @@ The `assemblyAll` block allows mixing val definitions with transition expression
 
 **Important:** When including val references to `Assembly` in an `assemblyAll` block, use the `include()` wrapper:
 
-```scala
+```scala mdoc:compile-only
 val baseAssembly = assembly[OrderState, OrderEvent](
   Created via event[InitiatePayment] to PaymentProcessing,
 )
@@ -889,7 +602,7 @@ val fullMachine = Machine(assemblyAll[OrderState, OrderEvent]:
 
 Define actions that run when entering or leaving a state using the `withEntry` and `withExit` methods on `Machine`:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -902,7 +615,7 @@ enum MyEvent derives Finite:
 import MyState.*, MyEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[MyState, MyEvent](
   Idle via Start to Running,
   Running via Stop to Idle,
@@ -916,7 +629,7 @@ Mechanoid provides a flexible timeout strategy where you define your own timeout
 
 #### Basic Timeout Usage
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -929,7 +642,7 @@ enum OrderEvent derives Finite:
 import OrderState.*, OrderEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // Apply timeout to the transition - when entering WaitingForPayment, a timeout is scheduled
 val machine = Machine(assembly[OrderState, OrderEvent](
   (Created via Pay to WaitingForPayment) @@ Aspect.timeout(30.minutes, PaymentTimeout),
@@ -947,7 +660,7 @@ The `@@ Aspect.timeout(duration, event)` syntax on transitions:
 
 A key feature is that **different states can use different timeout events**. This enables rich timeout handling:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -962,7 +675,7 @@ enum OrderEvent derives Finite:
 import OrderState.*, OrderEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[OrderState, OrderEvent](
   (Created via Pay to PaymentPending) @@ Aspect.timeout(30.minutes, PaymentTimeout),
   PaymentPending via PaymentTimeout to Cancelled,
@@ -976,7 +689,7 @@ val machine = Machine(assembly[OrderState, OrderEvent](
 
 Since timeout events are regular events in your enum, they can carry data:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 import java.time.Instant
@@ -992,7 +705,7 @@ enum SessionEvent derives Finite:
 import SessionState.*, SessionEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // Timeout events can carry data - useful for logging/debugging
 val machine = Machine(assembly[SessionState, SessionEvent](
   (Idle via Login to Active) @@ Aspect.timeout(15.minutes, IdleTimeout(Instant.now())),
@@ -1004,7 +717,7 @@ val machine = Machine(assembly[SessionState, SessionEvent](
 
 You can have multiple timeout types affecting the same state with different outcomes:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1020,7 +733,7 @@ enum AuctionEvent derives Finite:
 import AuctionState.*, AuctionEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[AuctionState, AuctionEvent](
   // Start auction with 5-minute extension timeout
   (Pending via StartAuction to Bidding) @@ Aspect.timeout(5.minutes, ExtensionTimeout),
@@ -1050,7 +763,7 @@ This design provides several advantages over a built-in `Timeout` singleton:
 
 Use `assembly` to create reusable transition fragments that can be composed with full compile-time validation:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1074,7 +787,7 @@ enum DocumentEvent derives Finite:
 import DocumentEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 // Reusable behaviors defined as assemblies
 val cancelableBehaviors = assembly[DocumentState, DocumentEvent](
   all[InReview] via CancelReview to Draft,
@@ -1116,7 +829,7 @@ Mechanoid detects duplicate transitions (same state + event combination) at comp
 1. **Level 1 (Assembly scope)**: Duplicates within a single `assembly()` call are detected
 2. **Level 2 (Machine scope)**: Duplicates across multiple included assemblies and inline specs are detected
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1129,71 +842,15 @@ enum E derives Finite:
 import S.*, E.*
 ```
 
-```scala
+```scala mdoc:fail
 // Level 1 - Compile ERROR within assembly
 val bad = assembly[S, E](
   A via E1 to B,
   A via E1 to C,  // Compile ERROR: duplicate transition
 )
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-// 
-// error: 
-// Conflicting definitions:
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState, MdocApp4.this.MyEvent] in class MdocApp4 at line 153 and
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState2, MdocApp4.this.MyEvent2] in class MdocApp4 at line 167
-// 
-// error:
-// Duplicate transition in assembly without override!
-//   Transition: S.A via E.E1 -> C
-//   First defined at spec #1: -> B
-//   Duplicate at spec #2: -> C
-// 
-//   To override, use: (...) @@ Aspect.overriding
-// val bad = assembly[S, E](
-//           ^
 ```
 
-```scala
+```scala mdoc:fail
 // Level 2 - Compile ERROR across assemblies
 val a1 = assembly[S, E](A via E1 to B)
 val a2 = assembly[S, E](A via E1 to C)
@@ -1201,56 +858,9 @@ val machine = Machine(assembly[S, E](
   include(a1),
   include(a2),  // Compile ERROR: duplicate A via E1
 ))
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// OrderState is already defined as class OrderState
-// error: 
-// Created is already defined as object Created
-// error: 
-// Processing is already defined as trait Processing
-// error: 
-// ValidatingPayment is already defined as object ValidatingPayment
-// error: 
-// ChargingCard is already defined as object ChargingCard
-// error: 
-// Completed is already defined as object Completed
-// error: 
-// object Created in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// trait Processing in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ValidatingPayment in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object ChargingCard in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Completed in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Cancelled in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// object Archived in class MdocApp0 extends enum OrderState, but extending enums is prohibited.
-// error: 
-// Conflicting definitions:
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 43 and
-// final lazy module object OrderState: object MdocApp0.this.OrderState in class MdocApp0 at line 33
-// 
-// error: 
-// Conflicting definitions:
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 54 and
-// val transitions:
-//   mechanoid.machine.Assembly[MdocApp0.this.OrderState, MdocApp0.this.OrderEvent] in class MdocApp0 at line 58
-// 
-// error: 
-// Conflicting definitions:
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState, MdocApp4.this.MyEvent] in class MdocApp4 at line 153 and
-// val machine:
-//   mechanoid.machine.Machine[MdocApp4.this.MyState2, MdocApp4.this.MyEvent2] in class MdocApp4 at line 167
-//
 ```
 
-```scala
+```scala mdoc:compile-only
 // Use @@ Aspect.overriding to allow intentional overrides at the transition level
 val a1 = assembly[S, E](A via E1 to B)
 val a2WithOverride = assembly[S, E]((A via E1 to C) @@ Aspect.overriding)
@@ -1260,7 +870,7 @@ val machine = Machine(assembly[S, E](
 ))
 ```
 
-```scala
+```scala mdoc:compile-only
 // Or override directly in the composed assembly
 val a1 = assembly[S, E](A via E1 to B)
 val machine = Machine(assembly[S, E](
@@ -1275,7 +885,7 @@ When overrides are detected, the compiler emits informational messages showing w
 
 If an assembly or transition is marked with `@@ Aspect.overriding` but doesn't actually override anything, the compiler emits a warning when `Machine(assembly)` is called:
 
-```scala
+```scala mdoc:compile-only
 // Use inline def to preserve assembly for orphan override detection
 inline def orphanAssembly = assembly[S, E](
   (A via E1 to B) @@ Aspect.overriding,  // No duplicate to override!
@@ -1300,7 +910,7 @@ Mechanoid provides a unified `FSMRuntime[Id, S, E]` interface for all FSM execut
 
 For simple, single-instance FSMs without persistence, use `machine.start(initialState)`:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1318,7 +928,7 @@ val machine = Machine(assembly[MyState, MyEvent](
 ))
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- machine.start(Initial)  // Returns FSMRuntime[Unit, S, E]
@@ -1334,7 +944,7 @@ This creates an in-memory FSM with `Unit` as the instance ID. The FSM is automat
 
 For persistent, identified FSMs, use `FSMRuntime.apply`:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1357,7 +967,7 @@ val eventStoreLayer: zio.ULayer[EventStore[OrderId, OrderState, OrderEvent]] =
   InMemoryEventStore.layer[OrderId, OrderState, OrderEvent]
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)  // Returns FSMRuntime[String, S, E]
@@ -1378,7 +988,7 @@ The persistent runtime requires three dependencies in the environment:
 
 ### Sending Events
 
-```scala
+```scala mdoc:compile-only
 // Using the machine already defined above
 val program = ZIO.scoped {
   for
@@ -1406,7 +1016,7 @@ Mechanoid supports event sourcing for durable FSMs:
 2. State is reconstructed by replaying events
 3. Snapshots reduce recovery time
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1429,7 +1039,7 @@ val eventStoreLayer: zio.ULayer[EventStore[OrderId, OrderState, OrderEvent]] =
   InMemoryEventStore.layer[OrderId, OrderState, OrderEvent]
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)
@@ -1448,7 +1058,7 @@ val program = ZIO.scoped {
 
 Implement `EventStore[Id, S, E]` for your storage backend:
 
-```scala
+```scala mdoc:compile-only
 import zio.stream.ZStream
 
 trait EventStore[Id, S, E]:
@@ -1466,7 +1076,7 @@ trait EventStore[Id, S, E]:
 
 Snapshots capture point-in-time state to speed up recovery:
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)
@@ -1504,7 +1114,7 @@ Recovery time is proportional to events since the last snapshot, not total event
 
 The persistence layer uses optimistic locking to detect concurrent modifications:
 
-```scala
+```scala mdoc:compile-only
 // If another process modified the FSM between read and write:
 val error = SequenceConflictError(instanceId = orderId, expectedSeqNr = 5, actualSeqNr = 6)
 ```
@@ -1523,7 +1133,7 @@ In-memory timeouts (fiber-based) don't survive node failures. If a node crashes 
 
 Persist timeout deadlines to a database:
 
-```scala
+```scala mdoc:compile-only
 import java.time.Instant
 
 trait TimeoutStore[Id]:
@@ -1542,20 +1152,20 @@ The `stateHash` and `sequenceNr` parameters enable **state validation** - ensuri
 Mechanoid uses a strategy pattern for timeout management. Choose the appropriate strategy for your deployment:
 
 **Fiber-based (in-memory):**
-```scala
+```scala mdoc:compile-only
 type OrderId = String
 TimeoutStrategy.fiber[OrderId]  // Fast, but doesn't survive node failures
 ```
 
 **Durable (persisted):**
-```scala
+```scala mdoc:compile-only
 type OrderId = String
 TimeoutStrategy.durable[OrderId]  // Requires TimeoutStore, survives node failures
 ```
 
 Use `TimeoutStrategy.durable` for production deployments:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1580,7 +1190,7 @@ val timeoutStoreLayer: zio.ULayer[TimeoutStore[OrderId]] =
   ZLayer.fromZIO(InMemoryTimeoutStore.make[OrderId])
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)
@@ -1599,7 +1209,7 @@ val program = ZIO.scoped {
 
 A background service discovers and fires expired timeouts. It integrates directly with `FSMRuntime` for type-safe timeout handling:
 
-```scala
+```scala mdoc:compile-only
 val config = TimeoutSweeperConfig()
 
 val sweeper = ZIO.scoped {
@@ -1631,7 +1241,7 @@ val sweeper = ZIO.scoped {
 
 ### Sweeper Configuration
 
-```scala
+```scala mdoc:compile-only
 val config = TimeoutSweeperConfig()
   .withSweepInterval(Duration.fromSeconds(5))     // Base interval
   .withJitterFactor(0.2)                          // 0.0-1.0, prevents thundering herd
@@ -1651,7 +1261,7 @@ actualWait = sweepInterval + random(0, jitterFactor * sweepInterval)
 
 For reduced database load, use single-active-sweeper mode:
 
-```scala
+```scala mdoc:compile-only
 val leaseStore: LeaseStore = ??? // Your implementation
 
 val config = TimeoutSweeperConfig()
@@ -1734,7 +1344,7 @@ When two nodes try to modify the same FSM concurrently:
 1. **Optimistic locking (always active)** - Sequence numbers detect conflicts at write time
 2. **Distributed locking (optional)** - Prevents conflicts before they happen
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1742,7 +1352,7 @@ type OrderId = String
 val orderId: OrderId = "order-1"
 ```
 
-```scala
+```scala mdoc:compile-only
 // Without distributed locking: conflict detected at write time
 val error = SequenceConflictError(instanceId = orderId, expectedSeqNr = 5, actualSeqNr = 6)
 
@@ -1780,7 +1390,7 @@ With **distributed locking**, conflicts are *prevented* rather than detected:
 
 Implement `FSMInstanceLock[Id]` for your distributed lock backend:
 
-```scala
+```scala mdoc:compile-only
 import java.time.Instant
 
 trait FSMInstanceLock[Id]:
@@ -1796,20 +1406,20 @@ trait FSMInstanceLock[Id]:
 Mechanoid uses a strategy pattern for concurrency control. Choose the appropriate strategy for your deployment:
 
 **Optimistic (default):**
-```scala
+```scala mdoc:compile-only
 type OrderId = String
 LockingStrategy.optimistic[OrderId]  // Relies on EventStore sequence conflict detection
 ```
 
 **Distributed:**
-```scala
+```scala mdoc:compile-only
 type OrderId = String
 LockingStrategy.distributed[OrderId]  // Acquires exclusive lock before each transition
 ```
 
 Use `LockingStrategy.distributed` for high-contention production deployments:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1834,7 +1444,7 @@ val lockServiceLayer: zio.ULayer[FSMInstanceLock[OrderId]] =
   ZLayer.fromZIO(InMemoryFSMInstanceLock.make[OrderId])
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)
@@ -1850,7 +1460,7 @@ val program = ZIO.scoped {
 
 ### Lock Configuration
 
-```scala
+```scala mdoc:compile-only
 val config = LockConfig()
   .withLockDuration(Duration.fromSeconds(30))    // How long to hold locks
   .withAcquireTimeout(Duration.fromSeconds(10))  // Max wait when acquiring
@@ -1861,7 +1471,7 @@ val config = LockConfig()
 
 **Preset configurations:**
 
-```scala
+```scala mdoc:compile-only
 LockConfig.default      // 30s duration, 10s timeout
 LockConfig.fast         // 10s duration, 5s timeout (for quick operations)
 LockConfig.longRunning  // 5 min duration, 30s timeout (for batch jobs)
@@ -1910,7 +1520,7 @@ RETURNING *;
 
 For maximum robustness, combine distributed locking with durable timeouts:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -1937,7 +1547,7 @@ val lockServiceLayer: zio.ULayer[FSMInstanceLock[OrderId]] =
   ZLayer.fromZIO(InMemoryFSMInstanceLock.make[OrderId])
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)
@@ -1967,7 +1577,7 @@ This provides:
 
 For operations that may take longer than the initial lock duration, use `withLockAndHeartbeat` which automatically renews the lock in the background:
 
-```scala
+```scala mdoc:compile-only
 def processOrder(orderId: String): ZIO[Any, Nothing, Unit] = ZIO.unit
 
 val lock: FSMInstanceLock[OrderId] = ???
@@ -2000,13 +1610,13 @@ lock.withLockAndHeartbeat(orderId, nodeId, Duration.fromSeconds(30), heartbeat =
 When the heartbeat fails to renew the lock, there are two behaviors:
 
 **FailFast (Default - Safe):**
-```scala
+```scala mdoc:compile-only
 val behavior = LockLostBehavior.FailFast
 ```
 The main effect is interrupted immediately. Use for non-idempotent operations where another node may have acquired the lock.
 
 **Continue (Use with caution):**
-```scala
+```scala mdoc:compile-only
 val behavior = LockLostBehavior.Continue(
   ZIO.logWarning("Lock lost but continuing...")
 )
@@ -2017,7 +1627,7 @@ Runs the provided effect, then continues execution. Only use for idempotent oper
 
 Use `withAtomicTransitions` on `LockedFSMRuntime` to execute multiple FSM transitions while holding a single lock with automatic renewal:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2045,7 +1655,7 @@ val lockServiceLayer: zio.ULayer[FSMInstanceLock[OrderId]] =
   ZLayer.fromZIO(InMemoryFSMInstanceLock.make[OrderId])
 ```
 
-```scala
+```scala mdoc:compile-only
 val program = ZIO.scoped {
   for
     fsm <- FSMRuntime(orderId, machine, Pending)
@@ -2078,7 +1688,7 @@ val program = ZIO.scoped {
 ### Anti-Patterns to Avoid
 
 **❌ WRONG - Don't do long-running work inside atomic transactions:**
-```scala
+```scala mdoc:compile-only
 def callExternalPaymentAPI(): ZIO[Any, Nothing, Unit] = ZIO.unit
 
 val badProgram = ZIO.scoped {
@@ -2103,7 +1713,7 @@ val badProgram = ZIO.scoped {
 ```
 
 **✅ RIGHT - Fast orchestration with side effects via .producing:**
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2122,7 +1732,7 @@ def callExternalPaymentAPI(): ZIO[Any, Nothing, PaymentResult] =
   ZIO.succeed(PaymentResult(true, "txn-123", ""))
 ```
 
-```scala
+```scala mdoc:compile-only
 // Define transition with producing effect
 val machine = Machine(assembly[OrderState, OrderEvent](
   (Processing via CheckStatus to AwaitingResult)
@@ -2173,7 +1783,7 @@ Mechanoid provides two mechanisms for executing side effects when transitions oc
 
 Use `.onEntry` for side effects that should run synchronously when a transition fires:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2186,7 +1796,7 @@ enum OrderEvent derives Finite:
 import OrderState.*, OrderEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[OrderState, OrderEvent](
   (Created via StartPayment to Processing)
     .onEntry { (event, targetState) =>
@@ -2205,7 +1815,7 @@ Entry effects:
 
 Use `.producing` for async operations that produce events to send back to the FSM:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2225,7 +1835,7 @@ object paymentService:
     ZIO.succeed(PaymentStatus(true, "txn-123", ""))
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[OrderState, OrderEvent](
   (Processing via event[CheckPayment] to AwaitingResult)
     .producing { (event, targetState) =>
@@ -2254,7 +1864,7 @@ Producing effects:
 
 Combine `.producing` with timeouts for self-healing FSMs:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2271,7 +1881,7 @@ object HealthChecker:
   def normalCheck: ZIO[Any, Nothing, ServiceEvent] = ZIO.succeed(Healthy)
 ```
 
-```scala
+```scala mdoc:silent
 val machine = Machine(assemblyAll[ServiceState, ServiceEvent]:
   // Start the service
   Stopped via Start to Started
@@ -2307,7 +1917,7 @@ val machine = Machine(assemblyAll[ServiceState, ServiceEvent]:
 - No external command system needed - all orchestration via events
 
 **Production setup:**
-```scala
+```scala mdoc:compile-only
 type InstanceId = String
 val instanceId: InstanceId = "service-1"
 val eventStoreLayer: zio.ULayer[EventStore[InstanceId, ServiceState, ServiceEvent]] =
@@ -2338,7 +1948,7 @@ See the `examples/heartbeat` project for a complete working example.
 
 For effects that should run for ALL transitions entering or exiting a state (not per-transition), use `withEntry` and `withExit` on Machine:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2351,7 +1961,7 @@ enum MyEvent derives Finite:
 import MyState.*, MyEvent.*
 ```
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[MyState, MyEvent](
   Idle via Start to Running,
   Running via Finish to Done,
@@ -2361,7 +1971,7 @@ val machine = Machine(assembly[MyState, MyEvent](
 
 You can also use `withLifecycle` to set both:
 
-```scala
+```scala mdoc:compile-only
 val machine = Machine(assembly[MyState, MyEvent](
   Idle via Start to Running,
   Running via Finish to Done,
@@ -2400,7 +2010,7 @@ Generate [Mermaid](https://mermaid.js.org/) diagrams that render directly in Git
 
 FSM definitions have extension methods for convenient visualization:
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 
@@ -2420,7 +2030,7 @@ val machine = Machine(assembly[OrderState, OrderEvent](
 val trace: ExecutionTrace[OrderState, OrderEvent] = ExecutionTrace.empty("instance-1", Created)
 ```
 
-```scala
+```scala mdoc:compile-only
 // State diagram using extension method
 val diagram = machine.toMermaidStateDiagram(Some(OrderState.Created))
 
@@ -2436,7 +2046,7 @@ val dot = machine.toGraphViz(name = "OrderFSM", initialState = Some(OrderState.C
 
 Execution traces also have extension methods:
 
-```scala
+```scala mdoc:compile-only
 val sequenceDiagram = trace.toMermaidSequenceDiagram
 val timeline = trace.toGraphVizTimeline
 ```
@@ -2445,19 +2055,26 @@ val timeline = trace.toGraphVizTimeline
 
 Shows the FSM structure with all states and transitions:
 
-```scala
+```scala mdoc:compile-only
 // Basic state diagram using static method
 val diagram = MermaidVisualizer.stateDiagram(
   fsm = machine,
   initialState = Some(OrderState.Created)
 )
+
+// Output:
+// stateDiagram-v2
+//     [*] --> Created
+//     Created --> PaymentProcessing: InitiatePayment
+//     PaymentProcessing --> Paid: PaymentSucceeded
+//     ...
 ```
 
 #### Sequence Diagram
 
 Shows an execution trace as a sequence of state transitions:
 
-```scala
+```scala mdoc:compile-only
 val sequenceDiagram = MermaidVisualizer.sequenceDiagram(
   trace = trace,
   stateEnum = summon[Finite[OrderState]],
@@ -2469,7 +2086,7 @@ val sequenceDiagram = MermaidVisualizer.sequenceDiagram(
 
 Shows the FSM as a flowchart with highlighted execution path:
 
-```scala
+```scala mdoc:compile-only
 val flowchart = MermaidVisualizer.flowchart(
   fsm = machine,
   trace = Some(trace)  // Optional: highlights visited states
@@ -2480,7 +2097,7 @@ val flowchart = MermaidVisualizer.flowchart(
 
 Generate [GraphViz DOT](https://graphviz.org/) format for high-quality rendered diagrams.
 
-```scala
+```scala mdoc:compile-only
 // Basic digraph
 val dot = GraphVizVisualizer.digraph(
   fsm = machine,
@@ -2516,7 +2133,7 @@ dot -Tsvg fsm.dot -o fsm.svg
 
 Here's a complete example that generates all visualization types:
 
-```scala
+```scala mdoc:compile-only
 import java.nio.file.{Files, Paths}
 
 def generateVisualizations[S, E](
@@ -2582,7 +2199,7 @@ See the [visualizations directory](visualizations/) for complete examples:
 
 ## Complete Example
 
-```scala
+```scala mdoc:reset:silent
 import mechanoid.*
 import zio.*
 import java.time.Instant
@@ -2610,7 +2227,7 @@ object EmailService:
     ZIO.logInfo(s"Sending $template email to $to")
 ```
 
-```scala
+```scala mdoc:compile-only
 // FSM Definition with side effects
 val orderMachine = Machine(assemblyAll[OrderState, OrderEvent]:
   // Happy path with timeout on entry to AwaitingPayment
