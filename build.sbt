@@ -29,6 +29,19 @@ ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
 
 usePgpKeyHex("2F64727A87F1BCF42FD307DD8582C4F16659A7D6")
 
+ThisBuild / libraryDependencies ++= Seq(
+  "dev.zio" %% "zio"                      % zioVersion % "provided",
+  "dev.zio" %% "zio-streams"              % zioVersion % "provided",
+  "dev.zio" %% "zio-logging"              % "2.5.3"    % "provided",
+  "dev.zio" %% "zio-logging-slf4j"        % "2.5.3"    % "provided",
+  "dev.zio" %% "zio-logging-slf4j-bridge" % "2.5.3"    % "provided",
+
+  "dev.zio" %% "zio-json"          % "0.8.0"    % "provided",
+  "dev.zio" %% "zio-test"          % zioVersion % Test,
+  "dev.zio" %% "zio-test-sbt"      % zioVersion % Test,
+  "dev.zio" %% "zio-test-magnolia" % zioVersion % Test,
+)
+
 lazy val commonSettings = Seq(
   scalacOptions ++= Seq(
     "-deprecation",
@@ -60,16 +73,6 @@ lazy val core = project
   .settings(
     name        := "mechanoid",
     description := "A type-safe, effect-oriented finite state machine library for Scala built on ZIO",
-    libraryDependencies ++= Seq(
-      "dev.zio" %% "zio"               % zioVersion,
-      "dev.zio" %% "zio-streams"       % zioVersion,
-      "dev.zio" %% "zio-logging"       % "2.5.3",
-      "dev.zio" %% "zio-logging-slf4j" % "2.5.3",
-      "dev.zio" %% "zio-json"          % "0.8.0",
-      "dev.zio" %% "zio-test"          % zioVersion % Test,
-      "dev.zio" %% "zio-test-sbt"      % zioVersion % Test,
-      "dev.zio" %% "zio-test-magnolia" % zioVersion % Test,
-    ),
   )
 
 lazy val postgres = project
@@ -129,8 +132,8 @@ lazy val docs = project
   .settings(
     name           := "mechanoid-docs",
     publish / skip := true,
-    mdocVariables := Map(
-      "VERSION" -> version.value,
+    mdocVariables  := Map(
+      "VERSION" -> version.value
     ),
     mdocIn  := file("mechanoid-docs") / "docs",
     mdocOut := file("."),
